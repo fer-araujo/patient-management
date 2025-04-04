@@ -45,6 +45,94 @@
     /* background: #1e2238; */
     background: transparent;
   }
+  /* =====  SHADCN OVERRIDES */
+  .shad-primary-btn {
+    background-color: #24ae7c !important;
+    color: #ffffff !important;
+    cursor: pointer !important;
+  }
+
+  .shad-danger-btn {
+    background-color: #f24e43 !important;
+    color: #ffffff !important;
+  }
+
+  .shad-gray-btn {
+    @apply border border-dark-500 cursor-pointer bg-dark-400 text-white;
+  }
+
+  .shad-input-label {
+    @apply text-sm text-dark-700;
+  }
+
+  .shad-input {
+    @apply bg-dark-400 placeholder:text-dark-600 border-dark-500 h-11 focus-visible:ring-0 focus-visible:ring-offset-0;
+  }
+
+  .shad-input-icon {
+    @apply bg-dark-400 placeholder:text-dark-600 border-dark-500 h-11 focus-visible:ring-0 focus-visible:ring-offset-0;
+  }
+
+  .shad-textArea {
+    @apply bg-dark-400 placeholder:text-dark-600 border-dark-500 focus-visible:ring-0 focus-visible:ring-offset-0;
+  }
+
+  .shad-combobox-item {
+    @apply data-[disabled=true]:pointer-events-none data-[disabled=true]:opacity-50;
+  }
+
+  .shad-combobox-trigger {
+    @apply h-11;
+  }
+
+  .shad-select-trigger {
+    @apply bg-dark-400  placeholder:text-dark-600 border-dark-500 h-11 focus:ring-0 focus:ring-offset-0;
+  }
+
+  .shad-select-content {
+    @apply bg-dark-400 border-dark-500;
+  }
+
+  .shad-dialog {
+    @apply bg-dark-400 border-dark-500;
+  }
+
+  .shad-dialog button {
+    @apply focus:ring-0 focus:ring-offset-0 focus-visible:border-none focus-visible:outline-none focus-visible:ring-transparent focus-visible:ring-offset-0;
+  }
+
+  .shad-error {
+    @apply text-red-400;
+  }
+
+  .shad-table {
+    @apply rounded-lg overflow-hidden;
+  }
+
+  .shad-table-row-header {
+    @apply border-b border-dark-400 text-light-200 hover:bg-transparent;
+  }
+
+  .shad-table-row {
+    @apply border-b border-dark-400 text-light-200;
+  }
+
+  .shad-otp {
+    @apply w-full flex justify-between;
+  }
+
+  .shad-otp-slot {
+    @apply text-2xl font-bold justify-center flex border border-dark-500 rounded-lg size-16 gap-4;
+  }
+
+  .shad-alert-dialog {
+    @apply space-y-5 bg-dark-400 border-dark-500 outline-none;
+  }
+
+  .shad-sheet-content button {
+    @apply top-2 focus:ring-0 focus:ring-offset-0 focus-visible:border-none focus-visible:outline-none focus-visible:ring-transparent focus-visible:ring-offset-0;
+  }
+
   .container {
     @apply mx-auto p-8;
     max-width: 1400px;
@@ -53,25 +141,40 @@
 
 @layer utilities {
   .bg-appointments {
-    background-image: url('/assets/images/appointments-bg.png');
+    background-image: url("/assets/images/appointments-bg.png");
   }
   .bg-pending {
-    background-image: url('/assets/images/pending-bg.png');
+    background-image: url("/assets/images/pending-bg.png");
   }
   .bg-cancelled {
-    background-image: url('/assets/images/cancelled-bg.png');
+    background-image: url("/assets/images/cancelled-bg.png");
   }
   @keyframes accordion-down {
-    from { height: 0px; }
-    to { height: var(--radix-accordion-content-height); }
+    from {
+      height: 0px;
+    }
+    to {
+      height: var(--radix-accordion-content-height);
+    }
   }
   @keyframes accordion-up {
-    from { height: var(--radix-accordion-content-height); }
-    to { height: 0px; }
+    from {
+      height: var(--radix-accordion-content-height);
+    }
+    to {
+      height: 0px;
+    }
   }
   @keyframes caret-blink {
-    0%, 70%, 100% { opacity: 1; }
-    20%, 50% { opacity: 0; }
+    0%,
+    70%,
+    100% {
+      opacity: 1;
+    }
+    20%,
+    50% {
+      opacity: 0;
+    }
   }
   .animate-accordion-down {
     animation: accordion-down 0.2s ease-out;
@@ -100,4 +203,90 @@
   .text-12-semibold {
     @apply text-[12px] leading-[16px] font-semibold;
   }
+
+  /* =====  REACT PHONE NUMBER INPUT OVERRIDES */
+  .input-phone {
+    @apply mt-2 h-11 rounded-md px-3 text-sm border bg-dark-400 placeholder:text-dark-600 border-dark-500;
+  }
+
+  /* =====  REACT DATE PICKER OVERRIDES */
+  .date-picker {
+    @apply overflow-hidden border-transparent w-full placeholder:text-dark-600  h-11 text-sm rounded-md px-3 outline-none;
+  }
+}
+
+/* =====  REACT-DATEPICKER OVERRIDES */
+.react-datepicker-wrapper.date-picker {
+  display: flex;
+  align-items: center;
+}
+
+.react-datepicker,
+.react-datepicker__time,
+.react-datepicker__header,
+.react-datepicker__current-month,
+.react-datepicker__day-name,
+.react-datepicker__day,
+.react-datepicker-time__header {
+  background-color: #1a1d21;
+  border-color: #363a3d;
+  color: #abb8c4;
+}
+
+.react-datepicker__current-month,
+.react-datepicker__day-name,
+.react-datepicker-time__header {
+  color: #ffffff;
+}
+
+.react-datepicker__triangle {
+  fill: #1a1d21;
+  color: #1a1d21;
+  stroke: #1a1d21;
+}
+
+.react-datepicker__time-list-item:hover {
+  background-color: #363a3d;
+}
+
+.react-datepicker__input-container input {
+  background-color: #1a1d21;
+  width: 100%;
+  outline: none;
+}
+
+.react-datepicker__day--selected {
+  background-color: #24ae7c;
+  color: #ffffff;
+  border-radius: 4px;
+}
+
+.react-datepicker__time-list-item--selected {
+  background-color: #24ae7c;
+}
+
+.react-datepicker__time-container {
+  border-left: 1px solid #363a3d;
+}
+
+.react-datepicker__time-list-item {
+  display: flex;
+  align-items: center;
+}
+
+/* =====  REACT PHONE NUMBER INPUT OVERRIDES */
+.PhoneInputInput {
+  outline: none;
+  margin-left: 4px;
+  background: #1a1d21;
+  font-size: 14px;
+  font-weight: 500;
+}
+
+.PhoneInputInput::placeholder {
+  color: #1a1d21;
+}
+
+.PhoneInputCountrySelect {
+  background: #1a1d21;
 }
