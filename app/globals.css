@@ -1,4 +1,5 @@
 @import "tailwindcss";
+@import "react-datepicker/dist/react-datepicker.css";
 @custom-variant dark (&:is(.dark *));
 @plugin "tailwindcss-animate";
 
@@ -74,7 +75,9 @@
   }
 
   .shad-textArea {
-    @apply bg-dark-400 placeholder:text-dark-600 border-dark-500 focus-visible:ring-0 focus-visible:ring-offset-0;
+    @apply bg-dark-400 placeholder:text-dark-600 border-dark-500 focus-visible:ring-0 focus-visible:ring-offset-0 h-34 p-5 rounded-md;
+    background-color: var(--color-dark-400) !important;
+    border-color: var(--color-dark-500) !important;
   }
 
   .shad-combobox-item {
@@ -133,9 +136,13 @@
     @apply top-2 focus:ring-0 focus:ring-offset-0 focus-visible:border-none focus-visible:outline-none focus-visible:ring-transparent focus-visible:ring-offset-0;
   }
 
-  .container {
-    @apply mx-auto p-8;
-    max-width: 1400px;
+  /* ==== File Upload */
+  .file-upload {
+    @apply text-sm flex cursor-pointer flex-col items-center justify-center gap-3 rounded-md border border-dashed border-dark-500 bg-dark-400 p-5;
+  }
+
+  .file-upload_label {
+    @apply flex flex-col justify-center gap-2 text-center text-dark-600;
   }
 }
 
@@ -176,6 +183,67 @@
       opacity: 0;
     }
   }
+  @keyframes breathe {
+    0%,
+    100% {
+      transform: scale(1);
+      opacity: 1;
+    }
+    50% {
+      transform: scale(1.05);
+      opacity: 0.85;
+    }
+  }
+
+  .breathe {
+    animation: breathe 3s ease-in-out infinite;
+  }
+
+  @keyframes blink {
+    0%, 100% {
+      opacity: 1;
+    }
+    50% {
+      opacity: 0.5;
+    }
+  }
+  
+  .blink {
+    animation: blink 2.5s ease-in-out infinite;
+  }
+
+  @keyframes calendar-pop {
+    0% {
+      transform: scale(1);
+      opacity: 0;
+    }
+    50% {
+      transform: scale(1.1);
+      opacity: 1;
+    }
+    100% {
+      transform: scale(1);
+      opacity: 1;
+    }
+  }
+  @keyframes calendar-pop {
+    0% {
+      transform: scale(1);
+      opacity: 0;
+    }
+    50% {
+      transform: scale(1.1);
+      opacity: 1;
+    }
+    100% {
+      transform: scale(1);
+      opacity: 1;
+    }
+  }
+  .animate-calendar-pop {
+    animation: calendar-pop 1.5s ease-out 1;
+  }
+
   .animate-accordion-down {
     animation: accordion-down 0.2s ease-out;
   }
@@ -194,15 +262,6 @@
   .side-img {
     @apply hidden h-full object-cover md:block;
   }
-  .text-14-regular {
-    @apply text-[14px] leading-[18px] font-normal;
-  }
-  .text-12-regular {
-    @apply text-[12px] leading-[16px] font-normal;
-  }
-  .text-12-semibold {
-    @apply text-[12px] leading-[16px] font-semibold;
-  }
 
   /* =====  REACT PHONE NUMBER INPUT OVERRIDES */
   .input-phone {
@@ -211,7 +270,7 @@
 
   /* =====  REACT DATE PICKER OVERRIDES */
   .date-picker {
-    @apply overflow-hidden border-transparent w-full placeholder:text-dark-600  h-11 text-sm rounded-md px-3 outline-none;
+    @apply w-full bg-transparent h-full outline-none text-sm placeholder:text-dark-600 border-none focus:ring-0 focus-visible:ring-0;
   }
 }
 
@@ -220,6 +279,9 @@
   display: flex;
   align-items: center;
 }
+.react-datepicker-wrapper.date-picker input {
+  width: 100%;
+}
 
 .react-datepicker,
 .react-datepicker__time,
@@ -227,7 +289,8 @@
 .react-datepicker__current-month,
 .react-datepicker__day-name,
 .react-datepicker__day,
-.react-datepicker-time__header {
+.react-datepicker-time__header,
+.react-datepicker__time-list {
   background-color: #1a1d21;
   border-color: #363a3d;
   color: #abb8c4;
@@ -244,9 +307,9 @@
   color: #1a1d21;
   stroke: #1a1d21;
 }
-
+.react-datepicker__day:hover,
 .react-datepicker__time-list-item:hover {
-  background-color: #363a3d;
+  background-color: #363a3d !important;
 }
 
 .react-datepicker__input-container input {

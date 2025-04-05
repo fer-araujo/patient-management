@@ -1,41 +1,49 @@
-import { PatientForm } from "@/components/forms/PatientForm";
+import { AppointmentForm } from "@/components/forms/AppointmentForm";
 import Image from "next/image";
-import Link from "next/link";
 
-export default function Home() {
+const Appointment = async () => {
   return (
-    <div className="flex h-screen max-h-screen">
-      {/* TODO: OTP Verification | PassKeyModal */}
-      <section className="remove-scrollbar container my-auto">
-        <div className="sub-container max-w-[496px]">
+    // Contenedor principal que permite scroll en toda la página si el contenido lo necesita
+    <div className="flex flex-col lg:flex-row w-full min-h-screen overflow-y-auto">
+      {/* Sección izquierda - Formulario */}
+      <section className="w-full flex items-center justify-center px-4 lg:w-1/2">
+        <div className="subcontainer max-w-[860px] w-full">
+          {/* Logo actualizado */}
           <Image
             src="/assets/icons/logo-full.svg"
-            height={1000}
-            width={1000}
-            alt="patient"
-            className="mb-12 h-10 w-fit"
+            alt="logo"
+            width={180}
+            height={80}
+            priority
+            className="w-auto h-30 lg:h-[18vh]"
           />
 
-          <PatientForm />
+          {/* Formulario de citas */}
+          <AppointmentForm />
 
-          <div className="text-14-regular mt-20 flex justify-between">
-            <p className="justify-items-end text-dark-600 xl:text-left">
-              © 2025 Cuidado Medico
-            </p>
-            <Link href="/?admin=true" className="text-green-500">
+          {/* Pie de página */}
+          <p className="mt-2 py-5 text-center text-sm text-gray-400">
+            © 2025 Cuidado Médico — {" "}
+            <a href="/admin/login" className="text-green-500 hover:text-primary">
               Admin
-            </Link>
-          </div>
+            </a>
+          </p>
         </div>
       </section>
 
-      <Image
-        src="/assets/images/onboarding-img.png"
-        height={1000}
-        width={1000}
-        alt="patient"
-        className="side-img max-w-[50%]"
-      />
+      {/* Sección derecha - Imagen decorativa (visible solo en pantallas grandes) */}
+      <div className="hidden lg:flex items-center justify-start max-h-full">
+        <Image
+          src="/assets/images/women-appointment-img.png"
+          alt="appointment"
+          width={1800}
+          height={1800}
+          priority
+          className="w-[45vw] h-auto object-contain animate-calendar-pop ml-[-1vw]"
+        />
+      </div>
     </div>
   );
-}
+};
+
+export default Appointment;

@@ -15,6 +15,7 @@
     "@radix-ui/react-label": "^2.1.2",
     "@radix-ui/react-select": "^2.1.6",
     "@radix-ui/react-slot": "^1.1.2",
+    "@tailwindcss/postcss": "^4.1.3",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
     "libphonenumber-js": "^1.12.6",
@@ -25,6 +26,7 @@
     "react": "^19.0.0",
     "react-datepicker": "^8.2.1",
     "react-dom": "^19.0.0",
+    "react-dropzone": "^14.3.8",
     "react-hook-form": "^7.55.0",
     "react-phone-number-input": "^3.4.12",
     "tailwind-merge": "^3.1.0",
@@ -34,13 +36,14 @@
   },
   "devDependencies": {
     "@eslint/eslintrc": "^3",
-    "@tailwindcss/postcss": "^4",
     "@types/node": "^20",
     "@types/react": "^19",
     "@types/react-dom": "^19",
+    "autoprefixer": "^10.4.21",
     "eslint": "^9",
     "eslint-config-next": "15.2.4",
-    "tailwindcss": "^4",
+    "postcss": "^8.5.3",
+    "tailwindcss": "^4.1.3",
     "typescript": "^5"
   }
 }

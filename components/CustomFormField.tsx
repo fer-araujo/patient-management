@@ -1,4 +1,3 @@
- 
 import { E164Number } from "libphonenumber-js/core";
 import Image from "next/image";
 import ReactDatePicker from "react-datepicker";
@@ -42,7 +41,14 @@ interface CustomProps<T extends FieldValues> {
 }
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-const RenderInput = <T extends FieldValues>({ field, props }: { field: any; props: CustomProps<T> }) => {
+const RenderInput = <T extends FieldValues>({
+  field,
+  props,
+}: {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  field: any;
+  props: CustomProps<T>;
+}) => {
   switch (props.fieldType) {
     case FormFieldType.INPUT:
       return (
@@ -107,13 +113,13 @@ const RenderInput = <T extends FieldValues>({ field, props }: { field: any; prop
       );
     case FormFieldType.DATE_PICKER:
       return (
-        <div className="flex rounded-md border border-dark-500 bg-dark-400">
+        <div className="flex items-center gap-2 h-11 rounded-md border border-dark-500 bg-dark-400 px-3">
           <Image
             src="/assets/icons/calendar.svg"
-            height={24}
-            width={24}
-            alt="user"
-            className="ml-2"
+            height={20}
+            width={20}
+            alt="calendar"
+            className="shrink-0 mt-1"
           />
           <FormControl>
             <ReactDatePicker
@@ -122,7 +128,7 @@ const RenderInput = <T extends FieldValues>({ field, props }: { field: any; prop
               onChange={(date: Date | null) => field.onChange(date)}
               timeInputLabel="Time:"
               dateFormat={props.dateFormat ?? "MM/dd/yyyy"}
-              wrapperClassName="date-picker"
+              wrapperClassName="date-picker "
             />
           </FormControl>
         </div>
@@ -156,7 +162,11 @@ const CustomFormField = <T extends FieldValues>(props: CustomProps<T>) => {
     <FormField
       control={control}
       name={name}
-      render={({ field }: { field: { value: unknown; onChange: (value: unknown) => void } }) => (
+      render={({
+        field,
+      }: {
+        field: { value: unknown; onChange: (value: unknown) => void };
+      }) => (
         <FormItem className="flex-1">
           {props.fieldType !== FormFieldType.CHECKBOX && label && (
             <FormLabel className="shad-input-label">{label}</FormLabel>
