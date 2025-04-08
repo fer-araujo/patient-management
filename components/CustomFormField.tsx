@@ -40,7 +40,6 @@ interface CustomProps<T extends FieldValues> {
   fieldType: FormFieldType;
 }
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
 const RenderInput = <T extends FieldValues>({
   field,
   props,
@@ -67,6 +66,7 @@ const RenderInput = <T extends FieldValues>({
               placeholder={props.placeholder}
               {...field}
               className="shad-input border-0"
+              disabled={props.disabled}
             />
           </FormControl>
         </div>

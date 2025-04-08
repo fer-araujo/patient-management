@@ -5,27 +5,25 @@ declare type SearchParamProps = {
 
 declare type Status = "pending" | "scheduled" | "cancelled";
 
-declare interface CreateUserParams {
+declare interface CreatePatientParams {
   name: string;
   phone: string;
+  studyDocument?: FormData | undefined;
 }
 
-declare interface User extends CreateUserParams {
+declare interface Patient extends CreatePatientParams {
   $id: string;
 }
 
 declare type CreateAppointmentParams = {
-  userId: string;
-  patient: string;
-  reason: string;
-  schedule: Date;
+  patientId: string;
+  reason?: string;
+  schedule: string;
   status: Status;
-  note: string | undefined;
 };
 
 declare type UpdateAppointmentParams = {
   appointmentId: string;
-  userId: string;
   appointment: Appointment;
   type: string;
 };

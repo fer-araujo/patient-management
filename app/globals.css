@@ -59,7 +59,14 @@
   }
 
   .shad-gray-btn {
-    @apply border border-dark-500 cursor-pointer bg-dark-400 text-white;
+    background-color: #1a1d21 !important;
+    border: 1px solid #363a3d !important;
+    color: #ffffff !important;
+    cursor: pointer !important;
+  }
+
+  .shad-gray-btn:hover {
+    background-color: #24ae7c !important;
   }
 
   .shad-input-label {
@@ -75,7 +82,7 @@
   }
 
   .shad-textArea {
-    @apply bg-dark-400 placeholder:text-dark-600 border-dark-500 focus-visible:ring-0 focus-visible:ring-offset-0 h-34 p-5 rounded-md;
+    @apply bg-dark-400 placeholder:text-dark-600 border-dark-500 focus-visible:ring-0 focus-visible:ring-offset-0 h-40 p-5 rounded-md;
     background-color: var(--color-dark-400) !important;
     border-color: var(--color-dark-500) !important;
   }
