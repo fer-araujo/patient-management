@@ -5,6 +5,7 @@ import { AppointmentForm } from "@/components/forms/AppointmentForm";
 import Image from "next/image";
 import { motion } from "framer-motion";
 import Spinner from "@/components/Spinner";
+import Link from "next/link";
 
 const Appointment = () => {
   const [isLoading, setIsLoading] = useState(true);
@@ -25,7 +26,7 @@ const Appointment = () => {
   return (
     <div className="flex h-screen min-h-screen max-h-screen overflow-y-auto">
       <section className="flex min-h-screen w-full flex-1 items-center justify-center container remove-scrollbar lg:w-1/2">
-        <div className="subcontainer max-w-[860px] flex-1 justify-between">
+        <div className="mt-[-100] auto max-w-[860px] flex-1 justify-between">
           <Image
             src="/assets/icons/logo-full.svg"
             height={1000}
@@ -36,15 +37,14 @@ const Appointment = () => {
 
           <AppointmentForm />
 
-          <p className="mt-2 py-5 text-center text-sm text-gray-400">
-            © 2025 Cuidado Médico —{" "}
-            <a
-              href="/admin/login"
-              className="text-green-500 hover:text-primary"
-            >
+          <div className="text-sm mt-30 flex gap-4">
+            <p className="justify-items-end text-dark-600 xl:text-left">
+              © 2025 Cuidado Médico 
+            </p>
+            <Link href="/?admin=true" className="text-green-500">
               Admin
-            </a>
-          </p>
+            </Link>
+          </div>
         </div>
       </section>
 

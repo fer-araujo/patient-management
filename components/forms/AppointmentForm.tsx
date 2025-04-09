@@ -9,17 +9,21 @@ import { CreateAppointmentSchema } from "@/lib/validation";
 import CustomFormField, { FormFieldType } from "../CustomFormField";
 import SubmitButton from "../SubmitButton";
 import { FileUploader } from "../FileUploader";
-import router from "next/router";
+import { useRouter } from "next/navigation";
 import "react-phone-number-input/style.css";
 import { motion, AnimatePresence } from "framer-motion";
 import { PhoneSearchField } from "../PhoneSearchField";
 import { registerPatient } from "@/lib/actions/patient.actions";
 import { registerApointment } from "@/lib/actions/appointment.actions";
+import { setCookie } from "cookies-next";
+import { v4 as uuidv4 } from "uuid";
 
 export const AppointmentForm = () => {
   const [isLoading, setIsLoading] = useState(false);
   const [showFullForm, setShowFullForm] = useState(false);
   const [patientFound, setPatientFound] = useState(false);
+
+  const router = useRouter();
 
   const form = useForm<z.infer<typeof CreateAppointmentSchema>>({
     resolver: zodResolver(CreateAppointmentSchema),
@@ -45,10 +49,14 @@ export const AppointmentForm = () => {
     }
 
     try {
+      const confirmationToken = uuidv4();
+      setCookie("appointmentToken", confirmationToken, { maxAge: 300, path: "/" });
+
       const patientData = {
         name: values.name,
         phone: values.phone,
-        studyDocument: (values.studyDocument ?? []).length > 0 ? formData : undefined,
+        studyDocument:
+          (values.studyDocument ?? []).length > 0 ? formData : undefined,
       };
 
       const patient = await registerPatient(patientData);
@@ -57,14 +65,15 @@ export const AppointmentForm = () => {
         patientId: patient.$id,
         reason: values.reason,
         schedule: new Date(values.schedule).toISOString(),
+        confirmationToken,
         status: "pending" as Status,
-      }
+      };
 
-      const appointment = await registerApointment(appointmentData)
-      
+      const appointment = await registerApointment(appointmentData);
+
       console.log(appointment);
       form.reset();
-      router.push("/appointments/success");
+      router.push(`/appointments/success/${appointment?.$id}`);
     } catch (error) {
       console.error(error);
     }
@@ -159,9 +168,11 @@ export const AppointmentForm = () => {
                       <FileUploader
                         files={(field as { value: File[] }).value}
                         onChange={
-                          (field as {
-                            onChange: (files: File[]) => void;
-                          }).onChange
+                          (
+                            field as {
+                              onChange: (files: File[]) => void;
+                            }
+                          ).onChange
                         }
                       />
                     </FormControl>

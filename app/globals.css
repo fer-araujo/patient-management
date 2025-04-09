@@ -279,6 +279,18 @@
   .date-picker {
     @apply w-full bg-transparent h-full outline-none text-sm placeholder:text-dark-600 border-none focus:ring-0 focus-visible:ring-0;
   }
+
+  .header {
+    @apply text-4xl font-bold md:text-5xl md:font-bold;
+  }
+
+  .success-img {
+    @apply m-auto flex flex-1 flex-col items-center justify-between gap-10 py-10;
+  }
+
+  .request-details {
+    @apply flex w-full flex-col items-center gap-8 border-y-2 border-dark-400 py-8 md:w-fit md:flex-row;
+  }
 }
 
 /* =====  REACT-DATEPICKER OVERRIDES */
