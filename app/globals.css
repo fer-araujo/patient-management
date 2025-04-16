@@ -120,7 +120,7 @@
   }
 
   .shad-table-row-header {
-    @apply border-b border-dark-400 text-light-200 hover:bg-transparent;
+    @apply border-b  border-dark-400 text-light-200 hover:bg-transparent;
   }
 
   .shad-table-row {
@@ -132,7 +132,7 @@
   }
 
   .shad-otp-slot {
-    @apply text-2xl font-bold justify-center flex border border-dark-500 rounded-lg size-16 gap-4;
+    @apply text-6xl font-bold justify-center flex border border-dark-500 rounded-lg size-16 gap-4;
   }
 
   .shad-alert-dialog {
@@ -277,11 +277,11 @@
 
   /* =====  REACT DATE PICKER OVERRIDES */
   .date-picker {
-    @apply w-full bg-transparent h-full outline-none text-sm placeholder:text-dark-600 border-none focus:ring-0 focus-visible:ring-0;
+    @apply w-full cursor-pointer outline-none text-sm placeholder:text-dark-600  focus:ring-0 focus-visible:ring-0;
   }
 
   .header {
-    @apply text-4xl font-bold md:text-5xl md:font-bold;
+    @apply text-2xl font-bold md:text-4xl md:font-bold;
   }
 
   .success-img {
@@ -290,6 +290,38 @@
 
   .request-details {
     @apply flex w-full flex-col items-center gap-8 border-y-2 border-dark-400 py-8 md:w-fit md:flex-row;
+  }
+
+  /* ===== ADMIN */
+  .admin-header {
+    @apply sticky top-3 z-20 mx-3 flex items-center justify-between rounded-2xl bg-dark-200 px-[5%] py-5 shadow-lg xl:px-12;
+  }
+
+  .admin-main {
+    @apply flex flex-col items-center space-y-6 px-[5%] pb-12 xl:space-y-12 xl:px-12;
+  }
+
+  .admin-stat {
+    @apply flex w-full flex-col justify-between gap-5 sm:flex-row xl:gap-10;
+  }
+
+   /* ==== Stat Card */
+   .stat-card {
+    @apply flex flex-1 flex-col gap-6 rounded-2xl bg-cover p-6 shadow-lg;
+  }
+
+  /* ==== Status Badge */
+  .status-badge {
+    @apply flex w-fit items-center gap-2 rounded-full px-4 py-2;
+  }
+
+  /* Data Table */
+  .data-table {
+    @apply z-10 w-full overflow-hidden rounded-lg border border-dark-400 shadow-lg;
+  }
+
+  .table-actions {
+    @apply flex w-full items-center justify-between space-x-2 p-4;
   }
 }
 

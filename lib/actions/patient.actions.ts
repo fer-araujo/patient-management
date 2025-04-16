@@ -4,6 +4,7 @@ import { InputFile } from "node-appwrite/file";
 import { getDatabases, getStorage } from "../appwrite.config";
 import { ID, Query } from "node-appwrite";
 import { parseStringify } from "../utils";
+import { CreatePatientParams } from "@/types";
 
 export const registerPatient = async ({ studyDocument, ...patient }: CreatePatientParams) => {
   try {
@@ -30,13 +31,13 @@ export const registerPatient = async ({ studyDocument, ...patient }: CreatePatie
         if (blob && fileName) {
           const inputFile = InputFile.fromBuffer(blob, fileName);
           const file = await storage.createFile(
-            process.env.BUCKET_ID!,
+            process.env.NEXT_PUBLIC_BUCKET_ID!,
             ID.unique(),
             inputFile
           );
 
           const fileId = file.$id;
-          const fileUrl = `${process.env.NEXT_PUBLIC_ENDPOINT}/storage/buckets/${process.env.BUCKET_ID}/files/${fileId}/view?project=${process.env.PROJECT_ID}`;
+          const fileUrl = `${process.env.NEXT_PUBLIC_ENDPOINT}/storage/buckets/${process.env.NEXT_PUBLIC_BUCKET_ID}/files/${fileId}/view?project=${process.env.PROJECT_ID}`;
 
           await databases.createDocument(
             process.env.DATABASE_ID!,

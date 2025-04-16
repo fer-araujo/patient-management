@@ -1,13 +1,15 @@
-import * as sdk from 'node-appwrite';
+import * as nodeSdk from 'node-appwrite';
 // Initialize the Appwrite client with environment variables
-const client = new sdk.Client();
+const nodeClient = new nodeSdk.Client();
 
-client
+nodeClient
 .setEndpoint(String(process.env.NEXT_PUBLIC_ENDPOINT)!)
-.setProject(String(process.env.PROJECT_ID)!)
+.setProject(String(process.env.NEXT_PUBLIC_PROJECT_ID)!)
 .setKey(String(process.env.API_KEY)!);
 
-export const getDatabases = () => new sdk.Databases(client);
-export const getStorage = () => new sdk.Storage(client);
-export const getUsers = () => new sdk.Users(client);
-export const getMessaging = () => new sdk.Messaging(client);
+export const getDatabases = () => new nodeSdk.Databases(nodeClient);
+export const getStorage = () => new nodeSdk.Storage(nodeClient);
+export const getUsers = () => new nodeSdk.Users(nodeClient);
+export const getMessaging = () => new nodeSdk.Messaging(nodeClient);
+
+

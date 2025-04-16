@@ -14,6 +14,7 @@ import { Input } from "./ui/input";
 import { Select, SelectContent, SelectTrigger, SelectValue } from "./ui/select";
 import { Textarea } from "./ui/textarea";
 import { Checkbox } from "./ui/checkbox";
+import clsx from "clsx";
 
 export enum FormFieldType {
   INPUT = "input",
@@ -65,7 +66,7 @@ const RenderInput = <T extends FieldValues>({
             <Input
               placeholder={props.placeholder}
               {...field}
-              className="shad-input border-0"
+              className={"shad-input border-0"}
               disabled={props.disabled}
             />
           </FormControl>
@@ -92,7 +93,9 @@ const RenderInput = <T extends FieldValues>({
             withCountryCallingCode
             value={field.value as E164Number | undefined}
             onChange={field.onChange}
-            className="input-phone"
+            className={clsx("input-phone", {
+              'pointer-events-none cursor-not-allowed opacity-50' : props.disabled})}
+            disabled={props.disabled}
           />
         </FormControl>
       );
@@ -113,7 +116,8 @@ const RenderInput = <T extends FieldValues>({
       );
     case FormFieldType.DATE_PICKER:
       return (
-        <div className="flex items-center gap-2 h-11 rounded-md border border-dark-500 bg-dark-400 px-3">
+        <div className={clsx("date-picker flex items-center gap-2 h-11 rounded-md border border-dark-500 bg-dark-400 px-3", {
+          'pointer-events-none cursor-not-allowed opacity-50' : props.disabled})}>
           <Image
             src="/assets/icons/calendar.svg"
             height={20}
@@ -127,8 +131,9 @@ const RenderInput = <T extends FieldValues>({
               selected={field.value}
               onChange={(date: Date | null) => field.onChange(date)}
               timeInputLabel="Time:"
-              dateFormat={props.dateFormat ?? "MM/dd/yyyy"}
-              wrapperClassName="date-picker "
+              dateFormat={props.dateFormat ?? "dd/MM/yyyy"}
+              wrapperClassName={"date-picker"}
+              disabled={props.disabled}
             />
           </FormControl>
         </div>

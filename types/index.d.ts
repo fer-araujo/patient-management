@@ -1,3 +1,4 @@
+
 declare type SearchParamProps = {
   params: { [key: string]: string };
   searchParams: { [key: string]: string | string[] | undefined };
@@ -22,8 +23,11 @@ declare type CreateAppointmentParams = {
   status: Status;
 };
 
-declare type UpdateAppointmentParams = {
+export type UpdateAppointmentParams = {
   appointmentId: string;
-  appointment: Appointment;
-  type: string;
+  reason: string;
+  schedule: string;
+  status: Status;
+  cancellationReason?: string | null;
+  // type: "Crear" | "Agendar" | "Cancelar";
 };

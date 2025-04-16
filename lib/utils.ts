@@ -5,7 +5,8 @@ export function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
 }
 
-export const parseStringify = (value: unknown) => JSON.parse(JSON.stringify(value));
+export const parseStringify = (value: unknown) =>
+  JSON.parse(JSON.stringify(value));
 
 export const convertFileToUrl = (file: File) => URL.createObjectURL(file);
 
@@ -66,6 +67,16 @@ export const formatDateTime = (dateString: Date | string) => {
     dateOnly: formattedDate,
     timeOnly: formattedTime,
   };
+};
+
+export const formatPhoneNumber = (phone: string): string => {
+  if (!phone.startsWith("+52") || phone.length !== 13) return phone;
+
+  const areaCode = phone.slice(3, 6);
+  const middle = phone.slice(6, 9);
+  const last = phone.slice(9);
+
+  return `+52 ${areaCode} ${middle} ${last}`;
 };
 
 export function encryptKey(passkey: string) {
