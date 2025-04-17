@@ -1,51 +1,75 @@
-import { Client, Account as AppwriteAccount, Databases, Models } from 'node-appwrite';
+// functions/generateAdminJWT/index.ts
 
-interface AppwriteRequest {
-  payload: string;
-}
-interface AppwriteResponse {
-  status(code: number): AppwriteResponse;
-  json(body: unknown): void;
+import { Client, Account, Databases, Models } from 'node-appwrite';
+
+//
+// Definimos el contexto que Appwrite inyecta en Node.js 20
+//
+interface AppwriteContext {
+  req: {
+    // El body viene como texto
+    bodyText: string;
+  };
+  res: {
+    status(code: number): AppwriteContext['res'];
+    json(body: unknown): void;
+  };
+  log: (...args: unknown[]) => void;
+  error: (...args: unknown[]) => void;
 }
 
-// Extiende Account para incluir createJWT()
-interface AccountWithJWT extends AppwriteAccount {
-  createJWT(): Promise<{ jwt: string }>;
-}
-
+//
+// Documento de Settings con passKey
+//
 type SettingsDoc = Models.Document & { passKey: string };
 
+//
+// Inicialización del SDK de Appwrite
+//
 const client = new Client()
   .setEndpoint(process.env.APPWRITE_FUNCTION_ENDPOINT!)
   .setProject(process.env.APPWRITE_FUNCTION_PROJECT_ID!)
   .setKey(process.env.APPWRITE_FUNCTION_KEY!);
 
-// Aquí indicamos a TS que nuestra cuenta tiene createJWT()
-const account = new AppwriteAccount(client) as AccountWithJWT;
+// Aseguramos el tipo de createJWT()
+const account = new Account(client) as unknown as {
+  createJWT(): Promise<{ jwt: string }>;
+};
 const databases = new Databases(client);
 
-export default async function handler(
-  req: AppwriteRequest,
-  res: AppwriteResponse
-) {
+//
+// Handler único
+//
+export default async function generateAdminJWT(context: AppwriteContext): Promise<void> {
+  const { req, res, log, error } = context;
   try {
-    const { passKey } = JSON.parse(req.payload);
-    const settings = await databases.listDocuments<SettingsDoc>(
+    // 1) Leer payload
+    const { passKey } = JSON.parse(req.bodyText);
+    log('🔑 passKey recibida:', passKey);
+
+    // 2) Obtener passKey oficial
+    const result = await databases.listDocuments<SettingsDoc>(
       process.env.DATABASE_ID!,
       process.env.SETTINGS_COLLECTION_ID!,
       []
     );
-    const expected = settings.documents[0].passKey;
+    const expected = result.documents?.[0]?.passKey;
+    log('🗄️ passKey esperada:', expected);
+
     if (passKey !== expected) {
-      return res.status(401).json({ error: 'Clave inválida' });
+      log('❌ passKey inválida');
+      res.status(401).json({ error: 'Clave inválida' });
+      return;
     }
 
-    // Ahora createJWT() es reconocido y tipado correctamente
+    // 3) Generar JWT
     const { jwt } = await account.createJWT();
+    log('✅ JWT generado');
 
-    return res.status(200).json({ jwt });
+    // 4) Responder al caller
+    res.status(200).json({ jwt });
   } catch (err) {
-    console.error(err);
-    return res.status(500).json({ error: 'Error interno al generar JWT' });
+    error('🔥 Error interno:', err);
+    res.status(500).json({ error: 'Error interno al generar JWT' });
   }
 }
