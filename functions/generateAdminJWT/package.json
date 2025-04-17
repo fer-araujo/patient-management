@@ -1,12 +1,15 @@
 {
     "name": "generateAdminJWT",
     "version": "1.0.0",
-    "main": "index.js",
+    "main": "dist/index.js",
+    "scripts": {
+      "build": "tsc"
+    },
     "dependencies": {
       "node-appwrite": "^11.0.0"
     },
-    "scripts": {
-      "build": ""
+    "devDependencies": {
+      "typescript": "^5.1.3"
     }
   }
   
