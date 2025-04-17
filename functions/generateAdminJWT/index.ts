@@ -12,7 +12,7 @@ const client = new Client()
   .setEndpoint(process.env.APPWRITE_FUNCTION_ENDPOINT!)
   .setProject(process.env.APPWRITE_FUNCTION_PROJECT_ID!)
   .setKey(process.env.APPWRITE_FUNCTION_KEY!);
-
+  console.log(process.env.APPWRITE_FUNCTION_KEY!)
 const databases = new Databases(client);
 
 export default async function generateAdminJWT(context: AppwriteContext) {

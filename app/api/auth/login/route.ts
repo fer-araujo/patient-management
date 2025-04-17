@@ -1,25 +1,41 @@
-import { NextResponse } from 'next/server';
+import { NextResponse } from "next/server";
+import { getFunctions } from "@/lib/appwriteServer";
 
 export async function POST(request: Request) {
   const { passKey } = await request.json();
 
-  const endpoint   = process.env.NEXT_PUBLIC_ENDPOINT!;
-  const projectId  = process.env.NEXT_PUBLIC_PROJECT_ID!;
-  const functionId = process.env.NEXT_PUBLIC_FUNCTION_ID!;
+  try {
+    const functions = getFunctions();
 
-  const execRes = await fetch(
-    `${endpoint}/functions/${functionId}/executions?sync=true`,
-    {
-      method: 'POST',
-      headers: {
-        'Content-Type':           'application/json',
-        'X-Appwrite-Project':     projectId,
-        'X-Appwrite-Response-Format': '1.0.0',
-      },
-      body: JSON.stringify({ passKey }),
+    const result = await functions.createExecution(
+      process.env.NEXT_PUBLIC_FUNCTION_ID!,
+      JSON.stringify({ passKey }),
+      true // sync=true
+    );
+
+    const output = result.responseBody;
+
+    if (!output) {
+      console.error("❌ output vacío desde Function", result);
+      return new NextResponse("Error interno al generar token", { status: 500 });
     }
-  );
 
-  const execJson = await execRes.json();
-  return NextResponse.json(execJson);
+    const parsed = JSON.parse(output);
+
+    if (parsed.error) {
+      return new NextResponse(parsed.error, { status: parsed.code });
+    }
+
+    const response = NextResponse.json({ ok: true });
+    response.cookies.set("appwrite_jwt", parsed.jwt, {
+      httpOnly: true,
+      secure: process.env.NODE_ENV === "production",
+      path: "/",
+    });
+
+    return response;
+  } catch (err) {
+    console.error("🔥 Error en ejecución de función:", err);
+    return new NextResponse("Error de servidor", { status: 500 });
+  }
 }
