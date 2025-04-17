@@ -1,6 +1,6 @@
 // functions/generateAdminJWT/index.ts
 
-import { Client, Databases, Models, Account } from "node-appwrite";
+import { Client, Account, Databases, Models } from "appwrite";
 
 interface AppwriteContext {
   req: { bodyRaw: Uint8Array };
@@ -10,27 +10,26 @@ interface AppwriteContext {
 
 type SettingsDoc = Models.Document & { passKey: string };
 
-const ENDPOINT       = process.env.APPWRITE_FUNCTION_ENDPOINT!;     // ej. "https://cloud.appwrite.io/v1"
-const PROJECT        = process.env.APPWRITE_FUNCTION_PROJECT_ID!;  // tu projectId
-const FUNCTION_KEY   = process.env.APPWRITE_FUNCTION_KEY!;         // tu API Key con scopes: account, sessions.write, databases.read
-const ADMIN_EMAIL    = process.env.ADMIN_EMAIL!;                   // email del admin
-const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD!;                // password del admin
-const DB_ID          = process.env.DATABASE_ID!;                  // ID de tu base de datos
-const COLL_ID        = process.env.SETTINGS_COLLECTION_ID!;       // ID de la colección Settings
+const ENDPOINT       = process.env.APPWRITE_FUNCTION_ENDPOINT!;     // e.g. "https://cloud.appwrite.io/v1"
+const PROJECT_ID     = process.env.APPWRITE_FUNCTION_PROJECT_ID!; 
+const ADMIN_EMAIL    = process.env.ADMIN_EMAIL!;                  
+const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD!;               
+const DB_ID          = process.env.DATABASE_ID!;                  
+const COLL_ID        = process.env.SETTINGS_COLLECTION_ID!;       
 
-const client    = new Client()
-  .setEndpoint(ENDPOINT)
-  .setProject(PROJECT)
-  .setKey(FUNCTION_KEY);
+// Inicializamos el client con la Web SDK
+const client = new Client()
+  .setEndpoint(ENDPOINT)  
+  .setProject(PROJECT_ID)
 
-const databases = new Databases(client);
 const account   = new Account(client);
+const databases = new Databases(client);
 
 export default async function generateAdminJWT(context: AppwriteContext) {
   const { req, log, error } = context;
 
   try {
-    // 1) Leer passKey del body
+    // 1) Leer y parsear el passKey del body
     const bodyText = Buffer.from(req.bodyRaw || []).toString("utf-8");
     if (!bodyText) {
       log("❌ Petición vacía");
@@ -39,7 +38,7 @@ export default async function generateAdminJWT(context: AppwriteContext) {
     const { passKey } = JSON.parse(bodyText) as { passKey: string };
     log("🔑 passKey recibida:", passKey);
 
-    // 2) Validar passKey en la colección Settings
+    // 2) Validar passKey leyendo tu colección Settings
     const settingsRes = await databases.listDocuments<SettingsDoc>(
       DB_ID,
       COLL_ID,
@@ -50,19 +49,20 @@ export default async function generateAdminJWT(context: AppwriteContext) {
       log("❌ passKey inválida:", passKey, "vs", expected);
       return { error: "Clave inválida", code: 401 };
     }
-    log("✅ passKey correcta, autenticando admin...");
+    log("✅ passKey correcta, creando sesión de admin…");
 
-    // 3) Crear sesión del admin con email+password
+    // 3) Crear sesión de admin (email+password)
     await account.createEmailPasswordSession(ADMIN_EMAIL, ADMIN_PASSWORD);
     log("✅ Sesión de admin creada");
 
     // 4) Generar JWT de esa sesión
-    const { jwt } = await account.createJWT();
+    const jwtRes = await account.createJWT(); // :contentReference[oaicite:1]{index=1}
+    const jwt = jwtRes.jwt;
     log("✅ JWT generado:", jwt);
 
     return { jwt };
   } catch (err) {
-    error("🔥 Error interno al generar JWT:", err);
+    error("🔥 Error interno:", err);
     return { error: "Error interno al generar JWT", code: 500 };
   }
 }
