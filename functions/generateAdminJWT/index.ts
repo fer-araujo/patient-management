@@ -44,7 +44,7 @@ export default async function generateAdminJWT(context: AppwriteContext) {
 
     // —————— Aquí la corrección: llamamos al endpoint /account/jwt ——————
     const jwtRes = await fetch(
-      `${process.env.APPWRITE_FUNCTION_ENDPOINT}/v1/account/jwt`,
+      `${process.env.APPWRITE_FUNCTION_ENDPOINT}/account/jwt`,
       {
         method: "POST",
         headers: {
@@ -54,16 +54,16 @@ export default async function generateAdminJWT(context: AppwriteContext) {
         },
       }
     );
-
+    
     if (!jwtRes.ok) {
       const text = await jwtRes.text();
       log("❌ Error al generar JWT:", text);
       return { error: "No se pudo generar el JWT del admin", code: jwtRes.status };
     }
-
+    
     const { jwt } = await jwtRes.json();
     log("✅ JWT generado:", jwt);
-
+    
     return { jwt };
   } catch (err) {
     error("🔥 Error interno:", err);
