@@ -1,6 +1,6 @@
 // functions/generateAdminJWT/index.ts
 
-import { Client, Databases, Models, Users } from "node-appwrite";
+import { Client, Account, Databases, Models } from "node-appwrite";
 
 interface AppwriteContext {
   req: { bodyRaw: Uint8Array };
@@ -10,13 +10,21 @@ interface AppwriteContext {
 
 type SettingsDoc = Models.Document & { passKey: string };
 
-const client = new Client()
-  .setEndpoint(process.env.APPWRITE_FUNCTION_ENDPOINT!)      // e.g. "https://cloud.appwrite.io/v1"
-  .setProject(process.env.APPWRITE_FUNCTION_PROJECT_ID!)     // tu projectId
-  .setKey(process.env.APPWRITE_FUNCTION_KEY!);               // la Service Key inyectada (tiene todos los scopes)
+const ENDPOINT       = process.env.APPWRITE_FUNCTION_ENDPOINT!;
+const PROJECT        = process.env.APPWRITE_FUNCTION_PROJECT_ID!;
+const FUNCTION_KEY   = process.env.APPWRITE_FUNCTION_KEY!;     // tu API Key con scopes: account, sessions.write, databases.read
+const ADMIN_EMAIL    = process.env.ADMIN_EMAIL!;              
+const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD!;           
+const DB_ID          = process.env.DATABASE_ID!;              
+const COLL_ID        = process.env.SETTINGS_COLLECTION_ID!;    
+
+const client    = new Client()
+  .setEndpoint(ENDPOINT)
+  .setProject(PROJECT)
+  .setKey(FUNCTION_KEY);
 
 const databases = new Databases(client);
-const users     = new Users(client);                         // para crear JWT de cualquier usuario
+const account   = new Account(client);
 
 export default async function generateAdminJWT(context: AppwriteContext) {
   const { req, log, error } = context;
@@ -31,26 +39,28 @@ export default async function generateAdminJWT(context: AppwriteContext) {
     const { passKey } = JSON.parse(bodyText) as { passKey: string };
     log("🔑 passKey recibida:", passKey);
 
-    // 2) Validar passKey contra tu colección Settings
-    const settingsResult = await databases.listDocuments<SettingsDoc>(
-      process.env.DATABASE_ID!,
-      process.env.SETTINGS_COLLECTION_ID!,
+    // 2) Validar passKey en la colección Settings
+    const settingsRes = await databases.listDocuments<SettingsDoc>(
+      DB_ID,
+      COLL_ID,
       []
     );
-    const expected = settingsResult.documents?.[0]?.passKey;
+    const expected = settingsRes.documents?.[0]?.passKey;
     if (passKey !== expected) {
-      log("❌ passKey inválida (recibida vs esperada):", passKey, expected);
+      log("❌ passKey inválida:", passKey, "vs", expected);
       return { error: "Clave inválida", code: 401 };
     }
+    log("✅ passKey correcta, autenticando admin...");
 
-    log("✅ passKey correcta, generando JWT de admin...");
+    // 3) Crear sesión del admin con email+password
+    await account.createSession(ADMIN_EMAIL, ADMIN_PASSWORD);
+    log("✅ Sesión de admin creada");
 
-    // 3) Generar el JWT para el admin con Users.createJWT()
-    const { jwt } = await users.createJWT(process.env.ADMIN_USER_ID!);
-
+    // 4) Generar JWT de esa sesión
+    const { jwt } = await account.createJWT();
     log("✅ JWT generado:", jwt);
-    return { jwt };
 
+    return { jwt };
   } catch (err) {
     error("🔥 Error interno al generar JWT:", err);
     return { error: "Error interno al generar JWT", code: 500 };
