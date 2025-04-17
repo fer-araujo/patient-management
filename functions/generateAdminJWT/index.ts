@@ -1,4 +1,4 @@
-import { Client, Account, Databases, Models } from "node-appwrite";
+import { Client, Users, Databases, Models } from "node-appwrite";
 
 interface AppwriteContext {
   req: {
@@ -15,10 +15,7 @@ const client = new Client()
   .setProject(process.env.APPWRITE_FUNCTION_PROJECT_ID!)
   .setKey(process.env.APPWRITE_FUNCTION_KEY!);
 
-const account = new Account(client) as unknown as {
-  createJWT(): Promise<{ jwt: string }>;
-};
-
+const users = new Users(client);
 const databases = new Databases(client);
 
 export default async function generateAdminJWT(context: AppwriteContext) {
@@ -26,6 +23,7 @@ export default async function generateAdminJWT(context: AppwriteContext) {
 
   try {
     const bodyText = Buffer.from(req.bodyRaw || []).toString("utf-8");
+
     if (!bodyText) {
       log("❌ bodyText vacío");
       return { error: "Petición vacía", code: 400 };
@@ -41,17 +39,19 @@ export default async function generateAdminJWT(context: AppwriteContext) {
     );
 
     const expected = result.documents[0]?.passKey;
-    log("🗄️ passKey esperada:", expected);
 
     if (passKey !== expected) {
       log("❌ passKey inválida");
       return { error: "Clave inválida", code: 401 };
     }
 
-    const { jwt } = await account.createJWT();
-    log("✅ JWT generado");
+    log("✅ passKey correcta");
 
-    return { jwt };
+    // ✅ Generar JWT con permisos de admin sin login explícito
+    const jwtResult = await users.createJWT(process.env.ADMIN_USER_ID!);
+    log("✅ JWT generado para el admin");
+
+    return { jwt: jwtResult.jwt };
   } catch (err) {
     error("🔥 Error interno:", err);
     return { error: "Error interno al generar JWT", code: 500 };
