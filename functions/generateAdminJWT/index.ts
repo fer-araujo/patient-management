@@ -1,4 +1,4 @@
-import { Client, Account, Databases, Models } from "node-appwrite";
+// import { Client, Account, Databases, Models } from "node-appwrite";
 
 interface AppwriteContext {
   req: {
@@ -7,55 +7,62 @@ interface AppwriteContext {
   log: (...args: unknown[]) => void;
   error: (...args: unknown[]) => void;
 }
-
-type SettingsDoc = Models.Document & { passKey: string };
-
-const client = new Client()
-  .setEndpoint(process.env.APPWRITE_FUNCTION_ENDPOINT!)
-  .setProject(process.env.APPWRITE_FUNCTION_PROJECT_ID!)
-  .setKey(process.env.APPWRITE_FUNCTION_KEY!);
-
-const account = new Account(client) as unknown as {
-  createJWT(): Promise<{ jwt: string }>;
-};
-
-const databases = new Databases(client);
-
 export default async function generateAdminJWT(context: AppwriteContext) {
-  const { req, log, error } = context;
+  const { req, log } = context;
 
-  try {
-    // Usamos bodyRaw, que es el formato adecuado para funciones síncronas
-    const bodyText = req.bodyRaw ? Buffer.from(req.bodyRaw).toString('utf-8') : "";
+  log('🚧 CONTENIDO COMPLETO DE REQ:', req);
 
-    if (!bodyText) {
-      log("❌ bodyText está vacío");
-      return { error: "Petición vacía", code: 400 };
-    }
-
-    const { passKey } = JSON.parse(bodyText);
-    log("🔑 passKey recibida:", passKey);
-
-    const result = await databases.listDocuments<SettingsDoc>(
-      process.env.DATABASE_ID!,
-      process.env.SETTINGS_COLLECTION_ID!,
-      []
-    );
-
-    const expected = result.documents[0]?.passKey;
-    log("🗄️ passKey esperada:", expected);
-
-    if (passKey !== expected) {
-      log("❌ passKey inválida");
-      return { error: "Clave inválida", code: 401 };
-    }
-
-    const { jwt } = await account.createJWT();
-    log("✅ JWT generado");
-
-    return { jwt };
-  } catch (err) {
-    error("🔥 Error interno:", err);
-    return { error: "Error interno al generar JWT", code: 500 };
-  }
+  return { msg: "debugging req" };
 }
+
+// type SettingsDoc = Models.Document & { passKey: string };
+
+// const client = new Client()
+//   .setEndpoint(process.env.APPWRITE_FUNCTION_ENDPOINT!)
+//   .setProject(process.env.APPWRITE_FUNCTION_PROJECT_ID!)
+//   .setKey(process.env.APPWRITE_FUNCTION_KEY!);
+
+// const account = new Account(client) as unknown as {
+//   createJWT(): Promise<{ jwt: string }>;
+// };
+
+// const databases = new Databases(client);
+
+// export default async function generateAdminJWT(context: AppwriteContext) {
+//   const { req, log, error } = context;
+
+//   try {
+//     // Usamos bodyRaw, que es el formato adecuado para funciones síncronas
+//     const bodyText = req.bodyRaw ? Buffer.from(req.bodyRaw).toString('utf-8') : "";
+
+//     if (!bodyText) {
+//       log("❌ bodyText está vacío");
+//       return { error: "Petición vacía", code: 400 };
+//     }
+
+//     const { passKey } = JSON.parse(bodyText);
+//     log("🔑 passKey recibida:", passKey);
+
+//     const result = await databases.listDocuments<SettingsDoc>(
+//       process.env.DATABASE_ID!,
+//       process.env.SETTINGS_COLLECTION_ID!,
+//       []
+//     );
+
+//     const expected = result.documents[0]?.passKey;
+//     log("🗄️ passKey esperada:", expected);
+
+//     if (passKey !== expected) {
+//       log("❌ passKey inválida");
+//       return { error: "Clave inválida", code: 401 };
+//     }
+
+//     const { jwt } = await account.createJWT();
+//     log("✅ JWT generado");
+
+//     return { jwt };
+//   } catch (err) {
+//     error("🔥 Error interno:", err);
+//     return { error: "Error interno al generar JWT", code: 500 };
+//   }
+// }
