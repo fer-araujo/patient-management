@@ -2,17 +2,27 @@
 
 interface AppwriteContext {
   req: {
+    bodyText(arg0: string, bodyText: never): unknown;
+    headers(arg0: string, headers: never): unknown;
     bodyRaw: Uint8Array; // Cambié a bodyRaw porque Appwrite lo pasa como Uint8Array
   };
   log: (...args: unknown[]) => void;
   error: (...args: unknown[]) => void;
 }
 export default async function generateAdminJWT(context: AppwriteContext) {
-  const { req, log } = context;
+  const { req, log, error } = context;
 
-  log('🚧 CONTENIDO COMPLETO DE REQ:', req);
+  try {
+    log("🚀 Headers:", req.headers);
+    log("🚀 BodyRaw:", req.bodyRaw);
+    log("🚀 BodyRaw (string):", Buffer.from(req.bodyRaw || []).toString("utf-8"));
+    log("🚀 BodyText:", req.bodyText);
 
-  return { msg: "debugging req" };
+    return { success: true };
+  } catch (err) {
+    error("🔥 Error:", err);
+    return { error: "Error en depuración", code: 500 };
+  }
 }
 
 // type SettingsDoc = Models.Document & { passKey: string };
