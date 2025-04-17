@@ -61,6 +61,8 @@ export default async function generateAdminJWT(context: AppwriteContext) {
     );
 
     if (!jwtRes.ok) {
+      const errorText = await jwtRes.text();
+      log("❌ Error body:", errorText);
       throw new Error("No se pudo generar el JWT del admin");
     }
 
