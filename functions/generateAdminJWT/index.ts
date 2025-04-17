@@ -2,13 +2,11 @@ import { Client, Account, Databases, Models } from "node-appwrite";
 
 interface AppwriteContext {
   req: {
-    bodyText: string;
-    headers: Record<string, string>;
+    bodyRaw: Uint8Array; // Cambié a bodyRaw porque Appwrite lo pasa como Uint8Array
   };
   log: (...args: unknown[]) => void;
   error: (...args: unknown[]) => void;
 }
-
 
 type SettingsDoc = Models.Document & { passKey: string };
 
@@ -27,7 +25,8 @@ export default async function generateAdminJWT(context: AppwriteContext) {
   const { req, log, error } = context;
 
   try {
-    const bodyText = req.headers?.["x-fn-body"] || "";
+    // Usamos bodyRaw, que es el formato adecuado para funciones síncronas
+    const bodyText = req.bodyRaw ? Buffer.from(req.bodyRaw).toString('utf-8') : "";
 
     if (!bodyText) {
       log("❌ bodyText está vacío");

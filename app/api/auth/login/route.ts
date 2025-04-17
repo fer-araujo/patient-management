@@ -12,11 +12,11 @@ export async function POST(request: Request) {
     {
       method: 'POST',
       headers: {
-        'Content-Type': 'text/plain', // ✅ Appwrite solo llena bodyText si recibe texto plano
+        'Content-Type': 'text/plain', // Aquí aseguramos que el cuerpo sea text/plain
         'X-Appwrite-Project': projectId,
         'X-Appwrite-Response-Format': '1.0.0'
       },
-      body: JSON.stringify({ passKey }) // 🔁 sí va como string JSON, pero enviado como texto plano
+      body: JSON.stringify({ passKey }) // El cuerpo sigue siendo un string JSON
     }
   );
 
