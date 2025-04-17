@@ -53,7 +53,6 @@ export const columns: ColumnDef<Appointment>[] = [
       const studiesList = studies.map((study: { fileId: string }) => {
         return { id:study.fileId };
       });
-      console.log(studiesList);
       const button =
         studiesList.length > 0 ? (
           <StudiesModal
@@ -94,7 +93,6 @@ export const columns: ColumnDef<Appointment>[] = [
     id: "actions",
     header: () => <div className="pl-4">Acciones</div>,
     cell: ({ row: { original: data } }) => {
-      console.log(data);
       return (
         <div className="flex gap-1">
           <AppointmentModal type={"Agendar"} appointment={data} />

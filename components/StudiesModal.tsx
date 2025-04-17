@@ -40,7 +40,7 @@ const StudiesModal = ({
           Estudios
         </Button>
       </DialogTrigger>
-      <DialogContent className="shad-dialog min-w-3/4 overflow-hidden">
+      <DialogContent className="shad-dialog min-auto overflow-hidden">
         <DialogHeader className="mb-4 space-y-3">
           <DialogTitle>Estudios de {patientName}</DialogTitle>
         </DialogHeader>

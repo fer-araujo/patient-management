@@ -42,22 +42,22 @@ export const formatDateTime = (dateString: Date | string) => {
   };
 
   const formattedDateTime: string = new Date(dateString).toLocaleString(
-    "en-US",
+    "es-MX",
     dateTimeOptions
   );
 
   const formattedDateDay: string = new Date(dateString).toLocaleString(
-    "en-US",
+    "es-MX",
     dateDayOptions
   );
 
   const formattedDate: string = new Date(dateString).toLocaleString(
-    "en-US",
+    "es-MX",
     dateOptions
   );
 
   const formattedTime: string = new Date(dateString).toLocaleString(
-    "en-US",
+    "es-MX",
     timeOptions
   );
 
@@ -78,11 +78,3 @@ export const formatPhoneNumber = (phone: string): string => {
 
   return `+52 ${areaCode} ${middle} ${last}`;
 };
-
-export function encryptKey(passkey: string) {
-  return btoa(passkey);
-}
-
-export function decryptKey(passkey: string) {
-  return atob(passkey);
-}

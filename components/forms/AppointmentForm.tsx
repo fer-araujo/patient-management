@@ -136,7 +136,6 @@ export const AppointmentForm = ({
         };
         const appointmentUpdated = await updateAppointment(appointmentToUpdate);
 
-        console.log(appointmentUpdated);
         if (appointmentUpdated) {
           setOpen?.(false);
           form.reset();

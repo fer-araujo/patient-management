@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useEffect, useState } from "react";
+import React, { useState } from "react";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -10,56 +10,29 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
-import {
-  InputOTP,
-  InputOTPGroup,
-  InputOTPSlot,
-} from "@/components/ui/input-otp";
+import { InputOTP, InputOTPGroup, InputOTPSlot } from "@/components/ui/input-otp";
+import { useRouter } from "next/navigation";
 
-import Image from "next/image";
-import { usePathname, useRouter } from "next/navigation";
-import { getAdminPassKey } from "@/lib/actions/admin.actions";
-import { decryptKey, encryptKey } from "@/lib/utils";
-
-const PassKeyModal = () => {
+const PassKeyModal: React.FC = () => {
   const router = useRouter();
-  const path = usePathname();
   const [open, setOpen] = useState(true);
   const [passKey, setPassKey] = useState("");
   const [error, setError] = useState("");
 
-  const encryptedPassKey = typeof window !== "undefined" ? window.localStorage.getItem("accessKey") : null;
-  
-  useEffect(() => {
-    async function fetchPassKey() {
-      const storedPassKey = await getAdminPassKey();
-      const accessKey = encryptedPassKey && decryptKey(encryptedPassKey);
-      if (path) {
-        if (accessKey === storedPassKey) {
-          setOpen(false);
-          router.push("/admin");
-        }
-      }
-    }
-    fetchPassKey();
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [])
-  
+  const validatePassKey = async () => {
+    setError("");
+    const res = await fetch("/api/auth/login", {
+      method: "POST",
+      credentials: "include",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ passKey }),
+    });
 
-  const validatePassKey = async (
-    e: React.MouseEvent<HTMLButtonElement, MouseEvent>
-  ) => {
-    e.preventDefault();
-    const storedPassKey = await getAdminPassKey();
-
-    if (passKey === storedPassKey) {
-      const encrypted = encryptKey(passKey);
-      localStorage.setItem("accessKey", encrypted);
-
+    if (res.ok) {
       setOpen(false);
       router.push("/admin");
     } else {
-      setError("La clave de acceso es incorrecta. Por favor intente de nuevo.");
+      setError("Clave de administrador incorrecta.");
     }
   };
 
@@ -67,73 +40,47 @@ const PassKeyModal = () => {
     setOpen(false);
     router.push("/");
   };
-  
 
   return (
     <AlertDialog open={open} onOpenChange={setOpen}>
       <AlertDialogContent className="shad-alert-dialog">
         <AlertDialogHeader>
-          <AlertDialogTitle className="flex items-start justify-between">
-            Verificacion de Administrador
-            <Image
-              src={"/assets/icons/close.svg"}
-              alt="close"
-              width={20}
-              height={20}
-              onClick={() => closeModal()}
-              className="cursor-pointer"
-            />
+          <AlertDialogTitle className="flex justify-between items-center">
+            Verificación de Administrador
+            <button onClick={closeModal} className="text-gray-500 hover:text-gray-700">
+              &times;
+            </button>
           </AlertDialogTitle>
           <AlertDialogDescription>
-            Para acceder al panel de administrador por favor ingrese la clave de
-            acceso.
+            Ingresa la clave de acceso para continuar.
           </AlertDialogDescription>
         </AlertDialogHeader>
-        <div>
+
+        <div className="mt-4">
           <InputOTP
             maxLength={6}
             value={passKey}
             onChange={(value) => setPassKey(value)}
           >
             <InputOTPGroup className="w-full flex justify-between">
-              <InputOTPSlot
-                className="text-4xl font-bold justify-center flex border border-dark-500 rounded-lg size-16 gap-4"
-                index={0}
-              />
-              <InputOTPSlot
-                className="text-4xl font-bold justify-center flex border border-dark-500 rounded-lg size-16 gap-4"
-                index={1}
-              />
-              <InputOTPSlot
-                className="text-4xl font-bold justify-center flex border border-dark-500 rounded-lg size-16 gap-4"
-                index={2}
-              />
-              <InputOTPSlot
-                className="text-4xl font-bold justify-center flex border border-dark-500 rounded-lg size-16 gap-4"
-                index={3}
-              />
-              <InputOTPSlot
-                className="text-4xl font-bold justify-center flex border border-dark-500 rounded-lg size-16 gap-4"
-                index={4}
-              />
-              <InputOTPSlot
-                className="text-4xl font-bold justify-center flex border border-dark-500 rounded-lg size-16 gap-4"
-                index={5}
-              />
+              {[...Array(6)].map((_, index) => (
+                <InputOTPSlot
+                  key={index}
+                  index={index}
+                  className="text-4xl font-bold flex justify-center items-center border border-gray-300 rounded-lg w-16 h-16"
+                />
+              ))}
             </InputOTPGroup>
           </InputOTP>
-          {error && (
-            <p className="shad-error text-sm mt-4 p-2 flex justify-center ">
-              {error}
-            </p>
-          )}
+          {error && <p className="text-red-600 mt-2">{error}</p>}
         </div>
+
         <AlertDialogFooter>
           <AlertDialogAction
+            onClick={validatePassKey}
             className="shad-primary-btn w-full"
-            onClick={(e) => validatePassKey(e)}
           >
-            Ingresar Codigo
+            Ingresar Código
           </AlertDialogAction>
         </AlertDialogFooter>
       </AlertDialogContent>

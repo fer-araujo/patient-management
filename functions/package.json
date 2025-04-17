@@ -1,0 +1,12 @@
+{
+    "name": "generateAdminJWT",
+    "version": "1.0.0",
+    "main": "index.js",
+    "dependencies": {
+      "node-appwrite": "^11.0.0"
+    },
+    "scripts": {
+      "build": ""
+    }
+  }
+  
