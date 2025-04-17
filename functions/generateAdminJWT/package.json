@@ -6,7 +6,8 @@
     "build": "tsc"
   },
   "dependencies": {
-    "node-appwrite": "^11.0.0"
+    "node-appwrite": "^11.0.0",
+    "appwrite": "^17.0.1"
   },
   "devDependencies": {
     "typescript": "^5.1.3",
