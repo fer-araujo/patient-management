@@ -1,4 +1,5 @@
-import { Client, Account, Databases, Models } from 'node-appwrite';
+// functions/generateAdminJWT/index.ts
+import sdk from 'node-appwrite';
 import { parse } from 'cookie';
 
 interface AppwriteContext {
@@ -7,63 +8,63 @@ interface AppwriteContext {
   log: (...args: unknown[]) => void;
   error: (...args: unknown[]) => void;
 }
-interface FunctionResponse { jwt?: string; error?: string; code?: number; }
-
 const ENDPOINT       = process.env.APPWRITE_FUNCTION_ENDPOINT!;     // e.g. "https://cloud.appwrite.io/v1"
 const PROJECT_ID     = process.env.APPWRITE_FUNCTION_PROJECT_ID!;
 const ADMIN_EMAIL    = process.env.ADMIN_EMAIL!;
 const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD!;
 const DB_ID          = process.env.DATABASE_ID!;
 const COLL_ID        = process.env.SETTINGS_COLLECTION_ID!;
+const API_KEY = process.env.APPWRITE_FUNCTION_API_KEY!;
 
-export default async function generateAdminJWT(
-  context: AppwriteContext
-): Promise<FunctionResponse> {
+export default async function generateAdminJWT(context: AppwriteContext) {
   const { req, log, error } = context;
+
+  // Parsear body
   const text = Buffer.from(req.bodyRaw).toString('utf-8');
   const body = text ? JSON.parse(text) as { passKey?: string } : {};
 
-  const client = new Client()
+  const client = new sdk.Client()
     .setEndpoint(ENDPOINT)
-    .setProject(PROJECT_ID);
-  const account = new Account(client);
+    .setProject(PROJECT_ID)
+    .setKey(API_KEY);
+  const account = new sdk.Account(client);
+  const databases = new sdk.Databases(client);
 
-  if (body.passKey) {
-    // Validar passKey en la base de datos
-    const db = new Databases(client);
-    const docs = await db.listDocuments(DB_ID, COLL_ID);
-    const validKey = (docs.documents[0] as Models.Document)?.passKey;
-    if (body.passKey !== validKey) {
-      log('PassKey inválida:', body.passKey);
-      return { error: 'Clave inválida', code: 401 };
-    }
-    log('PassKey válida, autenticando administrador...');
-    try {
-      // Autenticar admin y generar JWT
+  try {
+    if (body.passKey) {
+      // 1) Validar passKey
+      const docs = await databases.listDocuments(DB_ID, COLL_ID, []);
+      interface Document {
+        passKey?: string;
+      }
+      const validKey = (docs.documents[0] as Document)?.passKey;
+      if (body.passKey !== validKey) {
+        log('PassKey inválida');
+        return { statusCode: 401, body: JSON.stringify({ error: 'Clave inválida' }) };
+      }
+      log('PassKey válida, autenticando admin...');
+
+      // 2) Crear sesión de admin
       await account.createSession(ADMIN_EMAIL, ADMIN_PASSWORD);
       const jwtRes = await account.createJWT();
       log('JWT generado');
-      return { jwt: jwtRes.jwt };
-    } catch (e: unknown) {
-      error('Error autenticando admin:', e);
-      return { error: 'Error autenticando admin', code: 500 };
+      return { statusCode: 200, body: JSON.stringify({ jwt: jwtRes.jwt }) };
     }
-  }
 
-  // Regenerar JWT desde la cookie de sesión de Appwrite
-  const cookiesHeader = req.headers['cookie'] || '';
-  const cookiesParsed = parse(cookiesHeader);
-  const session = cookiesParsed[`a_session_${PROJECT_ID}`];
-  if (!session) {
-    return { error: 'Usuario no autenticado', code: 401 };
-  }
-  try {
+    // 3) Regenerar JWT desde cookie
+    const cookieHeader = req.headers['cookie'] || '';
+    const cookiesParsed = parse(cookieHeader);
+    const session = cookiesParsed[`a_session_${PROJECT_ID}`];
+    if (!session) {
+      return { statusCode: 401, body: JSON.stringify({ error: 'Usuario no autenticado' }) };
+    }
     client.setSession(session);
     const jwtRes = await account.createJWT();
-    log('JWT regenerado desde sesión');
-    return { jwt: jwtRes.jwt };
-  } catch (e: unknown) {
-    error('Error generando JWT:', e);
-    return { error: 'Error al generar JWT', code: 500 };
+    log('JWT regenerado');
+    return { statusCode: 200, body: JSON.stringify({ jwt: jwtRes.jwt }) };
+
+  } catch (e: any) {
+    error('Error interno:', e);
+    return { statusCode: e.code || 500, body: JSON.stringify({ error: e.message || 'Error interno' }) };
   }
 }

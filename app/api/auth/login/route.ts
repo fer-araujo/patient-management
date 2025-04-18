@@ -3,67 +3,91 @@ import { NextResponse } from 'next/server';
 import { Client, Account } from 'appwrite';
 import { cookies } from 'next/headers';
 
+// ENDPOINT es tu base URL de Appwrite (e.g. https://<REGION>.appwrite.io/v1)
 const ENDPOINT = process.env.NEXT_PUBLIC_ENDPOINT as string;
 const PROJECT_ID = process.env.NEXT_PUBLIC_PROJECT_ID as string;
 const FUNCTION_ID = process.env.NEXT_PUBLIC_FUNCTION_ID as string;
 
 interface LoginRequestBody { passKey?: string; }
-interface FunctionResponse { jwt?: string; error?: string; code?: number; }
+interface FunctionResult { jwt?: string; error?: string; }
 
 export async function POST(request: Request) {
   const { passKey } = (await request.json()) as LoginRequestBody;
-  const cookieStore = await cookies();
   let jwtToken: string;
 
   if (passKey) {
-    // Validar passKey y obtener JWT desde Appwrite Function
-    const res = await fetch(
-      `${ENDPOINT}/functions/${FUNCTION_ID}/executions`,
+    // Llamada REST síncrona a la Function
+    const response = await fetch(
+      `${ENDPOINT}/functions/${FUNCTION_ID}/executions?async=false`,
       {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'X-Appwrite-Project': PROJECT_ID
+          'X-Appwrite-Project': PROJECT_ID,
         },
-        body: JSON.stringify({ passKey })
+        body: JSON.stringify({ passKey }),
       }
     );
-    const payload = (await res.json().catch(() => ({} as FunctionResponse))) as FunctionResponse;
-    if (!res.ok || payload.error) {
-      return NextResponse.json({ error: payload.error ?? 'Error interno' }, { status: payload.code ?? res.status });
+    const exec = await response.json();
+
+    // HTTP error
+    if (!response.ok) {
+      const msg = exec.response ?? 'Error interno';
+      return NextResponse.json({ error: msg }, { status: response.status });
     }
-    if (!payload.jwt) {
-      return NextResponse.json({ error: 'JWT no generado' }, { status: 500 });
+
+    // Revisa el status de la ejecución dentro de la Function
+    const funcStatus = exec.responseStatusCode as number | undefined;
+    if (typeof funcStatus === 'number' && (funcStatus < 200 || funcStatus >= 300)) {
+      let msg = 'Error interno';
+      try { msg = JSON.parse(exec.response).error; } catch {}
+      return NextResponse.json({ error: msg }, { status: funcStatus });
     }
-    jwtToken = payload.jwt;
+
+    // Parsea el payload
+    let result: FunctionResult;
+    try {
+      result = JSON.parse(exec.response) as FunctionResult;
+    } catch {
+      return NextResponse.json(
+        { error: 'Respuesta inválida de la función', raw: exec.response },
+        { status: 500 }
+      );
+    }
+
+    if (!result.jwt) {
+      return NextResponse.json({ error: result.error ?? 'JWT no generado' }, { status: 500 });
+    }
+    jwtToken = result.jwt;
+
   } else {
-    // Regenerar JWT usando la sesión de Appwrite guardada en cookie
-    const sessionName = `a_session_${PROJECT_ID}`;
-    const sessionValue = cookieStore.get(sessionName)?.value;
-    if (!sessionValue) {
+    // Regenera JWT desde la cookie de sesión Appwrite
+    const cookieStore = await cookies();
+    const sessionCookie = cookieStore.get(`a_session_${PROJECT_ID}`)?.value;
+    if (!sessionCookie) {
       return NextResponse.json({ error: 'Usuario no autenticado' }, { status: 401 });
     }
     const client = new Client()
       .setEndpoint(ENDPOINT)
       .setProject(PROJECT_ID)
-      .setSession(sessionValue);
+      .setSession(sessionCookie);
     const account = new Account(client);
     try {
       const jwtRes = await account.createJWT();
       jwtToken = jwtRes.jwt;
-    } catch (e: unknown) {
-      const error = e as { message?: string; code?: number };
-      return NextResponse.json({ error: error.message ?? 'Error generando JWT' }, { status: error.code ?? 500 });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Error generando JWT';
+      return NextResponse.json({ error: message }, { status: 500 });
     }
   }
 
-  // Enviar cookie httpOnly con el JWT al cliente
-  const response = NextResponse.json({ ok: true });
-  response.cookies.set('appwrite_jwt', jwtToken, {
+  // Envía cookie httpOnly con el JWT
+  const nextResponse = NextResponse.json({ ok: true });
+  nextResponse.cookies.set('appwrite_jwt', jwtToken, {
     httpOnly: true,
     secure: process.env.NODE_ENV === 'production',
     path: '/',
-    sameSite: 'lax'
+    sameSite: 'lax',
   });
-  return response;
+  return nextResponse;
 }
