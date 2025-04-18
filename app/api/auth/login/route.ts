@@ -3,8 +3,8 @@ import { NextResponse } from 'next/server';
 import { Client, Account } from 'appwrite';
 import { cookies } from 'next/headers';
 
-const ENDPOINT = process.env.NEXT_PUBLIC_APPWRITE_ENDPOINT as string;
-const PROJECT_ID = process.env.NEXT_PUBLIC_APPWRITE_PROJECT_ID as string;
+const ENDPOINT = process.env.NEXT_PUBLIC_ENDPOINT as string;
+const PROJECT_ID = process.env.NEXT_PUBLIC_PROJECT_ID as string;
 const FUNCTION_ID = process.env.NEXT_PUBLIC_FUNCTION_ID as string;
 
 interface LoginRequestBody { passKey?: string; }
