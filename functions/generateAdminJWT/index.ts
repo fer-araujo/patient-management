@@ -9,6 +9,7 @@ interface AppwriteContext {
 }
 interface FunctionResponse { jwt?: string; error?: string; code?: number; }
 
+const ENDPOINT       = process.env.APPWRITE_FUNCTION_ENDPOINT!;     // e.g. "https://cloud.appwrite.io/v1"
 const PROJECT_ID     = process.env.APPWRITE_FUNCTION_PROJECT_ID!;
 const ADMIN_EMAIL    = process.env.ADMIN_EMAIL!;
 const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD!;
@@ -18,13 +19,13 @@ const COLL_ID        = process.env.SETTINGS_COLLECTION_ID!;
 export default async function generateAdminJWT(
   context: AppwriteContext
 ): Promise<FunctionResponse> {
-  const { req, env, log, error } = context;
+  const { req, log, error } = context;
   const text = Buffer.from(req.bodyRaw).toString('utf-8');
   const body = text ? JSON.parse(text) as { passKey?: string } : {};
 
   const client = new Client()
-    .setEndpoint(env.APPWRITE_FUNCTION_ENDPOINT)
-    .setProject(env.APPWRITE_FUNCTION_PROJECT_ID);
+    .setEndpoint(ENDPOINT)
+    .setProject(PROJECT_ID);
   const account = new Account(client);
 
   if (body.passKey) {
