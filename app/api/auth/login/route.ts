@@ -1,4 +1,4 @@
-// app/api/auth/login/route.ts
+// File: app/api/auth/login/route.ts
 import { NextResponse } from 'next/server';
 import { Client, Account } from 'appwrite';
 import { cookies } from 'next/headers';
@@ -16,7 +16,7 @@ export async function POST(request: Request) {
   let jwtToken: string;
 
   if (passKey) {
-    // Llamada REST síncrona a la Function
+    // 1) Llamada REST síncrona a la Function
     const response = await fetch(
       `${ENDPOINT}/functions/${FUNCTION_ID}/executions?async=false`,
       {
@@ -28,40 +28,38 @@ export async function POST(request: Request) {
         body: JSON.stringify({ passKey }),
       }
     );
-    const exec = await response.json();
+    const exec = (await response.json()) as Record<string, unknown>;
+
+    // Extraer respuesta cruda y estado interno
+    const raw = (exec.responseBody ?? exec.response) as string || '';
+    const status = (exec.statusCode ?? exec.responseStatusCode ?? response.status) as number;
 
     // HTTP error
     if (!response.ok) {
-      const msg = exec.response ?? 'Error interno';
-      return NextResponse.json({ error: msg }, { status: response.status });
+      return NextResponse.json({ error: raw || 'Error interno' }, { status: response.status });
     }
 
-    // Revisa el status de la ejecución dentro de la Function
-    const funcStatus = exec.responseStatusCode as number | undefined;
-    if (typeof funcStatus === 'number' && (funcStatus < 200 || funcStatus >= 300)) {
+    // Error desde la Function
+    if (status < 200 || status >= 300) {
       let msg = 'Error interno';
-      try { msg = JSON.parse(exec.response).error; } catch {}
-      return NextResponse.json({ error: msg }, { status: funcStatus });
+      try { msg = JSON.parse(raw).error; } catch {}
+      return NextResponse.json({ error: msg }, { status });
     }
 
-    // Parsea el payload
+    // Parseo del JWT
     let result: FunctionResult;
     try {
-      result = JSON.parse(exec.response) as FunctionResult;
+      result = JSON.parse(raw) as FunctionResult;
     } catch {
-      return NextResponse.json(
-        { error: 'Respuesta inválida de la función', raw: exec.response },
-        { status: 500 }
-      );
+      return NextResponse.json({ error: 'Respuesta inválida de la función', raw }, { status: 500 });
     }
-
     if (!result.jwt) {
       return NextResponse.json({ error: result.error ?? 'JWT no generado' }, { status: 500 });
     }
     jwtToken = result.jwt;
 
   } else {
-    // Regenera JWT desde la cookie de sesión Appwrite
+    // 2) Regenera JWT desde la cookie de sesión de Appwrite
     const cookieStore = await cookies();
     const sessionCookie = cookieStore.get(`a_session_${PROJECT_ID}`)?.value;
     if (!sessionCookie) {
@@ -72,22 +70,18 @@ export async function POST(request: Request) {
       .setProject(PROJECT_ID)
       .setSession(sessionCookie);
     const account = new Account(client);
-    try {
-      const jwtRes = await account.createJWT();
-      jwtToken = jwtRes.jwt;
-    } catch (err) {
-      const message = err instanceof Error ? err.message : 'Error generando JWT';
-      return NextResponse.json({ error: message }, { status: 500 });
-    }
+    const jwtRes = await account.createJWT();
+    jwtToken = jwtRes.jwt;
   }
 
-  // Envía cookie httpOnly con el JWT
-  const nextResponse = NextResponse.json({ ok: true });
-  nextResponse.cookies.set('appwrite_jwt', jwtToken, {
+  // 3) Envía cookie httpOnly con el JWT
+  const response = NextResponse.json({ ok: true });
+  response.cookies.set('appwrite_jwt', jwtToken, {
     httpOnly: true,
     secure: process.env.NODE_ENV === 'production',
     path: '/',
     sameSite: 'lax',
   });
-  return nextResponse;
+  return response;
 }
+

@@ -1,4 +1,4 @@
-// functions/generateAdminJWT/index.ts
+// File: functions/generateAdminJWT/index.ts
 import sdk from 'node-appwrite';
 import { parse } from 'cookie';
 
@@ -8,13 +8,15 @@ interface AppwriteContext {
   log: (...args: unknown[]) => void;
   error: (...args: unknown[]) => void;
 }
-const ENDPOINT       = process.env.APPWRITE_FUNCTION_ENDPOINT!;     // e.g. "https://cloud.appwrite.io/v1"
+
+// Variables de entorno inyectadas por Appwrite Functions
+const ENDPOINT       = process.env.APPWRITE_FUNCTION_ENDPOINT!;
 const PROJECT_ID     = process.env.APPWRITE_FUNCTION_PROJECT_ID!;
 const ADMIN_EMAIL    = process.env.ADMIN_EMAIL!;
 const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD!;
 const DB_ID          = process.env.DATABASE_ID!;
 const COLL_ID        = process.env.SETTINGS_COLLECTION_ID!;
-const API_KEY = process.env.APPWRITE_FUNCTION_API_KEY!;
+const API_KEY        = process.env.APPWRITE_FUNCTION_API_KEY!;
 
 export default async function generateAdminJWT(context: AppwriteContext) {
   const { req, log, error } = context;
@@ -32,29 +34,26 @@ export default async function generateAdminJWT(context: AppwriteContext) {
 
   try {
     if (body.passKey) {
-      // 1) Validar passKey
+      // Validar passKey
       const docs = await databases.listDocuments(DB_ID, COLL_ID, []);
-      interface Document {
-        passKey?: string;
-      }
-      const validKey = (docs.documents[0] as Document)?.passKey;
+      const validKey = (docs.documents[0] as any)?.passKey;
       if (body.passKey !== validKey) {
         log('PassKey inválida');
         return { statusCode: 401, body: JSON.stringify({ error: 'Clave inválida' }) };
       }
       log('PassKey válida, autenticando admin...');
 
-      // 2) Crear sesión de admin
+      // Crear sesión de admin y generar JWT
       await account.createSession(ADMIN_EMAIL, ADMIN_PASSWORD);
       const jwtRes = await account.createJWT();
       log('JWT generado');
       return { statusCode: 200, body: JSON.stringify({ jwt: jwtRes.jwt }) };
     }
 
-    // 3) Regenerar JWT desde cookie
-    const cookieHeader = req.headers['cookie'] || '';
-    const cookiesParsed = parse(cookieHeader);
-    const session = cookiesParsed[`a_session_${PROJECT_ID}`];
+    // Regenerar JWT desde cookie
+    const cookiesHeader = req.headers['cookie'] || '';
+    const parsed = parse(cookiesHeader);
+    const session = parsed[`a_session_${PROJECT_ID}`];
     if (!session) {
       return { statusCode: 401, body: JSON.stringify({ error: 'Usuario no autenticado' }) };
     }
