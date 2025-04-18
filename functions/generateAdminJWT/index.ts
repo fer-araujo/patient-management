@@ -1,89 +1,72 @@
-// functions/generateAdminJWT/index.ts
-
-import { Client, Databases, Models } from "node-appwrite";
+/// functions/generateAdminJWT/index.ts
+import { Client, Account, Databases } from 'node-appwrite';
+import { parse } from 'cookie';
 
 interface AppwriteContext {
-  req: { bodyRaw: Uint8Array };
+  req: { headers: Record<string, string>; bodyRaw: Uint8Array };
+  env: Record<string, string>;
   log: (...args: unknown[]) => void;
   error: (...args: unknown[]) => void;
 }
 
-type SettingsDoc = Models.Document & { passKey: string };
+interface FunctionResponse {
+  jwt?: string;
+  error?: string;
+  code?: number;
+}
 
-const ENDPOINT       = process.env.APPWRITE_FUNCTION_ENDPOINT!;     // e.g. "https://cloud.appwrite.io/v1"
-const PROJECT_ID     = process.env.APPWRITE_FUNCTION_PROJECT_ID!;
-const API_KEY        = process.env.APPWRITE_FUNCTION_KEY!;         // tu API Key UI con scopes: account, sessions.write, databases.read
-const ADMIN_EMAIL    = process.env.ADMIN_EMAIL!;
-const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD!;
-const DB_ID          = process.env.DATABASE_ID!;
-const COLL_ID        = process.env.SETTINGS_COLLECTION_ID!;
+export default async function generateAdminJWT(
+  context: AppwriteContext
+): Promise<FunctionResponse> {
+  const { req, env, log, error } = context;
+  const text = Buffer.from(req.bodyRaw).toString('utf-8');
+  const body = text ? JSON.parse(text) as { passKey?: string } : {};
 
-const client    = new Client()
-  .setEndpoint(ENDPOINT)
-  .setProject(PROJECT_ID)
-  .setKey(API_KEY);
+  const client = new Client()
+    .setEndpoint(env.APPWRITE_FUNCTION_ENDPOINT)
+    .setProject(env.APPWRITE_FUNCTION_PROJECT_ID);
+  const account = new Account(client);
 
-const databases = new Databases(client);
+  if (body.passKey) {
+    // Validar passKey en la colección
+    const db = new Databases(client);
+    const docs = await db.listDocuments(env.DATABASE_ID, env.SETTINGS_COLLECTION_ID);
+    const validKey = docs.documents[0]?.passKey;
 
-export default async function generateAdminJWT(context: AppwriteContext) {
-  const { req, log, error } = context;
+    if (body.passKey !== validKey) {
+      log('PassKey inválida');
+      return { error: 'Clave inválida', code: 401 };
+    }
+    log('PassKey válida, autenticando administrador...');
+
+    try {
+      // Crear sesión de administrador
+      await account.createSession(env.ADMIN_EMAIL, env.ADMIN_PASSWORD);
+      const jwtRes = await account.createJWT();
+      log('JWT generado');
+      return { jwt: jwtRes.jwt };
+    } catch (e) {
+      error('Error autenticando admin:', e);
+      return { error: 'Error autenticando admin', code: 500 };
+    }
+  }
+
+  // Regenerar JWT desde cookie de sesión
+  const cookiesHeader = req.headers['cookie'] || '';
+  const cookiesParsed = parse(cookiesHeader);
+  const session = cookiesParsed[`a_session_${env.APPWRITE_FUNCTION_PROJECT_ID}`];
+
+  if (!session) {
+    return { error: 'Usuario no autenticado', code: 401 };
+  }
 
   try {
-    // 1) Leer passKey del body
-    const bodyText = Buffer.from(req.bodyRaw || []).toString("utf-8");
-    if (!bodyText) {
-      log("❌ Petición vacía");
-      return { error: "Petición vacía", code: 400 };
-    }
-    const { passKey } = JSON.parse(bodyText) as { passKey: string };
-    log("🔑 passKey recibida:", passKey);
-
-    // 2) Validar passKey en la colección Settings
-    const res = await databases.listDocuments<SettingsDoc>(DB_ID, COLL_ID, []);
-    const expected = res.documents?.[0]?.passKey;
-    if (passKey !== expected) {
-      log("❌ passKey inválida:", passKey, "vs", expected);
-      return { error: "Clave inválida", code: 401 };
-    }
-    log("✅ passKey correcta, creando sesión de admin…");
-
-    // 3) Crear sesión de admin por REST
-    let r = await fetch(`${ENDPOINT}/account/sessions/email`, {
-      method: "POST",
-      headers: {
-        "Content-Type":       "application/json",
-        "X-Appwrite-Project": PROJECT_ID,
-        "X-Appwrite-Key":     API_KEY,
-      },
-      body: JSON.stringify({ email: ADMIN_EMAIL, password: ADMIN_PASSWORD }),
-    });
-    if (!r.ok) {
-      const txt = await r.text();
-      log("❌ fallo al crear sesión:", txt);
-      return { error: "Credenciales inválidas", code: 401 };
-    }
-    log("✅ Sesión de admin creada");
-
-    // 4) Generar JWT de esa sesión por REST
-    r = await fetch(`${ENDPOINT}/account/jwt`, {
-      method: "POST",
-      headers: {
-        "Content-Type":       "application/json",
-        "X-Appwrite-Project": PROJECT_ID,
-        "X-Appwrite-Key":     API_KEY,
-      },
-    });
-    if (!r.ok) {
-      const txt = await r.text();
-      log("❌ fallo al generar JWT:", txt);
-      return { error: "No se pudo generar JWT", code: 500 };
-    }
-    const { jwt } = await r.json();
-    log("✅ JWT generado:", jwt);
-
-    return { jwt };
-  } catch (err) {
-    error("🔥 Error interno al generar JWT:", err);
-    return { error: "Error interno al generar JWT", code: 500 };
+    client.setSession(session);
+    const jwtRes = await account.createJWT();
+    log('JWT regenerado desde sesión');
+    return { jwt: jwtRes.jwt };
+  } catch (e) {
+    error('Error generando JWT:', e);
+    return { error: 'Error al generar JWT', code: 500 };
   }
 }
