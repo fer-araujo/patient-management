@@ -15,22 +15,29 @@ interface FunctionResponse {
   code?: number;
 }
 
+const ENDPOINT       = process.env.APPWRITE_FUNCTION_ENDPOINT!;     // e.g. "https://cloud.appwrite.io/v1"
+const PROJECT_ID     = process.env.APPWRITE_FUNCTION_PROJECT_ID!;
+const ADMIN_EMAIL    = process.env.ADMIN_EMAIL!;
+const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD!;
+const DB_ID          = process.env.DATABASE_ID!;
+const COLL_ID        = process.env.SETTINGS_COLLECTION_ID!;
+
 export default async function generateAdminJWT(
   context: AppwriteContext
 ): Promise<FunctionResponse> {
-  const { req, env, log, error } = context;
+  const { req, log, error } = context;
   const text = Buffer.from(req.bodyRaw).toString('utf-8');
   const body = text ? JSON.parse(text) as { passKey?: string } : {};
 
   const client = new Client()
-    .setEndpoint(env.APPWRITE_FUNCTION_ENDPOINT)
-    .setProject(env.APPWRITE_FUNCTION_PROJECT_ID);
+    .setEndpoint(ENDPOINT)
+    .setProject(PROJECT_ID);
   const account = new Account(client);
 
   if (body.passKey) {
     // Validar passKey en la colección
     const db = new Databases(client);
-    const docs = await db.listDocuments(env.DATABASE_ID, env.SETTINGS_COLLECTION_ID);
+    const docs = await db.listDocuments(DB_ID, COLL_ID);
     const validKey = docs.documents[0]?.passKey;
 
     if (body.passKey !== validKey) {
@@ -41,7 +48,7 @@ export default async function generateAdminJWT(
 
     try {
       // Crear sesión de administrador
-      await account.createSession(env.ADMIN_EMAIL, env.ADMIN_PASSWORD);
+      await account.createSession(ADMIN_EMAIL, ADMIN_PASSWORD);
       const jwtRes = await account.createJWT();
       log('JWT generado');
       return { jwt: jwtRes.jwt };
@@ -54,7 +61,7 @@ export default async function generateAdminJWT(
   // Regenerar JWT desde cookie de sesión
   const cookiesHeader = req.headers['cookie'] || '';
   const cookiesParsed = parse(cookiesHeader);
-  const session = cookiesParsed[`a_session_${env.APPWRITE_FUNCTION_PROJECT_ID}`];
+  const session = cookiesParsed[`a_session_${PROJECT_ID}`];
 
   if (!session) {
     return { error: 'Usuario no autenticado', code: 401 };
