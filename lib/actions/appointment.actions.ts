@@ -41,9 +41,10 @@ export const getAppointmentById = async (appointmentId: string) => {
   }
 };
 
-export const getRecentAppointmentList = async () => {
+export const getRecentAppointmentList = async (jwt: string) => {
+
   try {
-    const databases = getDatabases();
+    const databases = getDatabases(jwt);
 
     const appointmentList = await databases.listDocuments(
       process.env.DATABASE_ID!,
@@ -51,25 +52,15 @@ export const getRecentAppointmentList = async () => {
       [Query.orderDesc("$createdAt")]
     );
 
-    const initialCounts = {
-      scheduledCount: 0,
-      pendingCount: 0,
-      cancelledCount: 0,
-    };
-
-    const counts = (appointmentList.documents as Appointment[]).reduce(
-      (acc, appointment) => {
-        if (appointment.status === "scheduled") {
-          acc.scheduledCount += 1;
-        } else if (appointment.status === "pending") {
-          acc.pendingCount += 1;
-        } else if (appointment.status === "cancelled") {
-          acc.cancelledCount += 1;
-        }
-        return acc;
-      },
-      initialCounts
-    );
+   const counts = (appointmentList.documents as Appointment[]).reduce(
+    (acc, appt) => {
+      if (appt.status === 'scheduled') acc.scheduledCount++;
+      if (appt.status === 'pending')   acc.pendingCount++;
+      if (appt.status === 'cancelled') acc.cancelledCount++;
+      return acc;
+    },
+    { scheduledCount: 0, pendingCount: 0, cancelledCount: 0 }
+  );
 
     const data = {
       totalCount: appointmentList.total,

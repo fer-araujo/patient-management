@@ -1,3 +1,4 @@
+// File: components/PassKeyModal.tsx
 "use client";
 
 import React, { useState } from "react";
@@ -5,34 +6,50 @@ import {
   AlertDialog,
   AlertDialogAction,
   AlertDialogContent,
-  AlertDialogDescription,
   AlertDialogFooter,
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
-import { InputOTP, InputOTPGroup, InputOTPSlot } from "@/components/ui/input-otp";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
+import CustomFormField, { FormFieldType } from "./CustomFormField";
+import { useForm } from "react-hook-form";
+import { zodResolver } from "@hookform/resolvers/zod";
+import { signInWithEmail } from "@/lib/actions/auth.actions";
+import { LoginSchema } from "@/lib/validation";
+import { Form } from "./ui/form";
 
-const PassKeyModal: React.FC = () => {
+export default function PassKeyModal() {
   const router = useRouter();
+  const searchParams = useSearchParams();
   const [open, setOpen] = useState(true);
-  const [passKey, setPassKey] = useState("");
-  const [error, setError] = useState("");
 
-  const validatePassKey = async () => {
-    setError("");
-    const res = await fetch("/api/auth/login", {
-      method: "POST",
-      credentials: "include",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ passKey }),
-    });
+  // Leer parámetro redirect de la URL (?redirect=admin)
+  const redirect = searchParams.get("redirect") || "admin";
 
-    if (res.ok) {
+  type LoginInput = {
+    email: string;
+    password: string;
+  };
+  // RHF + Zod
+  const form = useForm<LoginInput>({
+    resolver: zodResolver(LoginSchema),
+    defaultValues: { email: "", password: "" },
+  });
+
+  // Submit vía fetch y luego router.push
+  const onSubmit = async (data: LoginInput) => {
+    try {
+      await signInWithEmail(data.email, data.password);
       setOpen(false);
-      router.push("/admin");
-    } else {
-      setError("Clave de administrador incorrecta.");
+      router.push(`/${redirect}`);
+    } catch (err: unknown) {
+      if (err instanceof Error) {
+        form.setError("root", {
+          message: err.message || "Error de autenticación",
+        });
+      } else {
+        form.setError("root", { message: "Error de autenticación" });
+      }
     }
   };
 
@@ -42,50 +59,60 @@ const PassKeyModal: React.FC = () => {
   };
 
   return (
-    <AlertDialog open={open} onOpenChange={setOpen}>
+    <AlertDialog
+      open={open}
+      onOpenChange={(val) => {
+        if (!val) closeModal();
+        setOpen(val);
+      }}
+    >
       <AlertDialogContent className="shad-alert-dialog">
         <AlertDialogHeader>
           <AlertDialogTitle className="flex justify-between items-center">
             Verificación de Administrador
-            <button onClick={closeModal} className="text-gray-500 hover:text-gray-700">
+            <button
+              onClick={closeModal}
+              className="text-gray-500 hover:text-gray-700"
+            >
               &times;
             </button>
           </AlertDialogTitle>
-          <AlertDialogDescription>
-            Ingresa la clave de acceso para continuar.
-          </AlertDialogDescription>
         </AlertDialogHeader>
+        <Form {...form}>
+          <div className="space-y-8 flex flex-col px-4">
+            <CustomFormField
+              fieldType={FormFieldType.INPUT}
+              control={form.control}
+              name="email"
+              label="Correo Electrónico"
+              placeholder="correo@ejemplo.com"
+              iconSrc="/assets/icons/user.svg"
+            />
+            <CustomFormField
+              fieldType={FormFieldType.PASSWORD}
+              control={form.control}
+              name="password"
+              label="Contraseña"
+              placeholder="********"
+            />
 
-        <div className="mt-4">
-          <InputOTP
-            maxLength={6}
-            value={passKey}
-            onChange={(value) => setPassKey(value)}
-          >
-            <InputOTPGroup className="w-full flex justify-between">
-              {[...Array(6)].map((_, index) => (
-                <InputOTPSlot
-                  key={index}
-                  index={index}
-                  className="text-4xl font-bold flex justify-center items-center border border-gray-300 rounded-lg w-16 h-16"
-                />
-              ))}
-            </InputOTPGroup>
-          </InputOTP>
-          {error && <p className="text-red-600 mt-2">{error}</p>}
-        </div>
+            {form.formState.errors.root && (
+              <p className="text-red-500">
+                {form.formState.errors.root.message}
+              </p>
+            )}
 
-        <AlertDialogFooter>
-          <AlertDialogAction
-            onClick={validatePassKey}
-            className="shad-primary-btn w-full"
-          >
-            Ingresar Código
-          </AlertDialogAction>
-        </AlertDialogFooter>
+            <AlertDialogFooter className="flex flex-col gap-2">
+              <AlertDialogAction
+                onClick={form.handleSubmit(onSubmit)}
+                className="shad-primary-btn w-full"
+              >
+                Iniciar Sesión
+              </AlertDialogAction>
+            </AlertDialogFooter>
+          </div>
+        </Form>
       </AlertDialogContent>
     </AlertDialog>
   );
-};
-
-export default PassKeyModal;
+}

@@ -18,6 +18,7 @@ import clsx from "clsx";
 
 export enum FormFieldType {
   INPUT = "input",
+  PASSWORD = "password",
   TEXTAREA = "textarea",
   PHONE_INPUT = "phoneInput",
   CHECKBOX = "checkbox",
@@ -72,6 +73,21 @@ const RenderInput = <T extends FieldValues>({
           </FormControl>
         </div>
       );
+
+    case FormFieldType.PASSWORD:
+      return (
+        <div className="flex rounded-md border border-dark-500 bg-dark-400">
+          <FormControl>
+            <Input
+              type="password"
+              placeholder={props.placeholder}
+              {...field}
+              className={"shad-input border-0"}
+              disabled={props.disabled}
+            />
+          </FormControl>
+        </div>
+      );
     case FormFieldType.TEXTAREA:
       return (
         <FormControl>
@@ -94,7 +110,9 @@ const RenderInput = <T extends FieldValues>({
             value={field.value as E164Number | undefined}
             onChange={field.onChange}
             className={clsx("input-phone", {
-              'pointer-events-none cursor-not-allowed opacity-50' : props.disabled})}
+              "pointer-events-none cursor-not-allowed opacity-50":
+                props.disabled,
+            })}
             disabled={props.disabled}
           />
         </FormControl>
@@ -116,8 +134,15 @@ const RenderInput = <T extends FieldValues>({
       );
     case FormFieldType.DATE_PICKER:
       return (
-        <div className={clsx("date-picker flex items-center gap-2 h-11 rounded-md border border-dark-500 bg-dark-400 px-3", {
-          'pointer-events-none cursor-not-allowed opacity-50' : props.disabled})}>
+        <div
+          className={clsx(
+            "date-picker flex items-center gap-2 h-11 rounded-md border border-dark-500 bg-dark-400 px-3",
+            {
+              "pointer-events-none cursor-not-allowed opacity-50":
+                props.disabled,
+            }
+          )}
+        >
           <Image
             src="/assets/icons/calendar.svg"
             height={20}

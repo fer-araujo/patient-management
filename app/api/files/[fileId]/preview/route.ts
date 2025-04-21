@@ -10,7 +10,7 @@ export async function GET(
 
   // 1) Esperar a que cookies() resuelva
   const cookieStore = await cookies();
-  const jwt = cookieStore.get("appwrite_jwt")?.value;
+  const jwt = cookieStore.get(`a_session_${process.env.NEXT_PUBLIC_PROJECT_ID}`)?.value;
 
   if (!jwt) {
     return new NextResponse("No autorizado", { status: 401 });
