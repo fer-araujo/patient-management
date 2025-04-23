@@ -4,15 +4,9 @@ import { ColumnDef } from "@tanstack/react-table";
 import { Appointment } from "@/types/appwrite.types";
 import { formatDateTime, formatPhoneNumber } from "@/lib/utils";
 import StatusBadge from "../StatusBadge";
-import AppointmentModal from "../AppointmentModal";
 import StudiesModal from "../StudiesModal";
-
-export type Payment = {
-  id: string;
-  amount: number;
-  status: "pending" | "processing" | "success" | "failed";
-  email: string;
-};
+import PatientCell from "./cells/PatientCell";
+import ActionCell from "./cells/ActionCell";
 
 export const columns: ColumnDef<Appointment>[] = [
   {
@@ -21,7 +15,7 @@ export const columns: ColumnDef<Appointment>[] = [
     cell: ({ row }) => {
       const appointment = row.original;
       const patient = appointment.patientId.name;
-      return <p className="text-sm font-light">{patient}</p>;
+      return <PatientCell name={patient} />;
     },
   },
   {
@@ -40,7 +34,7 @@ export const columns: ColumnDef<Appointment>[] = [
       const appointment = row.original;
       const reason = appointment.reason;
       return (
-        <p className="text-sm font-light text-wrap line-clamp-3">{reason}</p>
+        <p className="text-sm font-light text-wrap line-clamp-3 w-[150px]">{reason}</p>
       );
     },
   },
@@ -51,7 +45,7 @@ export const columns: ColumnDef<Appointment>[] = [
       const appointment = row.original;
       const studies = appointment.patientId.studyFiles;
       const studiesList = studies.map((study: { fileId: string }) => {
-        return { id:study.fileId };
+        return { id: study.fileId };
       });
       const button =
         studiesList.length > 0 ? (
@@ -70,11 +64,7 @@ export const columns: ColumnDef<Appointment>[] = [
     header: "Estatus",
     cell: ({ row }) => {
       const status = row.original.status;
-      return (
-        <div className="min-w-[115px]">
-          <StatusBadge status={status} />
-        </div>
-      );
+      return <StatusBadge status={status} />;
     },
   },
   {
@@ -93,12 +83,7 @@ export const columns: ColumnDef<Appointment>[] = [
     id: "actions",
     header: () => <div className="pl-4">Acciones</div>,
     cell: ({ row: { original: data } }) => {
-      return (
-        <div className="flex gap-1">
-          <AppointmentModal type={"Agendar"} appointment={data} />
-          <AppointmentModal type={"Cancelar"} appointment={data} />
-        </div>
-      );
+      return <ActionCell status={data.status} appointment={data} />;
     },
   },
 ];

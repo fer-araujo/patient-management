@@ -1,3 +1,4 @@
+import { ActionMapValue, Appointment } from "@/types/appwrite.types";
 import { type ClassValue, clsx } from "clsx";
 import { twMerge } from "tailwind-merge";
 
@@ -77,4 +78,75 @@ export const formatPhoneNumber = (phone: string): string => {
   const last = phone.slice(9);
 
   return `+52 ${areaCode} ${middle} ${last}`;
+};
+
+export const getInitials = (name: string): string => {
+  return name
+    .split(" ")
+    .filter((n) => n.length > 0)
+    .map((word) => word[0].toUpperCase())
+    .slice(0, 2)
+    .join("");
+};
+
+export const generateRandomColor = (): string => {
+  const letters = "0123456789ABCDEF";
+  let color = "#";
+  for (let i = 0; i < 6; i++) {
+    color += letters[Math.floor(Math.random() * 16)];
+  }
+  return color;
+};
+
+// Calcula si un color es claro u oscuro (YIQ)
+export const getContrastYIQ = (hexcolor: string): "black" | "white" => {
+  const r = parseInt(hexcolor.slice(1, 2), 16);
+  const g = parseInt(hexcolor.slice(3, 2), 16);
+  const b = parseInt(hexcolor.slice(5, 2), 16);
+  const yiq = (r * 299 + g * 587 + b * 114) / 1000;
+  return yiq >= 128 ? "black" : "white";
+};
+
+export const stringHash = (str: string): number => {
+  let hash = 0;
+  for (let i = 0; i < str.length; i++) {
+    hash = str.charCodeAt(i) + ((hash << 5) - hash);
+  }
+  return hash;
+};
+
+// Paleta de colores de fondo y mapeo a color de texto
+export const bgColors = [
+  "bg-amber-200",
+  "bg-lime-200",
+  "bg-pink-200",
+  "bg-violet-200",
+  "bg-sky-200",
+  "bg-green-200",
+  "bg-yellow-200",
+  "bg-indigo-200",
+  "bg-orange-200",
+  "bg-rose-200",
+];
+
+export const textColorMap: Record<string, "black" | "white"> = {
+  "text-amber-200": "black",
+  "text-lime-200": "black",
+  "text-pink-200": "black",
+  "text-violet-200": "black",
+  "text-sky-200": "black",
+  "text-green-200": "black",
+  "text-yellow-200": "black",
+  "text-indigo-200": "white",
+  "text-orange-200": "black",
+  "text-rose-200": "black",
+};
+
+// Mapea cada estado a las acciones correspondientes
+export const actionMap: Record<Appointment["status"], ActionMapValue> = {
+  pending: { primary: "Agendar", secondary: "Rechazar" },
+  scheduled: { primary: "Reagendar", secondary: "Cancelar" },
+  rescheduled: { primary: "Reagendar", secondary: "Cancelar" },
+  cancelled: { text: "Cancelada" },
+  denied: { text: "Rechazada" },
 };

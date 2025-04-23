@@ -4,7 +4,7 @@ declare type SearchParamProps = {
   searchParams: { [key: string]: string | string[] | undefined };
 };
 
-declare type Status = "pending" | "scheduled" | "cancelled";
+declare type Status = "pending" | "scheduled" | "cancelled" | "rescheduled" | "denied";
 
 declare interface CreatePatientParams {
   name: string;
@@ -29,5 +29,4 @@ export type UpdateAppointmentParams = {
   schedule: string;
   status: Status;
   cancellationReason?: string | null;
-  // type: "Crear" | "Agendar" | "Cancelar";
 };

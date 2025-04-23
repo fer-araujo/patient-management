@@ -57,9 +57,16 @@
     background-color: #363a3d !important;
   }
 
+  .shad-secondary-btn {
+    background-color: #6ba0d1 !important;
+    color: #ffffff !important;
+    cursor: pointer !important;
+  }
+
   .shad-danger-btn {
     background-color: #f24e43 !important;
     color: #ffffff !important;
+    cursor: pointer !important;
   }
 
   .shad-gray-btn {
@@ -316,7 +323,7 @@
 
   /* ==== Status Badge */
   .status-badge {
-    @apply flex w-fit items-center gap-2 rounded-full px-4 py-2;
+    @apply flex w-fit items-center gap-2 rounded-full pl-4 pr-7 py-3;
   }
 
   /* Data Table */

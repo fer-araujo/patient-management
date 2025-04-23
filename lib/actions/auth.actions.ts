@@ -32,9 +32,32 @@ export async function signInWithEmail(email: string, password: string) {
   document.cookie = [
     `${COOKIE_NAME}=${jwt}`,
     `Path=/`,
-    `Max-Age=${15 * 60}`,      // 15 minutos
+    `Max-Age=${15 * 60}`, // 15 minutos
     `SameSite=Lax`,
     // `Secure` en prod sobre HTTPS
     process.env.NODE_ENV === "production" ? "Secure" : "",
-  ].filter(Boolean).join("; ");
+  ]
+    .filter(Boolean)
+    .join("; ");
+}
+
+export async function getLiveSession() {
+  try {
+    await webAccount.get();
+    // Si existe, genera un nuevo JWT desde el cliente y planta la cookie en este dominio
+    const { jwt } = await webAccount.createJWT();
+    // Planta la cookie JWT en tu dominio
+    document.cookie = [
+      `appwrite_jwt=${jwt}`,
+      `Path=/`,            // accesible en todo el dominio
+      `Max-Age=${15 * 60}`, // 15 minutos
+      `SameSite=Lax`,
+      process.env.NODE_ENV === "production" ? "Secure" : "",
+    ]
+      .filter(Boolean)
+      .join("; ");
+    return true;
+  } catch {
+    return false;
+  }
 }

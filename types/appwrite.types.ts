@@ -14,3 +14,7 @@ export interface Appointment extends Models.Document {
   reason: string;
   cancellationReason: string | null;
 }
+
+export type ActionMapValue =
+| { primary: string; secondary?: string }
+| { text: string };

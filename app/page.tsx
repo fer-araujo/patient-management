@@ -5,15 +5,33 @@ import Image from "next/image";
 import { motion } from "framer-motion";
 import Link from "next/link";
 import PassKeyModal from "@/components/PassKeyModal";
-import { useSearchParams } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
+import { getLiveSession } from "@/lib/actions/auth.actions";
+import { useEffect, useState } from "react";
 
 const Appointment = () => {
+  const [showAdminModal, setShowAdminModal] = useState(false);
   const searchParams = useSearchParams();
-  const isAdmin = searchParams.get("admin") === "true";
+  const router = useRouter();
+
+  useEffect(() => {
+    const adminParam = searchParams.get("admin");
+    if (!adminParam) return;
+
+    (async () => {
+      const hasSession = await getLiveSession();
+      router.replace("/");
+      if (hasSession) {
+        router.push("/admin");
+      } else {
+        setShowAdminModal(true);
+      }
+    })();
+  }, [searchParams, router]);
 
   return (
     <div className="flex h-screen min-h-screen max-h-screen ">
-      {isAdmin && <PassKeyModal />}
+      {showAdminModal && <PassKeyModal />}
       <section className="flex min-h-screen w-full flex-1 items-center justify-center container remove-scrollbar lg:w-1/2">
         <div className="mt-[-100] auto max-w-[860px] flex-1 justify-between">
           <Image
@@ -24,7 +42,7 @@ const Appointment = () => {
             className=" mb-10 w-auto h-30 lg:h-40"
           />
 
-          <AppointmentForm type="Crear"/>
+          <AppointmentForm type="Crear" />
 
           <div className="text-sm mt-30 flex gap-4">
             <p className="justify-items-end text-dark-600 xl:text-left">

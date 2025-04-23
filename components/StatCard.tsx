@@ -27,7 +27,7 @@ const StatCard = ({ count = 0, label, icon, type} : StatCardProps) => {
             <h2 className='text-4xl font-bold text-white'>{count}</h2>
         </div>
 
-        <p className='text-base'>{label}</p>
+        <p className='text-base tracking-wide'>{label}</p>
     </div>
   )
 }

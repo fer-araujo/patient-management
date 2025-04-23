@@ -9,9 +9,9 @@ import AuthRefresh from "@/components/AuthRefresh";
 import { cookies } from 'next/headers';
 
 const Admin = async () => {
-  const projectId = process.env.NEXT_PUBLIC_PROJECT_ID!;
+  const  JWT = process.env.NEXT_PUBLIC_COOKIE_JWT!;
   const cookieStore = cookies();
-  const sessionJWT = (await cookieStore).get(`a_session_${projectId}`)?.value;
+  const sessionJWT = (await cookieStore).get(JWT)?.value;
   if (!sessionJWT) {
     return (
       <div className="flex h-screen items-center justify-center">
@@ -23,7 +23,7 @@ const Admin = async () => {
 
   return (
     <AuthRefresh>
-      <div className="mx-auto flex max-w-7xl flex-col space-y-14">
+      <div className="mx-auto flex min-w-[75vw] max-w-max flex-col space-y-14">
         <header className="admin-header">
           <Link href="/" className="cursor-pointer">
             <Image
@@ -58,7 +58,7 @@ const Admin = async () => {
             <StatCard
               type="cancelled"
               count={appointments?.cancelledCount}
-              label="Citas Canceladas"
+              label="Citas Canceladas o Rechazadas"
               icon="/assets/icons/cancelled.svg"
             />
           </section>

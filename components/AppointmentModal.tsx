@@ -9,37 +9,41 @@ import {
 } from "@/components/ui/dialog";
 import { Button } from "./ui/button";
 import { AppointmentForm } from "./forms/AppointmentForm";
-import { Appointment } from "@/types/appwrite.types";
+import { ActionMapValue, Appointment } from "@/types/appwrite.types";
+import clsx from "clsx";
 
 const AppointmentModal = ({
   type,
   appointment,
 }: {
-  type: "Agendar" | "Cancelar";
+  type: ActionMapValue;
   appointment?: Appointment;
 }) => {
   const [open, setOpen] = useState(false);
-
   return (
     <Dialog open={open} onOpenChange={setOpen}>
       <DialogTrigger asChild>
         <Button
           variant="ghost"
-          className={`capitalize ${type === "Agendar" && "text-green-500 dark:hover:text-green-700"} ${type === "Cancelar" && "dark:hover:text-dark-700"}`}
+          className={clsx("capitalize", {
+                  "text-green-500": type.toString() === "Agendar",
+                  "text-blue-500": type.toString() === "Reagendar",
+                  "text-white hover:text-gray-500": type.toString() === "Cancelar" || type.toString() === "Rechazar",
+                })}
         >
-          {type}
+          {type.toString()}
         </Button>
       </DialogTrigger>
       <DialogContent className="shad-dialog sm:max-w-md">
         <DialogHeader className="mb-4 space-y-3">
-          <DialogTitle className="capitalize">{type} Cita</DialogTitle>
+          <DialogTitle className="capitalize">{type.toString()} Cita</DialogTitle>
           <DialogDescription>
-            Favor de validar o llenar los campos requeridos para {type.toLowerCase()} la
+            Favor de validar o llenar los campos requeridos para {type.toString().toLowerCase()} la
             cita.
           </DialogDescription>
         </DialogHeader>
 
-        <AppointmentForm type={type} appointment={appointment} setOpen={setOpen}/>
+        <AppointmentForm type={type.toString()} appointment={appointment} setOpen={setOpen}/>
       </DialogContent>
     </Dialog>
   );

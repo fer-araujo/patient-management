@@ -28,7 +28,7 @@ export const AppointmentForm = ({
   appointment,
   setOpen,
 }: {
-  type: "Crear" | "Agendar" | "Cancelar";
+  type: string;
   appointment?: Appointment;
   setOpen?: (open: boolean) => void;
 }) => {
@@ -73,6 +73,12 @@ export const AppointmentForm = ({
         break;
       case "Cancelar":
         status = "cancelled" as Status;
+        break;
+      case "Reagendar":
+        status = "rescheduled" as Status;
+        break;
+      case "Rechazar":
+        status = "denied" as Status;
         break;
       default:
         status = "pending" as Status;
@@ -153,15 +159,28 @@ export const AppointmentForm = ({
   };
 
   let buttonLabel;
+  let buttonClass;
   switch (type) {
     case "Cancelar":
       buttonLabel = "Cancelar Cita";
+      buttonClass = "shad-danger-btn";
       break;
     case "Agendar":
       buttonLabel = "Agendar Cita";
+      buttonClass = "shad-primary-btn";
+      break;
+    case "Reagendar":
+      buttonLabel = "Reagendar Cita";
+      buttonClass = "shad-secondary-btn";
+      break;
+    case "Rechazar":
+      buttonLabel = "Rechazar Cita";
+      buttonClass = "shad-danger-btn";
       break;
     default:
       buttonLabel = "Solicitar Cita";
+      buttonClass = "shad-primary-btn";
+
   }
 
   const shouldShowForm = type !== "Crear" || showFullForm;
@@ -219,7 +238,7 @@ export const AppointmentForm = ({
                 name="phone"
                 label="Número de teléfono"
                 placeholder="(52) 123-4567"
-                disabled={type === "Cancelar" || type === "Agendar"}
+                disabled={type === "Cancelar" || type === "Agendar" || type === "Reagendar"}
               />
 
               <CustomFormField
@@ -230,7 +249,7 @@ export const AppointmentForm = ({
                 placeholder="Escribe tu nombre completo aquí"
                 iconSrc="/assets/icons/user.svg"
                 disabled={
-                  patientFound || type === "Cancelar" || type === "Agendar"
+                  patientFound || type === "Cancelar" || type === "Agendar" || type === "Reagendar"
                 }
               />
 
@@ -242,7 +261,7 @@ export const AppointmentForm = ({
                     name="reason"
                     label="Razón de la cita"
                     placeholder="Detalles aquí..."
-                    disabled={type === "Agendar"}
+                    disabled={type === "Agendar" || type === "Reagendar"}
                   />
                   {type === "Crear" && (
                     <CustomFormField
@@ -280,7 +299,7 @@ export const AppointmentForm = ({
                 }
                 showTimeSelect
                 dateFormat="dd/MM/yyyy  -  h:mm aa"
-                disabled={type === "Cancelar" || type === "Agendar"}
+                disabled={type === "Cancelar" || type === "Agendar" }
               />
 
               {type === "Cancelar" && (
@@ -294,9 +313,7 @@ export const AppointmentForm = ({
               )}
               <SubmitButton
                 isLoading={isLoading}
-                className={`${
-                  type === "Cancelar" ? "shad-danger-btn" : "shad-primary-btn"
-                } w-full`}
+                className={`${buttonClass} w-full`}
               >
                 {buttonLabel}
               </SubmitButton>

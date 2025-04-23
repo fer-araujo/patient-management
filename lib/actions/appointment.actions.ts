@@ -55,8 +55,8 @@ export const getRecentAppointmentList = async (jwt: string) => {
    const counts = (appointmentList.documents as Appointment[]).reduce(
     (acc, appt) => {
       if (appt.status === 'scheduled') acc.scheduledCount++;
-      if (appt.status === 'pending')   acc.pendingCount++;
-      if (appt.status === 'cancelled') acc.cancelledCount++;
+      if (appt.status === 'pending' || appt.status === "rescheduled")   acc.pendingCount++;
+      if (appt.status === 'cancelled' || appt.status === "denied") acc.cancelledCount++;
       return acc;
     },
     { scheduledCount: 0, pendingCount: 0, cancelledCount: 0 }
