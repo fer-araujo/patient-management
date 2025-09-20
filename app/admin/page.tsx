@@ -1,12 +1,11 @@
 import React from "react";
 import Link from "next/link";
 import Image from "next/image";
-import StatCard from "@/components/StatCard";
 import { getRecentAppointmentList } from "@/lib/actions/appointment.actions";
-import { DataTable } from "@/components/table/DataTable";
-import { columns } from "@/components/table/columns";
+import { getAllPatients } from "@/lib/actions/patient.actions";
 import AuthRefresh from "@/components/AuthRefresh";
 import { cookies } from 'next/headers';
+import AdminTabs from "@/components/AdminTabs";
 
 const Admin = async () => {
   const  JWT = process.env.NEXT_PUBLIC_COOKIE_JWT!;
@@ -20,6 +19,7 @@ const Admin = async () => {
     );
   }
   const appointments = await getRecentAppointmentList(sessionJWT);
+  const patients = await getAllPatients(sessionJWT);
 
   return (
     <AuthRefresh>
@@ -42,28 +42,8 @@ const Admin = async () => {
             <h1 className="header"> Hola! 👋 </h1>
             <p className="text-dark-700">Administrador de citas</p>
           </section>
-          <section className="admin-stat">
-            <StatCard
-              type="appointments"
-              count={appointments?.scheduledCount}
-              label="Citas Agendadas"
-              icon="/assets/icons/appointments.svg"
-            />
-            <StatCard
-              type="pending"
-              count={appointments?.pendingCount}
-              label="Citas Pendientes"
-              icon="/assets/icons/pending.svg"
-            />
-            <StatCard
-              type="cancelled"
-              count={appointments?.cancelledCount}
-              label="Citas Canceladas o Rechazadas"
-              icon="/assets/icons/cancelled.svg"
-            />
-          </section>
 
-          <DataTable columns={columns} data={appointments?.documents} />
+          <AdminTabs appointments={appointments} patients={patients} />
         </main>
       </div>
     </AuthRefresh>

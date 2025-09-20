@@ -44,9 +44,9 @@ export const columns: ColumnDef<Appointment>[] = [
     cell: ({ row }) => {
       const appointment = row.original;
       const studies = appointment.patientId.studyFiles;
-      const studiesList = studies.map((study: { fileId: string }) => {
+      const studiesList = studies ? studies.map((study: { fileId: string }) => {
         return { id: study.fileId };
-      });
+      }) : [];
       const button =
         studiesList.length > 0 ? (
           <StudiesModal

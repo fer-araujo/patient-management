@@ -76,3 +76,19 @@ export const getPatientByPhone = async (phone: string) => {
   }
 };
 
+export const getAllPatients = async (jwt: string) => {
+  try {
+    const databases = getDatabases(jwt);
+    const patients = await databases.listDocuments(
+      process.env.DATABASE_ID!,
+      process.env.PATIENT_COLLECTION_ID!,
+      [Query.orderDesc("$createdAt")]
+    );
+
+    return parseStringify(patients.documents);
+  } catch (error) {
+    console.error("Error fetching patients:", error);
+    return [];
+  }
+};
+
