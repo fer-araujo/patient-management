@@ -1,5 +1,5 @@
 import { Calendar, Clock } from "lucide-react";
-import { Button } from "../../../components/ui/Button";
+import { Button } from "../../../../components/ui/Button";
 // IMPORTANTE: Ruta corregida para alcanzar la carpeta ui
 
 interface NextAppointmentProps {

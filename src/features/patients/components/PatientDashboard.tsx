@@ -1,9 +1,9 @@
 import { useRef } from "react";
 import { Upload, FileText } from "lucide-react";
 import { motion, type Variants } from "framer-motion";
-import { NextAppointmentCard } from "./NextAppoinmentCard";
-import { CarePlanWidget } from "./CarePlanWidget";
-import { PastAppointmentsList } from "./PastAppoinmentsList";
+import { NextAppointmentCard } from "./widgets/NextAppoinmentCard";
+import { CarePlanWidget } from "./widgets/CarePlanWidget";
+import { PastAppointmentsList } from "./widgets/PastAppoinmentsList";
 
 // Importaciones de los widgets extraídos
 

@@ -2,55 +2,68 @@ import { useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { Activity, ShieldCheck, Sparkles } from "lucide-react";
 
-import { PatientPhoneLogin } from "./PatientPhoneLogin";
-import { PatientBirthYear } from "./PatientBirthYear";
-// IMPORTANTE: Importamos tu nuevo paso 3
-import { PatientRegistration } from "./PatientRegistration";
+import { PatientPhoneLogin } from "../../auth/components/PatientPhoneLogin";
+import { PatientBirthYear } from "../../auth/components/PatientBirthYear";
+import { PatientRegistration } from "../../auth/components/PatientRegistration";
+import { ServiceSelector } from "./ServiceSelector";
+import { DateTimeSelector } from "./DateTimeSelector"; // NUEVO NOMBRE IMPORTADO AQUÍ
 import { Badge } from "../../../components/ui/Badge";
 
-// Añadimos onComplete para avisarle a App.tsx que ya acabamos
 interface BookingFlowProps {
   onComplete: () => void;
 }
 
 export const BookingFlow = ({ onComplete }: BookingFlowProps) => {
-  // Ahora soportamos 3 pasos
-  const [currentStep, setCurrentStep] = useState<1 | 2 | 3>(1);
-  const [phoneData, setPhoneData] = useState({ code: "+52", number: "" });
+  // Ahora usamos los 5 pasos
+  const [currentStep, setCurrentStep] = useState<1 | 2 | 3 | 4 | 5>(1);
+
+  const [bookingData, setBookingData] = useState({
+    code: "+52",
+    number: "",
+    year: "",
+    patientData: null,
+    serviceId: "",
+    date: "",
+    time: "",
+  });
 
   const handlePhoneSubmit = (code: string, number: string) => {
-    setPhoneData({ code, number });
+    setBookingData((prev) => ({ ...prev, code, number }));
     setCurrentStep(2);
   };
 
-  const handleBack = () => {
-    setCurrentStep(1);
-  };
-
-  const handleFinalSubmit = (year: string) => {
-    console.log("Verificando datos:", { ...phoneData, year });
-
-    // MOCK LOGIC: Si es 1968, existe y va al Dashboard. Si no, va al registro.
+  const handleBirthYearSubmit = (year: string) => {
+    setBookingData((prev) => ({ ...prev, year }));
     if (year === "1968") {
-      onComplete();
+      setCurrentStep(4);
     } else {
       setCurrentStep(3);
     }
   };
 
-  const handleRegistrationSubmit = (data: { fullName: string; email: string; reason: string; termsAccepted: boolean }) => {
-    console.log("Nuevo paciente registrado:", { ...phoneData, ...data });
-    // Terminamos el registro y lo mandamos al Dashboard
+  const handleRegistrationSubmit = (data: any) => {
+    setBookingData((prev) => ({ ...prev, patientData: data }));
+    setCurrentStep(4);
+  };
+
+  const handleServiceSelect = (serviceId: string) => {
+    setBookingData((prev) => ({ ...prev, serviceId }));
+    // Pasa al Selector de Fecha y Hora
+    setCurrentStep(5);
+  };
+
+  const handleDateTimeSubmit = (date: string, time: string) => {
+    const finalData = { ...bookingData, date, time };
+    console.log("¡CITA AGENDADA CON ÉXITO!", finalData);
+
+    // Aquí mandarías la data a tu backend real.
+    // Una vez guardado, redirigimos al paciente a su Dashboard.
     onComplete();
   };
 
   return (
     <div className="min-h-screen w-full bg-white flex flex-col lg:flex-row font-sans antialiased selection:bg-brand-primary/20 overflow-hidden relative">
-      {/* =========================================
-          COLUMNA IZQUIERDA: Dinámica (Paso 1, 2 o 3)
-          ========================================= */}
       <div className="w-full lg:w-[45%] flex flex-col justify-center px-8 sm:px-16 lg:pl-12 xl:pl-50 lg:pr-8 xl:pr-12 py-12 relative z-20 bg-white overflow-y-auto">
-        {/* AnimatePresence hace que las animaciones 'exit' de tus componentes funcionen */}
         <AnimatePresence mode="wait">
           {currentStep === 1 && (
             <PatientPhoneLogin key="step1" onSubmit={handlePhoneSubmit} />
@@ -58,8 +71,8 @@ export const BookingFlow = ({ onComplete }: BookingFlowProps) => {
           {currentStep === 2 && (
             <PatientBirthYear
               key="step2"
-              onBack={handleBack}
-              onSubmit={handleFinalSubmit}
+              onBack={() => setCurrentStep(1)}
+              onSubmit={handleBirthYearSubmit}
             />
           )}
           {currentStep === 3 && (
@@ -67,6 +80,20 @@ export const BookingFlow = ({ onComplete }: BookingFlowProps) => {
               key="step3"
               onBack={() => setCurrentStep(2)}
               onSubmit={handleRegistrationSubmit}
+            />
+          )}
+          {currentStep === 4 && (
+            <ServiceSelector
+              key="step4"
+              onBack={() => setCurrentStep(bookingData.year === "1968" ? 2 : 3)}
+              onSelect={handleServiceSelect}
+            />
+          )}
+          {currentStep === 5 && (
+            <DateTimeSelector
+              key="step5"
+              onBack={() => setCurrentStep(4)}
+              onSubmit={handleDateTimeSubmit}
             />
           )}
         </AnimatePresence>

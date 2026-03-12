@@ -1,4 +1,4 @@
-@import url('https://fonts.googleapis.com/css2?family=Albert+Sans:wght@400;500;700&display=swap');
+@import url("https://fonts.googleapis.com/css2?family=Albert+Sans:wght@400;500;700&display=swap");
 @import "tailwindcss";
 
 /* 1. Importamos la fuente globalmente aquí, NO en el componente React. 
@@ -8,18 +8,27 @@
   Aquí definimos tu Design System para usar clases como 'bg-brand-primary' 
 */
 @theme {
-  --color-brand-primary: #07A996;
-  --color-brand-primary-hover: #068F7F;
-  --color-brand-light: #E7F2F1;
+  --color-brand-primary: #07a996;
+  --color-brand-primary-hover: #068f7f;
+  --color-brand-light: #e7f2f1;
   --color-brand-dark: #040707;
-  --color-brand-gray: #5B5B5B;
-  
-  --font-sans: 'Albert Sans', ui-sans-serif, system-ui, sans-serif;
+  --color-brand-gray: #5b5b5b;
+
+  --font-sans: "Albert Sans", ui-sans-serif, system-ui, sans-serif;
 }
 
 body {
   font-family: var(--font-sans);
-  background-color: #FFFFFF;
+  background-color: #ffffff;
   color: var(--color-brand-dark);
   -webkit-font-smoothing: antialiased;
+}
+
+.hide-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+
+.hide-scrollbar {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
 }

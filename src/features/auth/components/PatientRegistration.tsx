@@ -11,8 +11,8 @@ import { motion } from "framer-motion";
 import { Button } from "../../../components/ui/Button";
 import { Input } from "../../../components/ui/Input";
 import { Modal } from "../../../components/ui/Modal"; // Importamos el nuevo Modal
-import { PrivacyPolicyContent } from "./PrivacyPolicyContent";
-import { TermsAndConditionsContent } from "./TermsAndConditionsContent";
+import { PrivacyPolicyContent } from "../../../components/legal/PrivacyPolicyContent";
+import { TermsAndConditionsContent } from "../../../components/legal/TermsAndConditionsContent";
 
 interface Props {
   onBack: () => void;
