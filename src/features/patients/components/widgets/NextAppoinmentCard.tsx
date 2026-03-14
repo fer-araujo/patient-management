@@ -7,7 +7,8 @@ interface NextAppointmentProps {
   date: string;
   time: string;
   status?: "pending" | "confirmed";
-  onReschedule?: () => void; // <-- Nueva prop agregada
+  onReschedule?: () => void;
+  onCancel?: () => void; // <-- NUEVA PROP
 }
 
 export const NextAppointmentCard = ({
@@ -17,6 +18,7 @@ export const NextAppointmentCard = ({
   time,
   status,
   onReschedule,
+  onCancel, // <-- RECIBIMOS LA PROP
 }: NextAppointmentProps) => {
   const isConfirmed = status === "confirmed";
 
@@ -49,10 +51,10 @@ export const NextAppointmentCard = ({
             </div>
           </div>
         </div>
-        <div className="flex flex-col gap-3 min-w-40">
+        <div className="flex flex-col gap-2 min-w-40">
           {/* BADGE DE ESTADO */}
           <div
-            className={`flex justify-center items-center align-middle gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold uppercase tracking-wider shrink-0 ${
+            className={`flex justify-center items-center align-middle gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold uppercase tracking-wider shrink-0 mb-1 ${
               isConfirmed
                 ? "bg-teal-50 text-teal-700 border border-teal-100"
                 : "bg-amber-50 text-amber-700 border border-amber-200"
@@ -65,13 +67,22 @@ export const NextAppointmentCard = ({
             )}
             <span>{isConfirmed ? "Confirmada" : "Pendiente"}</span>
           </div>
+
           <Button
             variant="outline"
             onClick={onReschedule}
-            className="w-full py-3 rounded-2xl text-sm font-bold text-brand-dark/70 hover:text-brand-dark hover:bg-slate-50 transition-colors border border-transparent hover:border-slate-200"
+            className="w-full py-3 rounded-2xl text-sm font-bold text-brand-dark/70 hover:text-brand-dark hover:bg-slate-50 transition-colors border border-transparent hover:border-slate-200 cursor-pointer"
           >
             Reprogramar
           </Button>
+
+          {/* NUEVO BOTÓN DE CANCELAR (Sutil para no fomentar la cancelación rápida) */}
+          <button
+            onClick={onCancel}
+            className="text-xs font-bold text-red-400 hover:text-red-600 transition-colors mt-1 py-1 cursor-pointer w-full text-center"
+          >
+            Cancelar cita
+          </button>
         </div>
       </div>
     </div>
