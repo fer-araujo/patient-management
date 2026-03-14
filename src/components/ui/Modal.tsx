@@ -7,6 +7,7 @@ interface ModalProps {
   onClose: () => void;
   title: string;
   icon?: ReactNode;
+  hideFooter?: boolean;
   children: ReactNode;
 }
 
@@ -15,6 +16,7 @@ export const Modal = ({
   onClose,
   title,
   icon,
+  hideFooter = false,
   children,
 }: ModalProps) => {
   return (
@@ -57,14 +59,16 @@ export const Modal = ({
             </div>
 
             {/* Footer Fijo */}
-            <div className="px-6 py-4 border-t border-brand-light bg-slate-50 flex justify-end">
-              <button
-                onClick={onClose}
-                className="bg-brand-primary cursor-pointer text-white font-bold px-8 py-2.5 rounded-full hover:bg-teal-500 transition-colors shadow-md"
-              >
-                Entendido
-              </button>
-            </div>
+            {!hideFooter && (
+              <div className="px-6 py-4 border-t border-brand-light bg-slate-50 flex justify-end">
+                <button
+                  onClick={onClose}
+                  className="bg-brand-primary cursor-pointer text-white font-bold px-8 py-2.5 rounded-xl hover:bg-teal-500 transition-colors shadow-md"
+                >
+                  Entendido
+                </button>
+              </div>
+            )}
           </motion.div>
         </div>
       )}

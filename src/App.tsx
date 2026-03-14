@@ -2,6 +2,8 @@ import { BrowserRouter, Routes, Route, useNavigate } from "react-router-dom";
 import { BookingFlow } from "./features/appointments/components/BookingFlow";
 import { PatientDashboard } from "./features/patients/components/PatientDashboard";
 import { DashboardLayout } from "./components/layout/DashboardLayout";
+import { DashboardBooking } from "./features/appointments/components/DashboardBooking";
+import { RescheduleFlow } from "./features/appointments/components/RescheduleFlow";
 
 // 1. Extraemos las rutas a un componente interno para poder usar useNavigate
 function AppRoutes() {
@@ -21,6 +23,22 @@ function AppRoutes() {
         element={
           <DashboardLayout>
             <PatientDashboard />
+          </DashboardLayout>
+        }
+      />
+      <Route
+        path="/dashboard/agendar"
+        element={
+          <DashboardLayout>
+            <DashboardBooking />
+          </DashboardLayout>
+        }
+      />
+      <Route
+        path="/dashboard/reprogramar"
+        element={
+          <DashboardLayout>
+            <RescheduleFlow />
           </DashboardLayout>
         }
       />

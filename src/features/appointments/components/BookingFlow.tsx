@@ -3,62 +3,98 @@ import { motion, AnimatePresence } from "framer-motion";
 import { Activity, ShieldCheck, Sparkles } from "lucide-react";
 
 import { PatientPhoneLogin } from "../../auth/components/PatientPhoneLogin";
-import { PatientBirthYear } from "../../auth/components/PatientBirthYear";
+// ADIÓS PatientBirthYear 👋
 import { PatientRegistration } from "../../auth/components/PatientRegistration";
 import { ServiceSelector } from "./ServiceSelector";
-import { DateTimeSelector } from "./DateTimeSelector"; // NUEVO NOMBRE IMPORTADO AQUÍ
+import { DateTimeSelector } from "./DateTimeSelector";
+import { BookingSuccess } from "./BookingSuccess";
 import { Badge } from "../../../components/ui/Badge";
 
 interface BookingFlowProps {
-  onComplete: () => void;
+  onComplete: () => void; // Esta prop la usaremos para mandarlos al Dashboard
+}
+
+interface PatientRegistrationData {
+  fullName: string;
+  email: string;
+  birthYear: string;
+  reason: string;
+  termsAccepted: boolean;
+}
+
+interface BookingState {
+  code: string;
+  number: string;
+  patientData: PatientRegistrationData | null;
+  serviceId: string;
+  date: string;
+  time: string;
 }
 
 export const BookingFlow = ({ onComplete }: BookingFlowProps) => {
-  // Ahora usamos los 5 pasos
+  // Ahora solo tenemos 5 pasos lógicos para un paciente nuevo
   const [currentStep, setCurrentStep] = useState<1 | 2 | 3 | 4 | 5>(1);
 
-  const [bookingData, setBookingData] = useState({
+  const [bookingData, setBookingData] = useState<BookingState>({
     code: "+52",
     number: "",
-    year: "",
     patientData: null,
     serviceId: "",
     date: "",
     time: "",
   });
 
-  const handlePhoneSubmit = (code: string, number: string) => {
+  // =================================================================
+  // MANEJADORES DEL FLUJO
+  // =================================================================
+
+  // 1A. Si es un paciente NUEVO, guarda su tel y lo manda a Registro (Paso 2)
+  const handleNewPatientPhoneSubmit = (code: string, number: string) => {
     setBookingData((prev) => ({ ...prev, code, number }));
     setCurrentStep(2);
   };
 
-  const handleBirthYearSubmit = (year: string) => {
-    setBookingData((prev) => ({ ...prev, year }));
-    if (year === "1968") {
-      setCurrentStep(4);
-    } else {
-      setCurrentStep(3);
-    }
+  // 1B. Si es un paciente EXISTENTE y validó OTP, ¡se va directo a su casa!
+  const handleLoginSuccess = (code: string, number: string) => {
+    console.log("Login exitoso con OTP:", code, number);
+    // En producción, aquí seteas el token de Auth (Zustand/Context) y lo mandas al Dashboard
+    onComplete();
   };
 
-  const handleRegistrationSubmit = (data: any) => {
+  // 2. Termina el registro y elige servicio (Paso 3)
+  const handleRegistrationSubmit = (data: PatientRegistrationData) => {
     setBookingData((prev) => ({ ...prev, patientData: data }));
+    setCurrentStep(3);
+  };
+
+  // 3. Elige servicio y elige fecha (Paso 4)
+  const handleServiceSelect = (serviceId: string) => {
+    setBookingData((prev) => ({ ...prev, serviceId }));
     setCurrentStep(4);
   };
 
-  const handleServiceSelect = (serviceId: string) => {
-    setBookingData((prev) => ({ ...prev, serviceId }));
-    // Pasa al Selector de Fecha y Hora
+  // 4. Elige fecha/hora y termina (Paso 5 - Success)
+  const handleDateTimeSubmit = (date: string, time: string) => {
+    setBookingData((prev) => ({ ...prev, date, time }));
+    console.log("Creando nueva cita en Backend:", {
+      ...bookingData,
+      date,
+      time,
+    });
     setCurrentStep(5);
   };
 
-  const handleDateTimeSubmit = (date: string, time: string) => {
-    const finalData = { ...bookingData, date, time };
-    console.log("¡CITA AGENDADA CON ÉXITO!", finalData);
-
-    // Aquí mandarías la data a tu backend real.
-    // Una vez guardado, redirigimos al paciente a su Dashboard.
-    onComplete();
+  // Para cuando le dan "Agendar otra cita" en la pantalla de éxito
+  const handleGoHome = () => {
+    setCurrentStep(1);
+    setBookingData({
+      code: "+52",
+      number: "",
+      patientData: null,
+      serviceId: "",
+      date: "",
+      time: "",
+    });
   };
 
   return (
@@ -66,41 +102,51 @@ export const BookingFlow = ({ onComplete }: BookingFlowProps) => {
       <div className="w-full lg:w-[45%] flex flex-col justify-center px-8 sm:px-16 lg:pl-12 xl:pl-50 lg:pr-8 xl:pr-12 py-12 relative z-20 bg-white overflow-y-auto">
         <AnimatePresence mode="wait">
           {currentStep === 1 && (
-            <PatientPhoneLogin key="step1" onSubmit={handlePhoneSubmit} />
-          )}
-          {currentStep === 2 && (
-            <PatientBirthYear
-              key="step2"
-              onBack={() => setCurrentStep(1)}
-              onSubmit={handleBirthYearSubmit}
+            <PatientPhoneLogin
+              key="step1"
+              onSubmitNewPatient={handleNewPatientPhoneSubmit}
+              onLoginSuccess={handleLoginSuccess}
             />
           )}
-          {currentStep === 3 && (
+
+          {currentStep === 2 && (
             <PatientRegistration
-              key="step3"
-              onBack={() => setCurrentStep(2)}
+              key="step2"
+              onBack={() => setCurrentStep(1)}
               onSubmit={handleRegistrationSubmit}
             />
           )}
-          {currentStep === 4 && (
+
+          {currentStep === 3 && (
             <ServiceSelector
-              key="step4"
-              onBack={() => setCurrentStep(bookingData.year === "1968" ? 2 : 3)}
+              key="step3"
+              onBack={() => setCurrentStep(2)}
               onSelect={handleServiceSelect}
             />
           )}
-          {currentStep === 5 && (
+
+          {currentStep === 4 && (
             <DateTimeSelector
-              key="step5"
-              onBack={() => setCurrentStep(4)}
+              key="step4"
+              onBack={() => setCurrentStep(3)}
               onSubmit={handleDateTimeSubmit}
+            />
+          )}
+
+          {currentStep === 5 && (
+            <BookingSuccess
+              key="step5"
+              bookingData={bookingData}
+              onGoToDashboard={onComplete}
+              onGoHome={handleGoHome}
             />
           )}
         </AnimatePresence>
       </div>
 
       {/* =========================================
-          COLUMNA DERECHA: Persistente y Animada (INTACTA)
+          COLUMNA DERECHA: Persistente y Animada 
+          (Se queda igual a tu versión)
           ========================================= */}
       <div className="hidden lg:flex flex-1 relative bg-linear-to-r from-white via-brand-primary/5 to-brand-primary/10 items-center justify-center p-8 xl:p-12 z-0">
         <div className="absolute inset-0 bg-[radial-gradient(var(--color-brand-primary)_1px,transparent_1px)] bg-size-[32px_32px] opacity-[0.05] z-0 pointer-events-none"></div>

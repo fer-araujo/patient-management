@@ -1,9 +1,11 @@
-import { useRef } from "react";
-import { Upload, FileText } from "lucide-react";
 import { motion, type Variants } from "framer-motion";
 import { NextAppointmentCard } from "./widgets/NextAppoinmentCard";
-import { CarePlanWidget } from "./widgets/CarePlanWidget";
+// import { CarePlanWidget } from "./widgets/CarePlanWidget";
 import { PastAppointmentsList } from "./widgets/PastAppoinmentsList";
+import { useNavigate } from "react-router-dom";
+import { Button } from "../../../components/ui/Button";
+import { QuickActionsWidget } from "./widgets/QuickActionsWidget";
+import { ExploreTreatmentsWidget } from "./widgets/ExploreTratmentsWidget";
 
 // Importaciones de los widgets extraídos
 
@@ -51,7 +53,7 @@ const MOCK_PATIENT = {
 };
 
 export const PatientDashboard = () => {
-  const fileInputRef = useRef<HTMLInputElement>(null);
+  const navigate = useNavigate();
 
   const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -99,47 +101,10 @@ export const PatientDashboard = () => {
             variants={item}
             className="grid grid-cols-1 sm:grid-cols-2 gap-4"
           >
-            <div
-              onClick={() => fileInputRef.current?.click()}
-              className="bg-teal-50/80 hover:bg-teal-50 border border-teal-100 rounded-3xl p-5 cursor-pointer group transition-all"
-            >
-              <input
-                type="file"
-                accept="image/*, application/pdf"
-                className="hidden"
-                ref={fileInputRef}
-                onChange={handleFileUpload}
-              />
-              <div className="flex items-center justify-between">
-                <div>
-                  <h3 className="text-lg font-bold text-teal-900 mb-0.5">
-                    Subir Estudios
-                  </h3>
-                  <p className="text-sm text-teal-700/80 font-medium">
-                    Labs o Radiografías
-                  </p>
-                </div>
-                <div className="w-12 h-12 bg-white rounded-full flex items-center justify-center text-teal-600 shadow-sm group-hover:scale-105 transition-transform">
-                  <Upload className="w-5 h-5" />
-                </div>
-              </div>
-            </div>
-
-            <div className="bg-rose-50/80 hover:bg-rose-50 border border-rose-100 rounded-3xl p-5 cursor-pointer group transition-all">
-              <div className="flex items-center justify-between">
-                <div>
-                  <h3 className="text-lg font-bold text-rose-900 mb-0.5">
-                    Mis Recetas
-                  </h3>
-                  <p className="text-sm text-rose-700/80 font-medium">
-                    1 receta disponible
-                  </p>
-                </div>
-                <div className="w-12 h-12 bg-white rounded-full flex items-center justify-center text-rose-500 shadow-sm group-hover:scale-105 transition-transform">
-                  <FileText className="w-5 h-5" />
-                </div>
-              </div>
-            </div>
+            <QuickActionsWidget
+              onFileUpload={handleFileUpload}
+              onOpenCareGuide={() => console.log("Abrir modal de cuidados")}
+            />
           </motion.div>
 
           {/* WIDGET: PRÓXIMA CITA */}
@@ -148,21 +113,23 @@ export const PatientDashboard = () => {
               <h2 className="text-xl font-bold text-brand-dark">
                 Próxima Cita
               </h2>
-              <button className="text-sm font-bold text-brand-primary hover:text-brand-dark transition-colors">
-                Ver calendario
-              </button>
             </div>
-            <NextAppointmentCard {...MOCK_PATIENT.nextAppointment} />
+            <NextAppointmentCard
+              {...MOCK_PATIENT.nextAppointment}
+              status="confirmed"
+              onReschedule={() => navigate("/dashboard/reprogramar")}
+            />
           </motion.div>
 
           {/* WIDGET: PLAN DE CUIDADO */}
           <motion.div variants={item}>
-            <div className="flex items-center justify-between mb-4">
+            {/* <div className="flex items-center justify-between mb-4">
               <h2 className="text-xl font-bold text-brand-dark">
                 Mi Plan de Cuidado
               </h2>
-            </div>
-            <CarePlanWidget plan={MOCK_PATIENT.carePlan} />
+            </div> 
+             <CarePlanWidget plan={MOCK_PATIENT.carePlan} /> */}
+            <ExploreTreatmentsWidget />
           </motion.div>
         </div>
 
@@ -225,9 +192,13 @@ export const PatientDashboard = () => {
               <p className="text-teal-50 text-sm mb-6 relative z-10">
                 Agenda fácil y sin contraseñas.
               </p>
-              <button className="w-full bg-white text-brand-primary font-bold py-3 rounded-2xl hover:scale-[1.02] active:scale-[0.98] transition-transform shadow-md relative z-10">
+              <Button
+                className="w-full bg-white text-brand-primary text-lg font-bold px-0 rounded-2xl hover:scale-[1.02] active:scale-[0.98] transition-transform shadow-md relative z-10"
+                onClick={() => navigate("/dashboard/agendar")}
+                variant="secondary"
+              >
                 Agendar Nueva Cita
-              </button>
+              </Button>
             </div>
           </motion.div>
         </div>
