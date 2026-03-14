@@ -10,7 +10,7 @@ import {
 import { motion } from "framer-motion";
 import { Button } from "../../../components/ui/Button";
 import { Input } from "../../../components/ui/Input";
-import { Modal } from "../../../components/ui/Modal"; // Importamos el nuevo Modal
+import { Modal } from "../../../components/ui/Modal";
 import { PrivacyPolicyContent } from "../../../components/legal/PrivacyPolicyContent";
 import { TermsAndConditionsContent } from "../../../components/legal/TermsAndConditionsContent";
 
@@ -18,6 +18,7 @@ interface Props {
   onBack: () => void;
   onSubmit: (data: {
     fullName: string;
+    birthYear: string;
     email: string;
     reason: string;
     termsAccepted: boolean;
@@ -27,6 +28,7 @@ interface Props {
 export const PatientRegistration = ({ onBack, onSubmit }: Props) => {
   const [formData, setFormData] = useState({
     fullName: "",
+    birthYear: "", // <-- INICIALIZADO
     email: "",
     reason: "",
     termsAccepted: false,
@@ -96,16 +98,36 @@ export const PatientRegistration = ({ onBack, onSubmit }: Props) => {
             containerClassName="w-full"
           />
 
-          <Input
-            label="Correo Electrónico (Opcional)"
-            type="email"
-            placeholder="ejemplo@correo.com"
-            value={formData.email}
-            onChange={(e) =>
-              setFormData({ ...formData, email: e.target.value })
-            }
-            containerClassName="w-full"
-          />
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 xl:gap-5">
+            {/* NUEVO INPUT: AÑO DE NACIMIENTO */}
+            <div className="relative">
+              <Input
+                label="Año de Nacimiento"
+                type="text" // Usamos text para controlar mejor el max length de 4 dígitos
+                placeholder="Ej. 1975"
+                value={formData.birthYear}
+                onChange={(e) =>
+                  setFormData({
+                    ...formData,
+                    birthYear: e.target.value.replace(/\D/g, "").slice(0, 4),
+                  })
+                }
+                required
+                containerClassName="w-full"
+              />
+            </div>
+
+            <Input
+              label="Correo Electrónico (Opcional)"
+              type="email"
+              placeholder="ejemplo@correo.com"
+              value={formData.email}
+              onChange={(e) =>
+                setFormData({ ...formData, email: e.target.value })
+              }
+              containerClassName="w-full"
+            />
+          </div>
 
           <div className="flex flex-col gap-1.5">
             <label className="text-brand-dark font-medium text-base xl:text-lg text-left tracking-normal ml-1">
@@ -150,7 +172,6 @@ export const PatientRegistration = ({ onBack, onSubmit }: Props) => {
 
           <label className="flex items-start gap-3 cursor-pointer group mt-2">
             <div className="relative flex items-center justify-center shrink-0 mt-0.75">
-              {/* Checkbox Oculto para accesibilidad */}
               <input
                 type="checkbox"
                 className="sr-only"
@@ -159,7 +180,6 @@ export const PatientRegistration = ({ onBack, onSubmit }: Props) => {
                   setFormData({ ...formData, termsAccepted: e.target.checked })
                 }
               />
-              {/* Checkbox Visual - AHORA CON RENDERIZADO CONDICIONAL DE REACT */}
               <div
                 className={`w-5 h-5 rounded border-2 transition-colors flex items-center justify-center ${formData.termsAccepted ? "bg-brand-primary border-brand-primary" : "bg-white border-brand-light"}`}
               >
@@ -208,10 +228,11 @@ export const PatientRegistration = ({ onBack, onSubmit }: Props) => {
               type="submit"
               disabled={
                 !formData.fullName ||
+                formData.birthYear.length < 4 || // <-- Validación de 4 dígitos
                 !formData.reason ||
                 !formData.termsAccepted
               }
-              className="w-full sm:w-fit px-10 py-3 rounded-full text-lg disabled:opacity-50 transition-all"
+              className="w-full sm:w-fit px-10 py-3 rounded-full text-lg disabled:opacity-50 transition-all cursor-pointer"
             >
               Crear Expediente
             </Button>

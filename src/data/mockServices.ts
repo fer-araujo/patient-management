@@ -1,0 +1,42 @@
+export const CLINIC_SERVICES = [
+  {
+    id: "toxina-botulinica",
+    name: "Toxina Botulínica (Botox)",
+    category: "Anti-Aging",
+    desc: "Atenúa líneas de expresión en frente, entrecejo y patas de gallo con resultados naturales.",
+    duration: "30 min",
+    color: "bg-teal-50 text-teal-700 border-teal-100",
+  },
+  {
+    id: "acido-hialuronico",
+    name: "Relleno con Ácido Hialurónico",
+    category: "Armonización",
+    desc: "Restaura volumen, perfila labios o marca la mandíbula con hidratación profunda.",
+    duration: "45 min",
+    color: "bg-indigo-50 text-indigo-700 border-indigo-100",
+  },
+  {
+    id: "hilos-tensores",
+    name: "Hilos Tensores",
+    category: "Lifting",
+    desc: "Efecto lifting sin cirugía para redefinir el óvalo facial y estimular la producción de colágeno.",
+    duration: "60 min",
+    color: "bg-rose-50 text-rose-700 border-rose-100",
+  },
+  {
+    id: "prp",
+    name: "Plasma Rico en Plaquetas (PRP)",
+    category: "Regenerativo",
+    desc: "Regeneración celular utilizando tu propio plasma para una piel luminosa, joven y sin manchas.",
+    duration: "60 min",
+    color: "bg-amber-50 text-amber-700 border-amber-100",
+  },
+  {
+    id: "ozonoterapia",
+    name: "Sueroterapia y Ozono",
+    category: "Salud Integral",
+    desc: "Terapia antioxidante intravenosa para fortalecer el sistema inmune y revitalizar el cuerpo.",
+    duration: "45 min",
+    color: "bg-sky-50 text-sky-700 border-sky-100",
+  },
+];
