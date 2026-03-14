@@ -5,19 +5,26 @@ import { DashboardLayout } from "./components/layout/DashboardLayout";
 import { DashboardBooking } from "./features/appointments/components/DashboardBooking";
 import { RescheduleFlow } from "./features/appointments/components/RescheduleFlow";
 
+// NUEVO IMPORT: El Dashboard de la Doctora
+import { DoctorDashboard } from "./features/doctor/components/DoctorDashboard";
+
 // 1. Extraemos las rutas a un componente interno para poder usar useNavigate
 function AppRoutes() {
   const navigate = useNavigate();
 
   return (
     <Routes>
-      {/* La ruta pública (Login) */}
+      {/* =========================================
+          RUTAS PÚBLICAS
+          ========================================= */}
       <Route
         path="/"
         element={<BookingFlow onComplete={() => navigate("/dashboard")} />}
       />
 
-      {/* La ruta privada (Dashboard del paciente) */}
+      {/* =========================================
+          RUTAS DEL PACIENTE
+          ========================================= */}
       <Route
         path="/dashboard"
         element={
@@ -39,6 +46,18 @@ function AppRoutes() {
         element={
           <DashboardLayout>
             <RescheduleFlow />
+          </DashboardLayout>
+        }
+      />
+
+      {/* =========================================
+          RUTAS DE LA DOCTORA
+          ========================================= */}
+      <Route
+        path="/doctor/dashboard"
+        element={
+          <DashboardLayout>
+            <DoctorDashboard />
           </DashboardLayout>
         }
       />

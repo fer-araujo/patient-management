@@ -1,4 +1,4 @@
-import { motion, type Variants } from "framer-motion";
+import { AnimatePresence, motion, type Variants } from "framer-motion";
 import { NextAppointmentCard } from "./widgets/NextAppoinmentCard";
 // import { CarePlanWidget } from "./widgets/CarePlanWidget";
 import { PastAppointmentsList } from "./widgets/PastAppoinmentsList";
@@ -6,6 +6,9 @@ import { useNavigate } from "react-router-dom";
 import { Button } from "../../../components/ui/Button";
 import { QuickActionsWidget } from "./widgets/QuickActionsWidget";
 import { ExploreTreatmentsWidget } from "./widgets/ExploreTratmentsWidget";
+import { useState } from "react";
+import { Modal } from "../../../components/ui/Modal";
+import { AlertTriangle, Calendar, CheckCircle2, Trash2 } from "lucide-react";
 
 // Importaciones de los widgets extraídos
 
@@ -54,6 +57,13 @@ const MOCK_PATIENT = {
 
 export const PatientDashboard = () => {
   const navigate = useNavigate();
+  const [nextAppointment, setNextAppointment] = useState<
+    typeof MOCK_PATIENT.nextAppointment | null
+  >(MOCK_PATIENT.nextAppointment);
+
+  const [cancelState, setCancelState] = useState<
+    "closed" | "confirm" | "success"
+  >("closed");
 
   const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -61,6 +71,18 @@ export const PatientDashboard = () => {
       console.log("Archivo listo para subir:", file.name);
       alert(`¡Listo! El archivo ${file.name} se enviará a la doctora.`);
     }
+  };
+
+  const handleConfirmCancel = () => {
+    // Aquí iría tu llamada a la API: await api.cancelAppointment(...)
+    console.log("Cancelando cita en BD...");
+    setCancelState("success");
+
+    setTimeout(() => {
+      setCancelState("closed");
+      // 3. AFECTAMOS EL ESTADO REAL DEL COMPONENTE PADRE
+      setNextAppointment(null);
+    }, 2000);
   };
 
   const container: Variants = {
@@ -90,21 +112,23 @@ export const PatientDashboard = () => {
               Hola, {MOCK_PATIENT.name}.
             </h1>
             <p className="text-lg text-brand-gray font-medium">
-              Tienes{" "}
-              <span className="text-brand-primary font-bold">1 cita</span>{" "}
-              programada para esta semana.
+              {nextAppointment ? (
+                <>
+                  Tienes{" "}
+                  <span className="text-brand-primary font-bold">1 cita</span>{" "}
+                  programada para esta semana.
+                </>
+              ) : (
+                "No tienes citas próximas agendadas."
+              )}
             </p>
           </motion.div>
 
-          {/* QUICK ACTIONS (Pills Pastel) */}
           <motion.div
             variants={item}
             className="grid grid-cols-1 sm:grid-cols-2 gap-4"
           >
-            <QuickActionsWidget
-              onFileUpload={handleFileUpload}
-              onOpenCareGuide={() => console.log("Abrir modal de cuidados")}
-            />
+            <QuickActionsWidget onFileUpload={handleFileUpload} />
           </motion.div>
 
           {/* WIDGET: PRÓXIMA CITA */}
@@ -114,11 +138,48 @@ export const PatientDashboard = () => {
                 Próxima Cita
               </h2>
             </div>
-            <NextAppointmentCard
-              {...MOCK_PATIENT.nextAppointment}
-              status="confirmed"
-              onReschedule={() => navigate("/dashboard/reprogramar")}
-            />
+
+            <AnimatePresence mode="wait">
+              {nextAppointment ? (
+                <motion.div
+                  key="appointment-card"
+                  initial={{ opacity: 0, scale: 0.95 }}
+                  animate={{ opacity: 1, scale: 1 }}
+                  exit={{
+                    opacity: 0,
+                    scale: 0.95,
+                    height: 0,
+                    overflow: "hidden",
+                  }}
+                  transition={{ duration: 0.3 }}
+                >
+                  <NextAppointmentCard
+                    {...nextAppointment}
+                    status="confirmed" // En prod: nextAppointment.status
+                    onReschedule={() => navigate("/dashboard/reprogramar")}
+                    onCancel={() => setCancelState("confirm")}
+                  />
+                </motion.div>
+              ) : (
+                <motion.div
+                  key="empty-state"
+                  initial={{ opacity: 0, y: 10 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  className="bg-slate-50 border border-slate-100 rounded-3xl p-8 sm:p-12 text-center flex flex-col items-center justify-center gap-3"
+                >
+                  <div className="w-16 h-16 bg-white rounded-full flex items-center justify-center text-brand-primary/80 shadow-sm mb-2">
+                    <Calendar className="w-8 h-8" />
+                  </div>
+                  <p className="text-brand-dark font-bold text-lg">
+                    Tu agenda está libre
+                  </p>
+                  <p className="text-brand-gray text-sm">
+                    Explora los tratamientos de la Dra. Carmen y agenda cuando
+                    gustes.
+                  </p>
+                </motion.div>
+              )}
+            </AnimatePresence>
           </motion.div>
 
           {/* WIDGET: PLAN DE CUIDADO */}
@@ -203,6 +264,96 @@ export const PatientDashboard = () => {
           </motion.div>
         </div>
       </motion.div>
+      <Modal
+        isOpen={cancelState !== "closed"}
+        onClose={() => setCancelState("closed")}
+        title={cancelState === "confirm" ? "Cancelar Cita" : "Cita Cancelada"}
+        icon={
+          cancelState === "confirm" ? (
+            <AlertTriangle className="w-5 h-5 text-red-500" />
+          ) : (
+            <CheckCircle2 className="w-5 h-5 text-teal-500" />
+          )
+        }
+        hideFooter={true}
+      >
+        <div className="flex flex-col px-2 pb-2 text-center overflow-hidden">
+          <AnimatePresence mode="wait">
+            {/* ESTADO 1: CONFIRMACIÓN */}
+            {cancelState === "confirm" && (
+              <motion.div
+                key="confirm"
+                initial={{ opacity: 0, x: 20 }}
+                animate={{ opacity: 1, x: 0 }}
+                exit={{ opacity: 0, x: -20 }}
+                transition={{ duration: 0.3 }}
+              >
+                <div className="w-16 h-16 bg-red-50 rounded-full flex items-center justify-center mx-auto mb-5 text-red-500">
+                  <Calendar className="w-8 h-8 opacity-50 absolute" />
+                  <span className="text-2xl font-black relative z-10 -mr-3 mt-3">
+                    ×
+                  </span>
+                </div>
+
+                <h3 className="text-xl font-bold text-brand-dark mb-3">
+                  ¿Estás seguro de cancelar?
+                </h3>
+                <p className="text-base text-brand-gray font-medium mb-8 leading-relaxed">
+                  Estás a punto de cancelar tu cita de{" "}
+                  <strong className="text-brand-dark">
+                    {MOCK_PATIENT.nextAppointment.service}
+                  </strong>
+                  . <br />
+                  <br />
+                  Esta acción no se puede deshacer.
+                </p>
+
+                <div className="flex flex-col gap-3">
+                  <Button
+                    onClick={() => setCancelState("closed")}
+                    className="w-full py-4 rounded-xl text-base font-bold cursor-pointer"
+                  >
+                    No, mantener mi cita
+                  </Button>
+
+                  <Button
+                    variant="outline"
+                    onClick={handleConfirmCancel} // Llamamos a nuestra función con timeout
+                    className="w-full py-3.5 rounded-xl text-base font-bold text-red-500 border-red-100 hover:bg-red-50 hover:border-red-200 cursor-pointer"
+                  >
+                    Sí, cancelar cita
+                  </Button>
+                </div>
+              </motion.div>
+            )}
+
+            {/* ESTADO 2: ÉXITO DE CANCELACIÓN */}
+            {cancelState === "success" && (
+              <motion.div
+                key="success"
+                initial={{ opacity: 0, scale: 0.9 }}
+                animate={{ opacity: 1, scale: 1 }}
+                transition={{ duration: 0.4, type: "spring" }}
+                className="py-6"
+              >
+                <div className="w-20 h-20 bg-red-50 rounded-full flex items-center justify-center mx-auto mb-6 text-brand-dark shadow-sm border border-red-100">
+                  <Trash2 className="w-10 h-10 text-red-400" />
+                </div>
+
+                <h3 className="text-2xl font-bold text-brand-dark mb-2">
+                  ¡Listo!
+                </h3>
+                <p className="text-lg text-brand-gray font-medium">
+                  Tu cita ha sido cancelada correctamente.
+                </p>
+                <p className="text-sm text-brand-gray/60 mt-4 animate-pulse">
+                  Actualizando tu panel...
+                </p>
+              </motion.div>
+            )}
+          </AnimatePresence>
+        </div>
+      </Modal>
     </main>
   );
 };
