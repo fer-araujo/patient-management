@@ -1,64 +1,90 @@
 import { useState, useMemo } from "react";
-import { motion } from "framer-motion";
+import { motion, AnimatePresence } from "framer-motion";
 import {
   ChevronLeft,
   ChevronRight,
-  Clock,
   User,
   Phone,
-  CheckCircle2,
-  Lock,
   Calendar as CalendarIcon,
+  FileText,
+  Plus,
+  MessageSquare,
+  Settings,
 } from "lucide-react";
 import { Button } from "../../../../components/ui/Button";
 import { Modal } from "../../../../components/ui/Modal";
+import { Dropdown } from "../../../../components/ui/Dropdown";
+import { DatePicker } from "../../../../components/ui/DatePicker";
 import {
   MOCK_APPOINTMENTS,
   type AppointmentData,
 } from "../../../../data/mockPatients";
 
-// Configuraciones del Calendario
-const START_HOUR = 8; // 08:00 AM
-const END_HOUR = 20; // 08:00 PM
-const HOUR_HEIGHT = 80; // Píxeles por hora (para calcular el alto y la posición)
-const APPOINTMENT_DURATION = 45; // Minutos estándar por cita (para el alto de la tarjeta)
+import { WeeklyView } from "./calendar/WeeklyView";
+import { DailyView } from "./calendar/DailyView";
+import { MonthlyView } from "./calendar/MonthlyView";
 
-// Helper para generar el arreglo de horas [8, 9, 10, ... 20]
-const HOURS = Array.from(
-  { length: END_HOUR - START_HOUR + 1 },
-  (_, i) => START_HOUR + i,
-);
+// Interface para que el cascarón (DoctorDashboard) maneje la navegación
+interface CalendarTabProps {
+  onStartConsultation: (appointment: AppointmentData) => void;
+}
 
-// Helper para convertir "11:30 AM" a píxeles desde el inicio (08:00 AM)
-const timeToPixels = (timeStr: string) => {
-  const [time, modifier] = timeStr.split(" ");
-  // eslint-disable-next-line prefer-const
-  let [hours, minutes] = time.split(":").map(Number);
+export const CalendarTab = ({ onStartConsultation }: CalendarTabProps) => {
+  const confirmedAppointments = useMemo(
+    () => MOCK_APPOINTMENTS.filter((app) => app.status === "confirmed"),
+    [],
+  );
 
-  if (modifier === "PM" && hours !== 12) hours += 12;
-  if (modifier === "AM" && hours === 12) hours = 0;
-
-  const totalMinutes = hours * 60 + minutes;
-  const startMinutes = START_HOUR * 60;
-  const offsetMinutes = totalMinutes - startMinutes;
-
-  return (offsetMinutes / 60) * HOUR_HEIGHT;
-};
-
-export const CalendarTab = () => {
-  // Tomamos solo las confirmadas para mostrarlas en el calendario
-  const confirmedAppointments = useMemo(() => {
-    return MOCK_APPOINTMENTS.filter((app) => app.status === "confirmed");
+  // Opciones Dinámicas para los Dropdowns basadas en el Mock
+  const patientOptions = useMemo(() => {
+    const uniqueNames = Array.from(
+      new Set(MOCK_APPOINTMENTS.map((app) => app.patientName)),
+    );
+    return [
+      ...uniqueNames.map((name) => ({ label: name, value: name })),
+      { label: "+ Crear nuevo paciente", value: "new", disabled: true },
+    ];
   }, []);
 
-  // ESTADOS PARA MODALES
+  const serviceOptions = useMemo(() => {
+    const uniqueServices = Array.from(
+      new Set(MOCK_APPOINTMENTS.map((app) => app.service)),
+    );
+    return uniqueServices.map((service) => ({
+      label: service,
+      value: service,
+    }));
+  }, []);
+
+  const [calendarView, setCalendarView] = useState<"day" | "week" | "month">(
+    "week",
+  );
+
+  // Estados para Modales
   const [selectedAppointment, setSelectedAppointment] =
     useState<AppointmentData | null>(null);
+  const [actionModal, setActionModal] = useState<{
+    date: string;
+    time: string;
+  } | null>(null);
+  const [actionTab, setActionTab] = useState<"schedule" | "block">("schedule");
+  const [settingsModalOpen, setSettingsModalOpen] = useState(false);
 
-  const [blockTimeModal, setBlockTimeModal] = useState<{ time: string } | null>(
-    null,
-  );
+  // Estados de Formularios (Dropdowns y DatePickers)
+  const [selectedPatient, setSelectedPatient] = useState("");
+  const [selectedService, setSelectedService] = useState("");
+  const [blockStartDate, setBlockStartDate] = useState("");
+  const [blockEndDate, setBlockEndDate] = useState("");
   const [blockReason, setBlockReason] = useState("comida");
+
+  // Settings de Horario
+  const [workingHours, setWorkingHours] = useState({
+    start: "08:00 AM",
+    end: "08:00 PM",
+  });
+
+  const [isStartPickerOpen, setIsStartPickerOpen] = useState(false);
+  const [isEndPickerOpen, setIsEndPickerOpen] = useState(false);
 
   return (
     <motion.div
@@ -66,208 +92,228 @@ export const CalendarTab = () => {
       animate={{ opacity: 1, y: 0 }}
       className="space-y-6"
     >
-      {/* HEADER DEL CALENDARIO */}
-      <div className="flex flex-col sm:flex-row items-center justify-between gap-4 bg-white border border-slate-200 rounded-3xl p-4 shadow-[0_8px_30px_rgb(0,0,0,0.04)]">
-        <div className="flex items-center gap-4">
+      {/* ========================================================
+          HEADER DEL CALENDARIO
+          ======================================================== */}
+      <div className="flex flex-col xl:flex-row items-center justify-between gap-4 bg-white border border-slate-200 rounded-3xl p-4 sm:p-6 shadow-[0_8px_30px_rgb(0,0,0,0.04)]">
+        <div className="flex items-center gap-4 w-full xl:w-auto">
           <div className="w-12 h-12 bg-brand-light/30 text-brand-primary rounded-xl flex items-center justify-center shrink-0">
-            <span className="text-xl font-black">{new Date().getDate()}</span>
+            <CalendarIcon className="w-6 h-6" />
           </div>
           <div>
-            <h2 className="text-xl font-bold text-brand-dark leading-tight">
-              {new Date()
-                .toLocaleDateString("es-MX", {
-                  weekday: "long",
-                  month: "long",
-                  year: "numeric",
-                })
-                .replace(/^\w/, (c) => c.toUpperCase())}
+            <h2 className="text-2xl font-extrabold text-brand-dark leading-tight">
+              Marzo 2026
             </h2>
-            <p className="text-sm font-medium text-brand-gray">
-              Día de Trabajo Actual
+            <p className="text-sm font-medium text-brand-gray mt-1">
+              {calendarView === "day"
+                ? "16 de Marzo, Lunes"
+                : calendarView === "week"
+                  ? "16 - 20 de Marzo"
+                  : "Mes completo"}
             </p>
           </div>
         </div>
 
-        <div className="flex items-center gap-2">
+        <div className="flex flex-col sm:flex-row items-center gap-4 w-full xl:w-auto">
           <Button
             variant="outline"
-            className="px-3 py-2 rounded-xl border-slate-200 text-brand-gray hover:bg-slate-50 cursor-pointer"
+            onClick={() => setSettingsModalOpen(true)}
+            className="hidden xl:flex px-4 py-2 rounded-xl border-slate-200 text-brand-gray hover:bg-slate-50 cursor-pointer items-center gap-2"
           >
-            <ChevronLeft className="w-5 h-5" />
+            <Settings className="w-4 h-4" /> Horarios de Clínica
           </Button>
-          <Button
-            variant="outline"
-            className="px-4 py-2 rounded-xl border-slate-200 text-brand-dark font-bold hover:bg-slate-50 cursor-pointer"
-          >
-            Hoy
-          </Button>
-          <Button
-            variant="outline"
-            className="px-3 py-2 rounded-xl border-slate-200 text-brand-gray hover:bg-slate-50 cursor-pointer"
-          >
-            <ChevronRight className="w-5 h-5" />
-          </Button>
-        </div>
-      </div>
 
-      {/* EL TIMELINE VERTICAL */}
-      <div className="bg-white border border-slate-200 rounded-3xl shadow-[0_8px_30px_rgb(0,0,0,0.04)] overflow-hidden flex flex-col h-175">
-        <div className="flex-1 overflow-y-auto hide-scrollbar relative">
-          <div className="flex w-full relative min-h-max">
-            {/* COLUMNA IZQUIERDA: Etiquetas de Tiempo */}
-            <div className="w-20 shrink-0 border-r border-slate-100 bg-slate-50/50 sticky left-0 z-10">
-              {HOURS.map((hour) => {
-                const isPM = hour >= 12;
-                const displayHour = hour > 12 ? hour - 12 : hour;
-                return (
-                  <div
-                    key={hour}
-                    className="relative flex justify-center"
-                    style={{ height: HOUR_HEIGHT }}
-                  >
-                    <span className="text-xs font-bold text-brand-gray absolute -top-2.5 bg-slate-50/50 px-1">
-                      {String(displayHour).padStart(2, "0")}:00{" "}
-                      {isPM ? "PM" : "AM"}
-                    </span>
-                  </div>
-                );
-              })}
-            </div>
+          <div className="flex items-center bg-slate-100 p-1.5 rounded-xl border border-slate-200 w-full sm:w-auto justify-center">
+            {(["day", "week", "month"] as const).map((view) => (
+              <button
+                key={view}
+                onClick={() => setCalendarView(view)}
+                className={`px-4 py-1.5 rounded-lg text-sm font-bold transition-all capitalize cursor-pointer ${calendarView === view ? "bg-white text-brand-dark shadow-sm" : "text-brand-gray hover:text-brand-dark"}`}
+              >
+                {view === "day" ? "Día" : view === "week" ? "Semana" : "Mes"}
+              </button>
+            ))}
+          </div>
 
-            {/* COLUMNA DERECHA: El Lienzo de Citas */}
-            <div
-              className="flex-1 relative min-w-150 bg-[linear-gradient(transparent_39px,#f1f5f9_40px,transparent_41px)]"
-              style={{ backgroundSize: `100% ${HOUR_HEIGHT / 2}px` }}
+          <div className="flex items-center gap-2 bg-slate-50 p-1.5 rounded-2xl border border-slate-200 shrink-0">
+            <Button
+              variant="outline"
+              className="p-2 rounded-xl border-none bg-white shadow-sm text-brand-dark cursor-pointer"
             >
-              {/* Líneas horizontales de las horas en punto */}
-              {HOURS.map((hour) => (
-                <div
-                  key={hour}
-                  className="absolute w-full border-t border-slate-200"
-                  style={{ top: (hour - START_HOUR) * HOUR_HEIGHT }}
-                />
-              ))}
-
-              {/* Botones invisibles para bloquear agenda (Click en espacio vacío) */}
-              {HOURS.slice(0, -1).map((hour) => {
-                const displayHour = hour > 12 ? hour - 12 : hour;
-                const isPM = hour >= 12;
-                const timeStr = `${String(displayHour).padStart(2, "0")}:00 ${isPM ? "PM" : "AM"}`;
-
-                return (
-                  <div
-                    key={`slot-${hour}`}
-                    onClick={() => setBlockTimeModal({ time: timeStr })}
-                    className="absolute w-full opacity-0 hover:opacity-100 hover:bg-slate-100/40 cursor-pointer transition-colors z-0 flex items-center justify-center border-dashed border-2 border-transparent hover:border-slate-300"
-                    style={{
-                      top: (hour - START_HOUR) * HOUR_HEIGHT,
-                      height: HOUR_HEIGHT,
-                    }}
-                  >
-                    <span className="text-sm font-bold text-brand-gray bg-white px-3 py-1 rounded-lg shadow-sm pointer-events-none">
-                      + Bloquear / Agendar {timeStr}
-                    </span>
-                  </div>
-                );
-              })}
-
-              {/* RENDERIZADO DE LAS CITAS (Absolute Positioning) */}
-              {confirmedAppointments.map((app) => {
-                const topPosition = timeToPixels(app.time);
-                const heightPixels = (APPOINTMENT_DURATION / 60) * HOUR_HEIGHT; // 45 mins de alto
-
-                // Evitamos que se rendericen fuera del rango 8am-8pm
-                if (
-                  topPosition < 0 ||
-                  topPosition > (END_HOUR - START_HOUR) * HOUR_HEIGHT
-                )
-                  return null;
-
-                return (
-                  <div
-                    key={app.id}
-                    onClick={() => setSelectedAppointment(app)}
-                    className="absolute left-2 right-4 rounded-xl border-l-4 border-brand-primary bg-brand-light/20 hover:bg-brand-light/40 transition-colors p-2 sm:p-3 cursor-pointer shadow-sm z-20 overflow-hidden flex flex-col group"
-                    style={{ top: topPosition, height: heightPixels }}
-                  >
-                    <div className="flex items-center justify-between gap-2">
-                      <h4 className="text-sm sm:text-base font-bold text-brand-dark truncate">
-                        {app.patientName}
-                      </h4>
-                      <span className="text-xs font-bold text-brand-primary whitespace-nowrap hidden sm:block bg-white px-2 py-0.5 rounded-md shadow-[0_1px_2px_rgba(0,0,0,0.05)]">
-                        {app.time}
-                      </span>
-                    </div>
-                    <p className="text-xs text-brand-gray font-medium truncate mt-0.5">
-                      {app.service}
-                    </p>
-                  </div>
-                );
-              })}
-            </div>
+              <ChevronLeft className="w-5 h-5" />
+            </Button>
+            <span className="font-bold text-sm px-3">
+              {calendarView === "day"
+                ? "Hoy"
+                : calendarView === "week"
+                  ? "Semana Actual"
+                  : "Este Mes"}
+            </span>
+            <Button
+              variant="outline"
+              className="p-2 rounded-xl border-none bg-white shadow-sm text-brand-dark cursor-pointer"
+            >
+              <ChevronRight className="w-5 h-5" />
+            </Button>
           </div>
         </div>
       </div>
 
       {/* ========================================================
-          MODAL 1: DETALLES DE LA CITA
+          RENDERIZADO DINÁMICO DE VISTAS
+          ======================================================== */}
+      <AnimatePresence mode="wait">
+        {calendarView === "day" && (
+          <motion.div
+            key="day"
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+          >
+            <DailyView
+              appointments={confirmedAppointments}
+              onAppointmentClick={setSelectedAppointment}
+              onEmptySlotClick={(date, time) => {
+                setActionModal({ date, time });
+                setActionTab("schedule");
+              }}
+            />
+          </motion.div>
+        )}
+        {calendarView === "week" && (
+          <motion.div
+            key="week"
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+          >
+            <WeeklyView
+              appointments={confirmedAppointments}
+              onAppointmentClick={setSelectedAppointment}
+              onEmptySlotClick={(date, time) => {
+                setActionModal({ date, time });
+                setActionTab("schedule");
+              }}
+            />
+          </motion.div>
+        )}
+        {calendarView === "month" && (
+          <motion.div
+            key="month"
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+          >
+            <MonthlyView
+              appointments={confirmedAppointments}
+              onAppointmentClick={setSelectedAppointment}
+              onEmptySlotClick={(date, time) => {
+                setActionModal({ date, time });
+                setActionTab("schedule");
+              }}
+            />
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* ========================================================
+          MODAL 1: PRE-CONSULTA (ESTILO PREMIUM)
           ======================================================== */}
       <Modal
         isOpen={!!selectedAppointment}
         onClose={() => setSelectedAppointment(null)}
-        title="Detalle de la Cita"
-        icon={<CalendarIcon className="w-5 h-5 text-brand-primary" />}
+        title="Detalles de la Cita"
+        icon={<User className="w-5 h-5 text-brand-primary" />}
         hideFooter={true}
       >
         {selectedAppointment && (
-          <div className="space-y-6 pb-2">
-            <div className="flex items-start gap-4">
-              <div className="w-14 h-14 bg-slate-100 rounded-full flex items-center justify-center text-brand-dark shrink-0 overflow-hidden">
-                <User className="w-6 h-6 text-brand-gray" />
+          <div className="bg-slate-50/50 -m-6 p-6 space-y-4">
+            <div className="bg-white p-4 rounded-2xl shadow-sm border border-slate-100 flex items-center gap-4">
+              <div className="w-16 h-16 bg-slate-100 rounded-full flex items-center justify-center text-brand-dark shrink-0 overflow-hidden border-2 border-white shadow-sm">
+                <User className="w-8 h-8 text-brand-gray" />
               </div>
-              <div className="flex-1">
-                <h3 className="text-xl font-bold text-brand-dark">
+              <div>
+                <h3 className="text-xl font-extrabold text-brand-dark leading-none">
                   {selectedAppointment.patientName}
                 </h3>
-                <div className="flex items-center gap-2 mt-1 text-sm font-medium text-slate-500">
-                  <Phone className="w-4 h-4" /> {selectedAppointment.phone}
+                <div className="flex flex-col sm:flex-row sm:items-center gap-2 sm:gap-4 mt-2 text-sm font-medium text-slate-500">
+                  <span className="flex items-center gap-1.5">
+                    <Phone className="w-3.5 h-3.5" />{" "}
+                    {selectedAppointment.phone}
+                  </span>
                 </div>
               </div>
             </div>
 
-            <div className="bg-slate-50 rounded-2xl p-4 border border-slate-100 space-y-3">
-              <div className="flex items-center justify-between">
-                <span className="text-sm font-medium text-brand-gray flex items-center gap-2">
-                  <CheckCircle2 className="w-4 h-4 text-teal-500" /> Servicio
-                </span>
-                <span className="text-sm font-bold text-brand-dark text-right">
-                  {selectedAppointment.service}
-                </span>
-              </div>
-              <div className="flex items-center justify-between">
-                <span className="text-sm font-medium text-brand-gray flex items-center gap-2">
-                  <Clock className="w-4 h-4 text-brand-primary" /> Horario
-                </span>
-                <span className="text-sm font-bold text-brand-dark bg-brand-light/30 px-2 py-1 rounded-md">
-                  {selectedAppointment.time} (45 min)
-                </span>
+            <div className="bg-white p-4 rounded-2xl shadow-sm border border-slate-100">
+              <h4 className="text-xs font-black text-brand-gray uppercase tracking-widest mb-2 flex items-center gap-2">
+                <FileText className="w-4 h-4 text-brand-primary" /> Razón de
+                Consulta / Notas
+              </h4>
+              <div className="bg-slate-50 p-3 rounded-xl text-sm font-medium text-brand-dark leading-relaxed">
+                {selectedAppointment.isNewPatient ? (
+                  "Paciente de primera vez. Agendó consulta mediante el portal web."
+                ) : (
+                  <span className="italic text-slate-600">
+                    "Acude a seguimiento. Sugerir retoque en área frontal. Piel
+                    con tendencia a sequedad." (Nota de la última cita)
+                  </span>
+                )}
               </div>
             </div>
 
-            <div className="pt-4 border-t border-slate-100 flex gap-3">
+            {/* Mensaje al paciente (Visible en su portal) */}
+            <div className="bg-white p-4 rounded-2xl shadow-sm border border-slate-100">
+              <label className="text-brand-dark font-bold text-sm mb-2 flex items-center gap-2">
+                <MessageSquare className="w-4 h-4 text-brand-primary" />{" "}
+                Instrucciones previas para el paciente
+              </label>
+              <textarea
+                placeholder="Ej: Recuerda asistir con la cara lavada y sin maquillaje..."
+                className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-sm font-medium focus:border-brand-primary focus:bg-white outline-none resize-none h-16 transition-all"
+              />
+            </div>
+
+            <div className="grid grid-cols-2 gap-4">
+              <div className="bg-white p-4 rounded-2xl shadow-sm border border-slate-100">
+                <h4 className="text-xs font-black text-brand-gray uppercase tracking-widest mb-1">
+                  Fecha
+                </h4>
+                <p className="font-bold text-brand-dark">
+                  {selectedAppointment.date}
+                </p>
+                <p className="text-sm font-medium text-slate-500">
+                  {selectedAppointment.time} (45 Min)
+                </p>
+              </div>
+              <div className="bg-white p-4 rounded-2xl shadow-sm border border-slate-100">
+                <h4 className="text-xs font-black text-brand-gray uppercase tracking-widest mb-1">
+                  Tipo
+                </h4>
+                <p className="font-bold text-brand-primary">
+                  {selectedAppointment.service}
+                </p>
+                <p className="text-sm font-medium text-slate-500">
+                  Dra. Carmen Torres
+                </p>
+              </div>
+            </div>
+
+            <div className="pt-4 flex gap-3 bg-white -mx-6 -mb-6 p-6 border-t border-slate-200">
               <Button
                 variant="outline"
                 onClick={() => setSelectedAppointment(null)}
-                className="flex-1 py-3 rounded-xl cursor-pointer font-bold text-brand-dark"
+                className="flex-1 py-3.5 rounded-xl cursor-pointer font-bold"
               >
                 Cerrar
               </Button>
-              {/* ¡EL BOTÓN MÁGICO PARA IR AL EXPEDIENTE! */}
               <Button
-                onClick={() =>
-                  alert("Navegando al Expediente Clínico (Tab 2)...")
-                }
-                className="flex-1 py-3 rounded-xl cursor-pointer"
+                onClick={() => {
+                  if (selectedAppointment)
+                    onStartConsultation(selectedAppointment);
+                  setSelectedAppointment(null);
+                }}
+                className="flex-1 py-3.5 rounded-xl cursor-pointer bg-brand-primary hover:bg-brand-dark text-white border-none shadow-md"
               >
                 Iniciar Consulta
               </Button>
@@ -277,72 +323,232 @@ export const CalendarTab = () => {
       </Modal>
 
       {/* ========================================================
-          MODAL 2: BLOQUEAR AGENDA
+          MODAL 2: GESTIÓN DE AGENDA
           ======================================================== */}
       <Modal
-        isOpen={!!blockTimeModal}
-        onClose={() => setBlockTimeModal(null)}
-        title="Bloquear Horario"
-        icon={<Lock className="w-5 h-5 text-slate-600" />}
+        isOpen={!!actionModal}
+        onClose={() => setActionModal(null)}
+        title="Gestión de Agenda"
+        icon={<Plus className="w-5 h-5 text-brand-primary" />}
         hideFooter={true}
       >
-        {blockTimeModal && (
+        {actionModal && (
           <div className="space-y-6 pb-2">
-            <div className="bg-slate-50 rounded-2xl p-4 border border-slate-100 text-center">
-              <p className="text-sm font-medium text-brand-gray mb-1">
-                Horario seleccionado:
-              </p>
-              <h3 className="text-2xl font-black text-brand-dark">
-                {blockTimeModal.time}
-              </h3>
-            </div>
-
-            <div>
-              <label className="text-brand-dark font-bold text-sm mb-3 block">
-                Motivo del bloqueo
-              </label>
-              <div className="grid grid-cols-2 gap-3">
-                {[
-                  { id: "comida", label: "Comida" },
-                  { id: "junta", label: "Junta Administrativa" },
-                  { id: "personal", label: "Asunto Personal" },
-                  { id: "quirofano", label: "Procedimiento Largo" },
-                ].map((reason) => (
-                  <button
-                    key={reason.id}
-                    onClick={() => setBlockReason(reason.id)}
-                    className={`py-3 px-4 rounded-xl border-2 text-sm font-bold transition-all cursor-pointer ${
-                      blockReason === reason.id
-                        ? "border-slate-800 bg-slate-800 text-white shadow-md"
-                        : "border-slate-200 bg-white text-brand-gray hover:border-slate-300 hover:bg-slate-50"
-                    }`}
-                  >
-                    {reason.label}
-                  </button>
-                ))}
-              </div>
-            </div>
-
-            <div className="pt-4 border-t border-slate-100 flex gap-3">
-              <Button
-                variant="outline"
-                onClick={() => setBlockTimeModal(null)}
-                className="flex-1 py-3 rounded-xl cursor-pointer"
+            {" "}
+            {/* EL FIX: Adiós al pb-40 feo, regresamos a pb-2 */}
+            <div className="flex p-1 bg-slate-100 rounded-xl">
+              <button
+                onClick={() => setActionTab("schedule")}
+                className={`flex-1 py-2 text-sm font-bold rounded-lg transition-all cursor-pointer ${actionTab === "schedule" ? "bg-white text-brand-primary shadow-sm" : "text-brand-gray hover:text-brand-dark"}`}
               >
-                Cancelar
-              </Button>
-              <Button
-                onClick={() => {
-                  alert(`Horario bloqueado: ${blockTimeModal.time}`);
-                  setBlockTimeModal(null);
-                }}
-                className="flex-1 py-3 rounded-xl bg-slate-800 hover:bg-slate-900 text-white cursor-pointer border-none"
+                Agendar Cita
+              </button>
+              <button
+                onClick={() => setActionTab("block")}
+                className={`flex-1 py-2 text-sm font-bold rounded-lg transition-all cursor-pointer ${actionTab === "block" ? "bg-brand-primary text-white shadow-sm" : "text-brand-gray hover:text-brand-dark"}`}
               >
-                Confirmar Bloqueo
-              </Button>
+                Bloquear Horario
+              </button>
             </div>
+            {/* TAB: AGENDAR */}
+            {actionTab === "schedule" && (
+              <motion.div
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                className="space-y-4"
+              >
+                <div className="bg-brand-light/20 border border-brand-light/50 rounded-xl p-3 flex justify-between items-center text-sm">
+                  <span className="text-brand-gray font-medium">Horario:</span>
+                  <span className="font-bold text-brand-primary">
+                    {actionModal.date} a las {actionModal.time}
+                  </span>
+                </div>
+
+                {/* FIX DE Z-INDEX: Le damos z-50 al de arriba y z-40 al de abajo */}
+                <div className="relative z-50">
+                  <label className="text-brand-dark font-bold text-sm mb-2 block">
+                    Buscar Paciente
+                  </label>
+                  <Dropdown
+                    options={patientOptions}
+                    value={selectedPatient}
+                    onChange={setSelectedPatient}
+                    placeholder="Buscar por nombre..."
+                    searchable={true}
+                  />
+                </div>
+
+                <div className="relative z-40">
+                  <label className="text-brand-dark font-bold text-sm mb-2 block">
+                    Servicio a realizar
+                  </label>
+                  <Dropdown
+                    options={serviceOptions}
+                    value={selectedService}
+                    onChange={setSelectedService}
+                    placeholder="Seleccione un servicio..."
+                  />
+                </div>
+
+                <Button className="w-full py-3.5 rounded-xl bg-brand-primary hover:opacity-90 text-white mt-4 cursor-pointer border-none shadow-md">
+                  Confirmar Cita
+                </Button>
+              </motion.div>
+            )}
+            {/* TAB: BLOQUEAR */}
+            {actionTab === "block" && (
+              <motion.div
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                className="space-y-4"
+              >
+                <div className="grid grid-cols-2 gap-3 relative">
+                  <div>
+                    <label className="text-brand-dark font-bold text-sm mb-2 block">
+                      Desde
+                    </label>
+                    <button
+                      onClick={() => setIsStartPickerOpen(!isStartPickerOpen)}
+                      className="w-full px-4 py-3 bg-white border border-slate-200 rounded-xl text-sm font-medium text-left transition-all flex items-center justify-between group cursor-pointer"
+                    >
+                      <span
+                        className={
+                          blockStartDate ? "text-brand-dark" : "text-brand-gray"
+                        }
+                      >
+                        {blockStartDate || "Seleccionar..."}
+                      </span>
+                      <CalendarIcon className="w-4 h-4 text-brand-gray group-hover:text-brand-primary transition-colors" />
+                    </button>
+                    <div className="absolute top-full mt-2 z-50">
+                      <DatePicker
+                        isOpen={isStartPickerOpen}
+                        onClose={() => setIsStartPickerOpen(false)}
+                        selectedDate={blockStartDate}
+                        onSelectDate={(d) => {
+                          setBlockStartDate(d);
+                          setIsStartPickerOpen(false);
+                        }}
+                      />
+                    </div>
+                  </div>
+                  <div>
+                    <label className="text-brand-dark font-bold text-sm mb-2 block">
+                      Hasta
+                    </label>
+                    <button
+                      onClick={() => setIsEndPickerOpen(!isEndPickerOpen)}
+                      className="w-full px-4 py-3 bg-white border border-slate-200 rounded-xl text-sm font-medium text-left transition-all flex items-center justify-between group cursor-pointer"
+                    >
+                      <span
+                        className={
+                          blockEndDate ? "text-brand-dark" : "text-brand-gray"
+                        }
+                      >
+                        {blockEndDate || "Seleccionar..."}
+                      </span>
+                      <CalendarIcon className="w-4 h-4 text-brand-gray group-hover:text-brand-primary transition-colors" />
+                    </button>
+                    <div className="absolute top-full right-0 mt-2 z-50">
+                      <DatePicker
+                        isOpen={isEndPickerOpen}
+                        onClose={() => setIsEndPickerOpen(false)}
+                        selectedDate={blockEndDate}
+                        minDate={blockStartDate}
+                        onSelectDate={(d) => {
+                          setBlockEndDate(d);
+                          setIsEndPickerOpen(false);
+                        }}
+                      />
+                    </div>
+                  </div>
+                </div>
+                <div>
+                  <label className="text-brand-dark font-bold text-sm mb-3 block">
+                    Motivo
+                  </label>
+                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                    {[
+                      { id: "comida", label: "Comida" },
+                      { id: "junta", label: "Junta" },
+                      { id: "personal", label: "Personal" },
+                      { id: "vacaciones", label: "Vacaciones" },
+                    ].map((reason) => (
+                      <button
+                        key={reason.id}
+                        onClick={() => setBlockReason(reason.id)}
+                        className={`py-2 px-2 rounded-lg border text-xs font-bold transition-all cursor-pointer ${blockReason === reason.id ? "border-brand-primary bg-brand-primary text-white" : "border-slate-200 bg-white text-brand-gray hover:border-slate-300"}`}
+                      >
+                        {reason.label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+                <Button className="w-full py-3.5 rounded-xl bg-brand-primary hover:opacity-90 text-white mt-4 cursor-pointer border-none shadow-md">
+                  Bloquear Fechas
+                </Button>
+              </motion.div>
+            )}
           </div>
         )}
+      </Modal>
+
+      {/* ========================================================
+          MODAL 3: CONFIGURACIÓN DE HORARIOS
+          ======================================================== */}
+      <Modal
+        isOpen={settingsModalOpen}
+        onClose={() => setSettingsModalOpen(false)}
+        title="Configuración de Horarios"
+        icon={<Settings className="w-5 h-5 text-brand-primary" />}
+        hideFooter={true}
+      >
+        <div className="space-y-6 pb-2">
+          <p className="text-brand-gray text-sm">
+            Define el horario laboral en el que el calendario y los pacientes
+            podrán agendar citas.
+          </p>
+          <div className="grid grid-cols-2 gap-4 relative z-20">
+            <div>
+              <label className="text-brand-dark font-bold text-sm mb-2 block">
+                Hora de Inicio
+              </label>
+              <Dropdown
+                options={[
+                  { label: "07:00 AM", value: "07:00 AM" },
+                  { label: "08:00 AM", value: "08:00 AM" },
+                  { label: "09:00 AM", value: "09:00 AM" },
+                ]}
+                value={workingHours.start}
+                onChange={(val) =>
+                  setWorkingHours({ ...workingHours, start: val })
+                }
+              />
+            </div>
+            <div>
+              <label className="text-brand-dark font-bold text-sm mb-2 block">
+                Hora de Fin
+              </label>
+              <Dropdown
+                options={[
+                  { label: "06:00 PM", value: "06:00 PM" },
+                  { label: "08:00 PM", value: "08:00 PM" },
+                  { label: "10:00 PM", value: "10:00 PM" },
+                ]}
+                value={workingHours.end}
+                onChange={(val) =>
+                  setWorkingHours({ ...workingHours, end: val })
+                }
+              />
+            </div>
+          </div>
+          <Button
+            onClick={() => setSettingsModalOpen(false)}
+            className="w-full py-3.5 rounded-xl bg-brand-dark hover:bg-slate-800 text-white mt-4 cursor-pointer border-none shadow-md"
+          >
+            Guardar Horarios
+          </Button>
+        </div>
       </Modal>
     </motion.div>
   );
