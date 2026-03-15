@@ -6,7 +6,7 @@ export interface AppointmentData {
   time: string;
   phone: string;
   isNewPatient: boolean;
-  status: "pending" | "confirmed" | "completed" | "cancelled";
+  status: "pending" | "confirmed" | "completed" | "cancelled" | "rejected";
 }
 
 export const MOCK_APPOINTMENTS: AppointmentData[] = [
