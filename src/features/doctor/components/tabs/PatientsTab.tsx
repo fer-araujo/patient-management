@@ -1,12 +1,12 @@
-import { useMemo, useState } from "react";
+import { useMemo, useState, useEffect } from "react";
 import { motion } from "framer-motion";
 import { Users, Search, Ban, UserCheck, ShieldAlert } from "lucide-react";
 import { Button } from "../../../../components/ui/Button";
 import { DataGrid, type ColumnDef } from "../../../../components/ui/DataGrid";
-import { MOCK_APPOINTMENTS } from "../../../../data/mockPatients";
 import { Modal } from "../../../../components/ui/Modal";
+import { type DashboardAppointment } from "../../../../lib/services/clinicService";
 
-// 1. LA INTERFAZ ESTRICTA (Adiós "any")
+// 1. LA INTERFAZ ESTRICTA
 interface DerivedPatient {
   id: string;
   name: string;
@@ -16,14 +16,17 @@ interface DerivedPatient {
   status: "active" | "blocked";
 }
 
-// 2. INFERIMOS LOS PACIENTES Y TIPAMOS EL RETORNO
-const getDerivedPatients = (): DerivedPatient[] => {
+// 2. EXTRAEMOS LA INFO DEL PACIENTE DIRECTO DE SUPABASE
+const getDerivedPatients = (
+  appointmentsData: DashboardAppointment[],
+): DerivedPatient[] => {
   const patientMap = new Map<string, DerivedPatient>();
 
-  MOCK_APPOINTMENTS.forEach((app) => {
-    if (!patientMap.has(app.patientName)) {
-      patientMap.set(app.patientName, {
-        id: `pat_${app.id}`,
+  appointmentsData.forEach((app) => {
+    // Si no existe en nuestro mapeo, lo agregamos usando el ID REAL de Supabase
+    if (!patientMap.has(app.patientId)) {
+      patientMap.set(app.patientId, {
+        id: app.patientId,
         name: app.patientName,
         phone: app.phone,
         totalVisits: 0,
@@ -32,8 +35,9 @@ const getDerivedPatients = (): DerivedPatient[] => {
       });
     }
 
+    // Si tiene citas completadas, sumamos a su contador
     if (app.status === "completed") {
-      const p = patientMap.get(app.patientName)!;
+      const p = patientMap.get(app.patientId)!;
       p.totalVisits += 1;
     }
   });
@@ -41,12 +45,21 @@ const getDerivedPatients = (): DerivedPatient[] => {
   return Array.from(patientMap.values());
 };
 
-export const PatientsTab = () => {
-  const initialPatients = useMemo(() => getDerivedPatients(), []);
-  const [patients, setPatients] = useState<DerivedPatient[]>(initialPatients);
+interface PatientsTabProps {
+  appointments: DashboardAppointment[];
+}
+
+export const PatientsTab = ({ appointments }: PatientsTabProps) => {
+  // Inicializamos a partir de los datos pasados por props
+  const [patients, setPatients] = useState<DerivedPatient[]>([]);
+
+  // Efecto reactivo: si Supabase manda datos nuevos, recalculamos los pacientes
+  useEffect(() => {
+    setPatients(getDerivedPatients(appointments));
+  }, [appointments]);
+
   const [searchTerm, setSearchTerm] = useState("");
 
-  // Tipado correcto para el modal
   const [patientToBlock, setPatientToBlock] = useState<DerivedPatient | null>(
     null,
   );
@@ -69,7 +82,6 @@ export const PatientsTab = () => {
     setPatientToBlock(null);
   };
 
-  // Tipado correcto en las columnas
   const columns: ColumnDef<DerivedPatient>[] = [
     {
       header: "Paciente",

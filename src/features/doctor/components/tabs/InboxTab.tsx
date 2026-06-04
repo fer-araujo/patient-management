@@ -1,4 +1,4 @@
-import { useState, useMemo } from "react";
+import { useState, useEffect, useMemo } from "react";
 import { motion } from "framer-motion";
 import {
   Check,
@@ -19,108 +19,167 @@ import { Button } from "../../../../components/ui/Button";
 import { DataGrid, type ColumnDef } from "../../../../components/ui/DataGrid";
 import { Modal } from "../../../../components/ui/Modal";
 import { DatePicker } from "../../../../components/ui/DatePicker";
+import { Dropdown } from "../../../../components/ui/Dropdown";
 import {
-  MOCK_APPOINTMENTS,
-  type AppointmentData,
-} from "../../../../data/mockPatients";
+  updateAppointmentStatus,
+  rescheduleAppointment,
+  cancelAppointment,
+  type DashboardAppointment,
+} from "../../../../lib/services/clinicService";
+import { type DashboardBlockedSlot } from "../../../../lib/services/blockedSlotsService";
+import {
+  combineIsoDateAndTime,
+  getAvailableTimeOptions,
+} from "../../utils/calendarUtils";
+import { useCalendar } from "../../hooks/useCalendar";
 
-// Horarios disponibles (simulando la API de disponibilidad de la Dra)
-const RAW_TIMES = [
-  "09:00 AM",
-  "09:45 AM",
-  "10:30 AM",
-  "11:30 AM",
-  "12:15 PM",
-  "04:00 PM",
-  "05:30 PM",
-];
-
-// Helpers para lidiar con el DatePicker (Convierte "16 Mar 2026" <-> "2026-03-16")
 const getISODate = () => {
   const d = new Date();
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
 };
 
-export const InboxTab = () => {
-  const [appointments, setAppointments] = useState(MOCK_APPOINTMENTS);
-  const [searchTerm, setSearchTerm] = useState("");
+interface InboxTabProps {
+  appointments: DashboardAppointment[];
+  blockedSlots: DashboardBlockedSlot[];
+  onDataChange: () => Promise<void>;
+}
 
-  // Filtros
+export const InboxTab = ({
+  appointments: initialAppointments,
+  blockedSlots,
+  onDataChange,
+}: InboxTabProps) => {
+  const [appointments, setAppointments] =
+    useState<DashboardAppointment[]>(initialAppointments);
+  const { workingHours } = useCalendar();
+
+  useEffect(() => {
+    setAppointments(initialAppointments);
+  }, [initialAppointments]);
+
+  const [searchTerm, setSearchTerm] = useState("");
   const [isFilterModalOpen, setIsFilterModalOpen] = useState(false);
   const [statusFilter, setStatusFilter] = useState<string>("all");
   const [draftStatusFilter, setDraftStatusFilter] = useState<string>("all");
 
-  // Reprogramación
-  const [rescheduleData, setRescheduleData] = useState<AppointmentData | null>(
-    null,
-  );
+  const [rescheduleData, setRescheduleData] =
+    useState<DashboardAppointment | null>(null);
   const [newDateISO, setNewDateISO] = useState("");
   const [newTime, setNewTime] = useState("09:00 AM");
   const [isRescheduleDatePickerOpen, setIsRescheduleDatePickerOpen] =
     useState(false);
 
-  // Cancelación Segura
   const [cancelModalData, setCancelModalData] =
-    useState<AppointmentData | null>(null);
-  //Rechazo Seguro (Para solicitudes pendientes)
+    useState<DashboardAppointment | null>(null);
+  const [cancelReason, setCancelReason] = useState("");
   const [rejectModalData, setRejectModalData] =
-    useState<AppointmentData | null>(null);
+    useState<DashboardAppointment | null>(null);
+  const [isSubmitting, setIsSubmitting] = useState(false);
 
-  // =========================================================================
-  // ACCIONES
-  // =========================================================================
-  const handleApprove = (id: string) => {
-    setAppointments((prev) =>
-      prev.map((app) =>
-        app.id === id ? { ...app, status: "confirmed" } : app,
-      ),
+  // MOTOR DINÁMICO DE HUECOS
+  const durationMins = useMemo(() => {
+    if (!rescheduleData) return 60;
+    return (
+      appointments.find((a) => a.id === rescheduleData.id)?.durationMins || 60
     );
-  };
+  }, [rescheduleData, appointments]);
 
-  const confirmCancel = () => {
-    if (cancelModalData) {
-      setAppointments((prev) =>
-        prev.map((app) =>
-          app.id === cancelModalData.id ? { ...app, status: "cancelled" } : app,
-        ),
+  const availableTimeOptions = useMemo(() => {
+    if (!newDateISO) return [];
+    return getAvailableTimeOptions(
+      newDateISO,
+      appointments,
+      blockedSlots,
+      workingHours,
+      durationMins,
+    );
+  }, [newDateISO, appointments, blockedSlots, workingHours, durationMins]);
+
+  useEffect(() => {
+    if (
+      availableTimeOptions.length > 0 &&
+      !availableTimeOptions.find((opt) => opt.value === newTime)
+    ) {
+      setNewTime(availableTimeOptions[0].value);
+    }
+  }, [availableTimeOptions, newTime]);
+
+  // ACCIONES CON TIPADO STRICTO Y MANEJO DE ERRORES
+  const handleApprove = async (id: string) => {
+    try {
+      await updateAppointmentStatus(id, "confirmed");
+      await onDataChange();
+    } catch (err: unknown) {
+      console.error(
+        "Error al aprobar:",
+        err instanceof Error ? err.message : err,
       );
-      setCancelModalData(null);
+      alert("No se pudo aprobar la cita.");
     }
   };
 
-  const confirmReject = () => {
-    if (rejectModalData) {
-      setAppointments((prev) =>
-        prev.map((app) =>
-          app.id === rejectModalData.id ? { ...app, status: "rejected" } : app,
-        ),
-      );
-      setRejectModalData(null);
-    }
-  };
-
-  const openRescheduleModal = (appointment: AppointmentData) => {
+  const openRescheduleModal = (appointment: DashboardAppointment) => {
     setRescheduleData(appointment);
-    setNewDateISO(getISODate()); // Le pasamos un ISO real para evitar el NaN de undefined
+    setNewDateISO(getISODate());
     setNewTime(appointment.time);
   };
 
-  const handleConfirmReschedule = () => {
-    if (!rescheduleData) return;
-    // En produccion aquí convertirías el ISO back a texto bonito si tu BD lo guarda así
-    setAppointments((prev) =>
-      prev.map((app) =>
-        app.id === rescheduleData.id
-          ? { ...app, time: newTime, status: "confirmed" }
-          : app,
-      ),
-    );
-    setRescheduleData(null);
+  const confirmReject = async () => {
+    if (!rejectModalData) return;
+    try {
+      setIsSubmitting(true);
+      await updateAppointmentStatus(rejectModalData.id, "rejected");
+      await onDataChange();
+      setRejectModalData(null);
+    } catch (err: unknown) {
+      console.error(
+        "Error al rechazar:",
+        err instanceof Error ? err.message : err,
+      );
+      alert("No se pudo rechazar la cita.");
+    } finally {
+      setIsSubmitting(false);
+    }
   };
 
-  // =========================================================================
-  // DATOS DERIVADOS
-  // =========================================================================
+  const confirmCancel = async () => {
+    if (!cancelModalData || !cancelReason.trim()) return;
+    try {
+      setIsSubmitting(true);
+      await cancelAppointment(cancelModalData.id, cancelReason); // AHORA PIDE MOTIVO
+      await onDataChange();
+      setCancelModalData(null);
+      setCancelReason("");
+    } catch (err: unknown) {
+      console.error(
+        "Error al cancelar:",
+        err instanceof Error ? err.message : err,
+      );
+      alert("No se pudo cancelar la cita.");
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  const handleConfirmReschedule = async () => {
+    if (!rescheduleData || !newTime) return;
+    try {
+      setIsSubmitting(true);
+      const utcIsoDateTime = combineIsoDateAndTime(newDateISO, newTime);
+      await rescheduleAppointment(rescheduleData.id, utcIsoDateTime);
+      await onDataChange();
+      setRescheduleData(null);
+    } catch (err: unknown) {
+      console.error(
+        "Error al reprogramar:",
+        err instanceof Error ? err.message : err,
+      );
+      alert("Hubo un error al reprogramar la cita.");
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
   const stats = useMemo(
     () => ({
       pending: appointments.filter((a) => a.status === "pending").length,
@@ -142,10 +201,7 @@ export const InboxTab = () => {
     });
   }, [appointments, searchTerm, statusFilter]);
 
-  // =========================================================================
-  // COLUMNAS
-  // =========================================================================
-  const columns: ColumnDef<AppointmentData>[] = [
+  const columns: ColumnDef<DashboardAppointment>[] = [
     {
       header: "Paciente",
       accessorKey: "patientName",
@@ -213,11 +269,11 @@ export const InboxTab = () => {
           cancelled: {
             color: "text-rose-600 bg-rose-50 border-rose-200",
             label: "Cancelada",
-          }, // <--- Cancelada (Rosita)
+          },
           rejected: {
             color: "text-red-600 bg-red-50 border-red-200",
             label: "Rechazada",
-          }, // <--- Rechazada (Rojo Fuerte)
+          },
         };
         const config = statusConfig[row.status];
         return (
@@ -259,7 +315,6 @@ export const InboxTab = () => {
               </button>
             </>
           )}
-
           {row.status === "confirmed" && (
             <>
               <button
@@ -270,7 +325,10 @@ export const InboxTab = () => {
                 <CalendarClock className="w-5 h-5" strokeWidth={2.5} />
               </button>
               <button
-                onClick={() => setCancelModalData(row)}
+                onClick={() => {
+                  setCancelModalData(row);
+                  setCancelReason("");
+                }}
                 className="flex items-center justify-center w-10 h-10 bg-rose-50 text-rose-600 hover:bg-rose-500 hover:text-white rounded-xl transition-all border border-rose-100 hover:border-rose-500 shadow-sm cursor-pointer"
                 title="Cancelar Cita"
               >
@@ -278,7 +336,6 @@ export const InboxTab = () => {
               </button>
             </>
           )}
-
           {(row.status === "completed" ||
             row.status === "cancelled" ||
             row.status === "rejected") && (
@@ -301,7 +358,6 @@ export const InboxTab = () => {
       animate={{ opacity: 1, y: 0 }}
       className="space-y-8"
     >
-      {/* KPIs DE LA TAB INBOX */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 xl:gap-6">
         <div className="bg-white border border-slate-200 rounded-3xl p-6 shadow-[0_8px_30px_rgb(0,0,0,0.04)] flex items-center gap-4">
           <div className="w-14 h-14 bg-amber-50 text-amber-500 rounded-2xl flex items-center justify-center shrink-0">
@@ -357,9 +413,7 @@ export const InboxTab = () => {
         </div>
       </div>
 
-      {/* BUSCADOR Y BOTÓN DE FILTROS */}
       <div className="flex flex-col sm:flex-row items-center justify-between gap-4 mb-2">
-        {/* Buscador: Le damos un ancho fijo en web (w-96) para que no se estire feo */}
         <div className="relative w-full sm:w-96">
           <Search className="w-5 h-5 text-brand-gray absolute left-4 top-1/2 -translate-y-1/2" />
           <input
@@ -370,8 +424,6 @@ export const InboxTab = () => {
             className="w-full pl-11 pr-4 py-2.5 bg-white border border-slate-200 shadow-[0_2px_10px_rgb(0,0,0,0.02)] rounded-xl text-sm font-medium focus:outline-none focus:border-brand-primary focus:ring-2 focus:ring-brand-primary/20 transition-all"
           />
         </div>
-
-        {/* Botón Filtros: Se ajusta a su contenido */}
         <Button
           variant="outline"
           onClick={() => {
@@ -387,7 +439,6 @@ export const InboxTab = () => {
         </Button>
       </div>
 
-      {/* DATAGRID */}
       <div className="bg-white border border-slate-200 rounded-3xl shadow-[0_8px_30px_rgb(0,0,0,0.04)] overflow-hidden">
         <DataGrid
           data={filteredData}
@@ -397,9 +448,6 @@ export const InboxTab = () => {
         />
       </div>
 
-      {/* ==================== MODALES ==================== */}
-
-      {/* 1. Modal de Filtros (AHORA CON HIDE FOOTER) */}
       <Modal
         isOpen={isFilterModalOpen}
         onClose={() => setIsFilterModalOpen(false)}
@@ -414,7 +462,7 @@ export const InboxTab = () => {
               { id: "pending", label: "Pendientes" },
               { id: "confirmed", label: "Confirmadas" },
               { id: "cancelled", label: "Canceladas" },
-              { id: "rejected", label: "Rechazadas" }, 
+              { id: "rejected", label: "Rechazadas" },
             ].map((status) => (
               <button
                 key={status.id}
@@ -449,10 +497,12 @@ export const InboxTab = () => {
         </div>
       </Modal>
 
-      {/* 2. Modal de Cancelación de Seguridad */}
       <Modal
         isOpen={!!cancelModalData}
-        onClose={() => setCancelModalData(null)}
+        onClose={() => {
+          setCancelModalData(null);
+          setCancelReason("");
+        }}
         title="Cancelar Cita"
         icon={<AlertTriangle className="w-5 h-5 text-rose-500" />}
         hideFooter={true}
@@ -466,30 +516,44 @@ export const InboxTab = () => {
               ¿Estás segura?
             </h3>
             <p className="text-brand-gray">
-              Estás a punto de cancelar la cita confirmada de{" "}
-              <strong>{cancelModalData.patientName}</strong>. El paciente
-              recibirá una notificación.
+              Estás a punto de cancelar la cita de{" "}
+              <strong>{cancelModalData.patientName}</strong>.
             </p>
+            <div className="text-left mt-4 space-y-2">
+              <label className="text-sm font-bold text-brand-dark">
+                Motivo de cancelación
+              </label>
+              <textarea
+                value={cancelReason}
+                onChange={(e) => setCancelReason(e.target.value)}
+                placeholder="Ej: El paciente avisó que no llegaría..."
+                className="w-full p-3 border border-slate-200 rounded-lg focus:outline-none focus:border-brand-primary text-sm"
+                rows={3}
+              />
+            </div>
             <div className="pt-4 border-t border-slate-100 flex gap-3">
               <Button
                 variant="outline"
-                onClick={() => setCancelModalData(null)}
+                onClick={() => {
+                  setCancelModalData(null);
+                  setCancelReason("");
+                }}
                 className="flex-1 py-3 rounded-xl cursor-pointer"
               >
                 Mantener Cita
               </Button>
               <Button
                 onClick={confirmCancel}
-                className="flex-1 py-3 rounded-xl bg-rose-500 hover:bg-rose-600 text-white cursor-pointer border-none"
+                disabled={isSubmitting || !cancelReason.trim()}
+                className="flex-1 py-3 rounded-xl bg-rose-500 hover:bg-rose-600 text-white cursor-pointer border-none disabled:opacity-50"
               >
-                Sí, Cancelar
+                {isSubmitting ? "Cancelando..." : "Sí, Cancelar"}
               </Button>
             </div>
           </div>
         )}
       </Modal>
 
-      {/* 3. Modal de Reprogramación */}
       <Modal
         isOpen={!!rescheduleData}
         onClose={() => setRescheduleData(null)}
@@ -511,7 +575,6 @@ export const InboxTab = () => {
                 {rescheduleData.patientName}
               </p>
             </div>
-
             <div className="grid grid-cols-2 gap-4">
               <div>
                 <label className="text-brand-dark font-bold text-sm mb-2 block">
@@ -530,25 +593,34 @@ export const InboxTab = () => {
                   </span>
                   <Calendar className="w-4 h-4 text-brand-gray group-hover:text-brand-primary transition-colors" />
                 </button>
+                <div className="absolute top-full mt-2 z-50">
+                  <DatePicker
+                    isOpen={isRescheduleDatePickerOpen}
+                    onClose={() => setIsRescheduleDatePickerOpen(false)}
+                    selectedDate={newDateISO}
+                    minDate={getISODate()}
+                    onSelectDate={(d) => {
+                      setNewDateISO(d);
+                      setIsRescheduleDatePickerOpen(false);
+                    }}
+                  />
+                </div>
               </div>
               <div>
                 <label className="text-brand-dark font-bold text-sm mb-2 block">
                   Nueva Hora
                 </label>
-                <select
+                <Dropdown
+                  options={
+                    availableTimeOptions.length > 0
+                      ? availableTimeOptions
+                      : [{ label: "Sin horarios", value: "" }]
+                  }
                   value={newTime}
-                  onChange={(e) => setNewTime(e.target.value)}
-                  className="w-full px-4 py-3 bg-white border border-slate-200 rounded-xl text-sm font-medium focus:outline-none focus:border-brand-primary focus:ring-2 focus:ring-brand-primary/20 transition-all appearance-none cursor-pointer"
-                >
-                  {RAW_TIMES.map((time) => (
-                    <option key={time} value={time}>
-                      {time}
-                    </option>
-                  ))}
-                </select>
+                  onChange={setNewTime}
+                />
               </div>
             </div>
-
             <div className="pt-4 border-t border-slate-100 flex gap-3">
               <Button
                 variant="outline"
@@ -559,9 +631,10 @@ export const InboxTab = () => {
               </Button>
               <Button
                 onClick={handleConfirmReschedule}
-                className="flex-1 py-3 rounded-xl bg-amber-500 hover:bg-amber-600 text-white cursor-pointer border-none"
+                disabled={!newTime || isSubmitting}
+                className="flex-1 py-3 rounded-xl bg-amber-500 hover:bg-amber-600 text-white cursor-pointer border-none disabled:opacity-50"
               >
-                Confirmar y Avisar
+                {isSubmitting ? "Enviando..." : "Confirmar y Avisar"}
               </Button>
             </div>
           </div>
@@ -573,7 +646,7 @@ export const InboxTab = () => {
         onClose={() => setRejectModalData(null)}
         title="Rechazar Solicitud"
         icon={<X className="w-5 h-5 text-red-500" />}
-        hideFooter
+        hideFooter={true}
       >
         {rejectModalData && (
           <div className="space-y-6 pb-2 text-center">
@@ -586,7 +659,7 @@ export const InboxTab = () => {
             <p className="text-brand-gray">
               Estás a punto de rechazar la solicitud de cita de{" "}
               <strong>{rejectModalData.patientName}</strong>. El paciente
-              recibirá un aviso de que el horario no está disponible.
+              recibirá un aviso.
             </p>
             <div className="pt-4 border-t border-slate-100 flex gap-3">
               <Button
@@ -598,26 +671,15 @@ export const InboxTab = () => {
               </Button>
               <Button
                 onClick={confirmReject}
-                className="flex-1 py-3 rounded-xl bg-red-500 hover:bg-red-600 text-white cursor-pointer border-none"
+                disabled={isSubmitting}
+                className="flex-1 py-3 rounded-xl bg-red-500 hover:bg-red-600 text-white cursor-pointer border-none disabled:opacity-50"
               >
-                Sí, Rechazar
+                {isSubmitting ? "Rechazando..." : "Sí, Rechazar"}
               </Button>
             </div>
           </div>
         )}
       </Modal>
-
-      {/* DatePicker Externo */}
-      <DatePicker
-        isOpen={isRescheduleDatePickerOpen}
-        onClose={() => setIsRescheduleDatePickerOpen(false)}
-        selectedDate={newDateISO}
-        minDate={getISODate()}
-        onSelectDate={(d) => {
-          setNewDateISO(d);
-          setIsRescheduleDatePickerOpen(false);
-        }}
-      />
     </motion.div>
   );
 };

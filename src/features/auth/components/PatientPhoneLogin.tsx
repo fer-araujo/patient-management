@@ -11,6 +11,7 @@ import {
 import { motion, AnimatePresence } from "framer-motion";
 import { Button } from "../../../components/ui/Button";
 import { Input } from "../../../components/ui/Input";
+import { useNavigate } from "react-router-dom";
 
 interface Props {
   // Cuando es un paciente nuevo que va a iniciar el flujo de agendar
@@ -29,6 +30,8 @@ export const PatientPhoneLogin = ({
 
   // Estados para manejar el flujo internamente
   const [mode, setMode] = useState<"new" | "login_phone" | "login_otp">("new");
+
+  const navigate = useNavigate();
 
   const handleNewPatientSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -289,13 +292,24 @@ export const PatientPhoneLogin = ({
         )}
       </AnimatePresence>
 
-      <div className="mt-12 xl:mt-16 pt-6 border-t border-brand-light flex items-center gap-3 relative z-20">
-        <ShieldCheck className="w-5 h-5 text-brand-primary shrink-0" />
-        <p className="text-sm font-medium text-brand-gray">
-          Su privacidad es nuestra prioridad.{" "}
-          <br className="hidden sm:block lg:hidden" /> Conexión segura y
-          encriptada.
-        </p>
+      <div className="mt-12 xl:mt-16 pt-6 border-t border-brand-light flex items-center justify-between relative z-20">
+        <div className="flex items-center gap-3">
+          <ShieldCheck className="w-5 h-5 text-brand-primary shrink-0" />
+          <p className="text-sm font-medium text-brand-gray">
+            Su privacidad es nuestra prioridad.{" "}
+            <br className="hidden sm:block lg:hidden" /> Conexión segura y
+            encriptada.
+          </p>
+        </div>
+
+        {/* BOTÓN MINI ADMIN */}
+        <button
+          onClick={() => navigate("/doctor/dashboard")}
+          className="p-2 text-brand-gray/30 hover:text-brand-primary transition-colors cursor-pointer rounded-full hover:bg-brand-primary/5"
+          title="Acceso Médico"
+        >
+          <Lock className="w-4 h-4" />
+        </button>
       </div>
     </motion.div>
   );
