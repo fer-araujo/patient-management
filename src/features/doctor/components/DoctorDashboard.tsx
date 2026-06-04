@@ -1,31 +1,67 @@
-import { useState } from "react";
-import { Inbox, CalendarDays, FileText } from "lucide-react";
+import { useEffect, useState } from "react";
+import {
+  fetchDoctorAppointments,
+  type DashboardAppointment,
+} from "../../../lib/services/clinicService";
+import { Inbox, CalendarDays, FileText, Loader2 } from "lucide-react";
 import { InboxTab } from "./tabs/InboxTab";
 import { PatientsTab } from "./tabs/PatientsTab";
 import { CalendarTab } from "./tabs/CalendarTab";
-import { ConsultationWorkspace } from "./ConsultationWorkspace"; // <-- NUEVO IMPORT
-import { type AppointmentData } from "../../../data/mockPatients";
+import { ConsultationWorkspace } from "./ConsultationWorkspace";
+import {
+  fetchBlockedSlots,
+  type DashboardBlockedSlot,
+} from "../../../lib/services/blockedSlotsService";
+import { CalendarProvider } from "../context/CalendarProvider";
 
 export const DoctorDashboard = () => {
+  // 1. ESTADOS PRINCIPALES DE DATOS Y UI
+  const [appointments, setAppointments] = useState<DashboardAppointment[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
   const [activeTab, setActiveTab] = useState<"inbox" | "patients" | "calendar">(
     "inbox",
   );
-
-  // NUEVO ESTADO: Si hay una cita aquí, entramos a Modo Enfoque
   const [activeConsultation, setActiveConsultation] =
-    useState<AppointmentData | null>(null);
+    useState<DashboardAppointment | null>(null);
+  const [blockedSlots, setBlockedSlots] = useState<DashboardBlockedSlot[]>([]);
 
-  // Funciones puente para Iniciar y Finalizar
-  const handleStartConsultation = (appointment: AppointmentData) => {
+  const loadData = async () => {
+    try {
+      // setIsLoading(true); // Opcional
+      const [apptsData, blocksData] = await Promise.all([
+        fetchDoctorAppointments(),
+        fetchBlockedSlots(),
+      ]);
+      setAppointments(apptsData);
+      setBlockedSlots(blocksData);
+    } catch (error) {
+      console.error("Error cargando dashboard:", error);
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  // 3. CARGAR DATOS AL MONTAR EL COMPONENTE
+  useEffect(() => {
+    loadData();
+  }, []);
+
+  // 4. Funciones puente para Iniciar y Finalizar Consulta
+  const handleStartConsultation = (appointment: DashboardAppointment) => {
     setActiveConsultation(appointment);
   };
 
   const handleFinishConsultation = (id: string) => {
-    alert(`¡Consulta ${id} finalizada y guardada en BD!`);
+    // Pronto cambiaremos este alert por una actualización real en Supabase
+    alert(`¡Consulta ${id} finalizada y guardada!`);
     setActiveConsultation(null); // Salimos del modo enfoque
   };
 
-  // SI HAY UNA CONSULTA ACTIVA, OCULTAMOS EL DASHBOARD Y MOSTRAMOS EL WORKSPACE
+  // =======================================================================
+  // RENDERIZADO CONDICIONAL
+  // =======================================================================
+
+  // A) SI HAY UNA CONSULTA ACTIVA, OCULTAMOS EL DASHBOARD Y MOSTRAMOS EL WORKSPACE
   if (activeConsultation) {
     return (
       <ConsultationWorkspace
@@ -36,7 +72,19 @@ export const DoctorDashboard = () => {
     );
   }
 
-  // SI NO HAY CONSULTA, MOSTRAMOS EL DASHBOARD NORMAL
+  // B) SI AÚN ESTÁ CARGANDO DATOS DE LA BASE DE DATOS
+  if (isLoading) {
+    return (
+      <div className="min-h-[80vh] flex flex-col items-center justify-center">
+        <Loader2 className="w-10 h-10 animate-spin text-brand-primary mb-4" />
+        <p className="text-brand-gray font-medium">
+          Sincronizando expedientes clínicos...
+        </p>
+      </div>
+    );
+  }
+
+  // C) DASHBOARD PRINCIPAL CARGADO
   return (
     <main className="max-w-360 mx-auto px-4 sm:px-6 lg:px-8 pt-8 xl:pt-10 pb-20">
       {/* HEADER Y NAVEGACIÓN */}
@@ -67,17 +115,31 @@ export const DoctorDashboard = () => {
         </div>
       </div>
 
-      {/* CONTENIDO DE LAS TABS (Pasamos el handler a CalendarTab) */}
+      {/* CONTENIDO DE LAS TABS */}
       <div className="mt-6">
-        {activeTab === "inbox" && <InboxTab />}
-        {activeTab === "patients" && <PatientsTab />}
+        <CalendarProvider>
+          {/* Le pasamos los datos REALES (appointments) a cada tab */}
+          {activeTab === "inbox" && (
+            <InboxTab
+              appointments={appointments}
+              onDataChange={loadData}
+              blockedSlots={blockedSlots}
+            />
+          )}
+          {activeTab === "patients" && (
+            <PatientsTab appointments={appointments} />
+          )}
 
-        {/* Le pasamos la nueva super-función al calendario */}
-        {activeTab === "calendar" && (
-          <CalendarTab
-            onStartConsultation={handleStartConsultation}
-          />
-        )}
+          {/* Al calendario le pasamos los datos Y la función para iniciar consulta */}
+          {activeTab === "calendar" && (
+            <CalendarTab
+              appointments={appointments}
+              blockedSlots={blockedSlots}
+              onStartConsultation={handleStartConsultation}
+              onDataChange={loadData}
+            />
+          )}
+        </CalendarProvider>
       </div>
     </main>
   );

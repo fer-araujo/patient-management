@@ -1,61 +1,67 @@
-import { Clock, MoreHorizontal } from "lucide-react";
-import { type AppointmentData } from "../../../../../data/mockPatients";
-
-// Configuraciones
-const START_HOUR = 8;
-const END_HOUR = 18;
-const HOUR_HEIGHT = 100;
-const APPOINTMENT_DURATION = 45;
-
-const HOURS = Array.from(
-  { length: END_HOUR - START_HOUR + 1 },
-  (_, i) => START_HOUR + i,
-);
-
-const WEEK_DAYS = [
-  { id: "16 Mar 2026", name: "LUN 16" },
-  { id: "17 Mar 2026", name: "MAR 17" },
-  { id: "18 Mar 2026", name: "MIÉ 18" },
-  { id: "19 Mar 2026", name: "JUE 19" },
-  { id: "20 Mar 2026", name: "VIE 20" },
-];
-
-const timeToPixels = (timeStr: string) => {
-  const [time, modifier] = timeStr.split(" ");
-  // eslint-disable-next-line prefer-const
-  let [hours, minutes] = time.split(":").map(Number);
-  if (modifier === "PM" && hours !== 12) hours += 12;
-  if (modifier === "AM" && hours === 12) hours = 0;
-  const offsetMinutes = hours * 60 + minutes - START_HOUR * 60;
-  return (offsetMinutes / 60) * HOUR_HEIGHT;
-};
-
-const getServiceColors = (service: string) => {
-  if (service.includes("Toxina"))
-    return "bg-blue-50 border-blue-500 text-blue-700";
-  if (service.includes("Hilos"))
-    return "bg-emerald-50 border-emerald-500 text-emerald-700";
-  if (service.includes("Plasma"))
-    return "bg-rose-50 border-rose-400 text-rose-700";
-  if (service.includes("Valoración"))
-    return "bg-slate-100 border-slate-400 text-slate-700";
-  return "bg-amber-50 border-amber-400 text-amber-700";
-};
+import { Clock, Ban } from "lucide-react";
+import { type DashboardAppointment } from "../../../../../lib/services/clinicService";
+import { type DashboardBlockedSlot } from "../../../../../lib/services/blockedSlotsService";
+import { type WeeklySchedule } from "../../../../../lib/services/settingsService";
+import { useCalendar } from "../../../hooks/useCalendar";
+import {
+  parseHour24,
+  timeToPixels,
+  getServiceColors,
+  isTimeSlotInPast,
+  HOUR_HEIGHT,
+  getGridHoursRange,
+} from "../../../utils/calendarUtils";
 
 interface WeeklyViewProps {
-  appointments: AppointmentData[];
-  onAppointmentClick: (appointment: AppointmentData) => void;
+  appointments: DashboardAppointment[];
+  blockedSlots: DashboardBlockedSlot[];
+  onAppointmentClick: (appointment: DashboardAppointment) => void;
+  onBlockClick: (block: DashboardBlockedSlot) => void;
   onEmptySlotClick: (date: string, time: string) => void;
 }
 
 export const WeeklyView = ({
   appointments,
+  blockedSlots,
   onAppointmentClick,
+  onBlockClick,
   onEmptySlotClick,
 }: WeeklyViewProps) => {
+  const { baseDate, workingSchedule } = useCalendar();
+
+  const { start: startHour, end: endHour } = getGridHoursRange(workingSchedule);
+  const HOURS = Array.from(
+    { length: endHour - startHour + 1 },
+    (_, i) => startHour + i,
+  );
+
+  const dayOfWeek = baseDate.getDay();
+  const diffToMonday = dayOfWeek === 0 ? -6 : 1 - dayOfWeek;
+  const monday = new Date(baseDate);
+  monday.setDate(baseDate.getDate() + diffToMonday);
+  monday.setHours(0, 0, 0, 0);
+
+  // SEIS DÍAS (LUNES A SÁBADO)
+  const WEEK_DAYS = Array.from({ length: 6 }, (_, i) => {
+    const d = new Date(monday);
+    d.setDate(monday.getDate() + i);
+    const id = d
+      .toLocaleDateString("es-MX", {
+        day: "2-digit",
+        month: "short",
+        year: "numeric",
+      })
+      .replace(/\./g, "");
+    const weekDayName = d
+      .toLocaleDateString("es-MX", { weekday: "short" })
+      .toUpperCase()
+      .replace(/\./g, "");
+    const dayNum = String(d.getDate()).padStart(2, "0");
+    return { id, name: `${weekDayName} ${dayNum}`, dateObj: d };
+  });
+
   return (
     <div className="bg-white border border-slate-200 rounded-3xl shadow-[0_8px_30px_rgb(0,0,0,0.04)] overflow-hidden flex flex-col h-187.5">
-      {/* Encabezados de los días */}
       <div className="flex border-b border-slate-200 bg-slate-50/80 sticky top-0 z-20">
         <div className="w-16 sm:w-20 shrink-0 border-r border-slate-200"></div>
         {WEEK_DAYS.map((day) => (
@@ -73,10 +79,8 @@ export const WeeklyView = ({
         ))}
       </div>
 
-      {/* Contenedor scrolleable del calendario */}
-      <div className="flex-1 overflow-y-auto relative bg-white [&::-webkit-scrollbar]:w-2 [&::-webkit-scrollbar-track]:bg-slate-50/50 [&::-webkit-scrollbar-thumb]:bg-slate-200 [&::-webkit-scrollbar-thumb]:rounded-full hover:[&::-webkit-scrollbar-thumb]:bg-slate-300 transition-colors">
-        <div className="flex w-full relative min-h-max">
-          {/* Eje Y: Las Horas */}
+      <div className="flex-1 overflow-y-auto relative bg-white">
+        <div className="flex w-full relative min-h-max pt-4 pb-4">
           <div className="w-16 sm:w-20 shrink-0 border-r border-slate-200 bg-white relative z-10">
             {HOURS.map((hour) => (
               <div
@@ -92,9 +96,7 @@ export const WeeklyView = ({
             ))}
           </div>
 
-          {/* Eje X: Los Días (Columnas) */}
           <div className="flex-1 flex relative">
-            {/* Grid Lineas */}
             <div className="absolute inset-0 pointer-events-none">
               {HOURS.map((hour) => (
                 <div
@@ -107,7 +109,10 @@ export const WeeklyView = ({
 
             {WEEK_DAYS.map((day) => {
               const daysAppointments = appointments.filter(
-                (app) => app.date === day.id,
+                (app) => app.date.toLowerCase() === day.id.toLowerCase(),
+              );
+              const daysBlocks = blockedSlots.filter(
+                (block) => block.date.toLowerCase() === day.id.toLowerCase(),
               );
 
               return (
@@ -115,50 +120,126 @@ export const WeeklyView = ({
                   key={day.id}
                   className="flex-1 relative border-r border-slate-100 last:border-r-0 group/col"
                 >
-                  {/* Slots Vacíos */}
+                  {/* SLOTS VACÍOS Y BLOQUEO POR DÍA CERRADO (EVALÚA day.dateObj) */}
                   {HOURS.slice(0, -1).map((hour) => {
                     const timeStr = `${String(hour > 12 ? hour - 12 : hour).padStart(2, "0")}:00 ${hour >= 12 ? "PM" : "AM"}`;
+                    const isPast = isTimeSlotInPast(day.dateObj, hour);
+
+                    const daySchedule =
+                      workingSchedule[
+                        day.dateObj.getDay() as keyof WeeklySchedule
+                      ];
+                    const dayStart = daySchedule?.isOpen
+                      ? parseHour24(daySchedule.start)
+                      : 24;
+                    const dayEnd = daySchedule?.isOpen
+                      ? parseHour24(daySchedule.end)
+                      : 0;
+                    const isClosed =
+                      !daySchedule?.isOpen || hour < dayStart || hour >= dayEnd;
+
+                    const isUnavailable = isPast || isClosed;
+
                     return (
                       <div
                         key={`slot-${day.id}-${hour}`}
-                        onClick={() => onEmptySlotClick(day.id, timeStr)}
-                        className="absolute w-full opacity-0 hover:opacity-100 hover:bg-slate-50/50 cursor-pointer transition-colors z-0 flex items-center justify-center border border-transparent hover:border-brand-primary/20"
+                        onClick={() => {
+                          if (!isUnavailable) onEmptySlotClick(day.id, timeStr);
+                        }}
+                        className={`absolute w-full flex items-center justify-center border border-transparent transition-colors
+                          ${isUnavailable ? "bg-slate-50/70 cursor-not-allowed opacity-100 z-0" : "opacity-0 hover:opacity-100 hover:bg-slate-50/80 cursor-pointer hover:border-brand-primary/20 z-0"}`}
                         style={{
-                          top: (hour - START_HOUR) * HOUR_HEIGHT,
+                          top: (hour - startHour) * HOUR_HEIGHT,
                           height: HOUR_HEIGHT,
                         }}
                       >
-                        <span className="text-[10px] font-bold text-brand-primary bg-brand-light/20 px-2 py-1 rounded shadow-sm pointer-events-none">
-                          + Acción
-                        </span>
+                        {!isUnavailable && (
+                          <span className="text-[10px] font-bold text-brand-primary bg-brand-light/20 px-2 py-1 rounded shadow-sm pointer-events-none">
+                            + Acción
+                          </span>
+                        )}
                       </div>
                     );
                   })}
 
-                  {/* Citas */}
-                  {daysAppointments.map((app) => {
-                    const topPosition = timeToPixels(app.time);
+                  {/* BLOQUEOS */}
+                  {daysBlocks.map((block) => {
+                    const blockHour = parseHour24(block.startTime);
+                    const isPast = isTimeSlotInPast(day.dateObj, blockHour);
+                    const topPosition = timeToPixels(
+                      block.startTime,
+                      startHour,
+                    );
                     const heightPixels =
-                      (APPOINTMENT_DURATION / 60) * HOUR_HEIGHT;
+                      (block.durationMins / 60) * HOUR_HEIGHT;
+                    const isSmall = block.durationMins <= 45;
+
+                    return (
+                      <div
+                        key={block.id}
+                        onClick={() => {
+                          if (!isPast) onBlockClick(block);
+                        }}
+                        className={`absolute left-1 right-1 sm:left-2 sm:right-2 rounded-xl border-l-4 border-y-[3px] border-r-[3px] border-white shadow-[0_3px_10px_rgba(0,0,0,0.08)] transition-all z-10 flex flex-col overflow-hidden ${isPast ? "bg-slate-100 border-slate-300 text-slate-500 opacity-60 cursor-not-allowed" : "bg-fuchsia-50 border-fuchsia-400 text-fuchsia-700 cursor-pointer hover:z-40 hover:shadow-xl hover:scale-[1.02]"}`}
+                        style={{ top: topPosition, height: heightPixels }}
+                        title={block.reason}
+                      >
+                        <div
+                          className={`flex flex-col items-center justify-center h-full text-center ${isSmall ? "p-1" : "p-2"}`}
+                        >
+                          <Ban
+                            className={`${isSmall ? "w-3 h-3 mb-0.5" : "w-4 h-4 sm:w-5 mb-1"} shrink-0`}
+                          />
+                          <span
+                            className={`${isSmall ? "text-[8px]" : "text-[9px] sm:text-[10px]"} font-black uppercase tracking-widest leading-none wrap-break-word`}
+                          >
+                            {block.reason}
+                          </span>
+                        </div>
+                      </div>
+                    );
+                  })}
+
+                  {/* CITAS MÉDICAS */}
+                  {daysAppointments.map((app) => {
+                    const appHour = parseHour24(app.time);
+                    const isPast = isTimeSlotInPast(day.dateObj, appHour);
+                    const topPosition = timeToPixels(app.time, startHour);
+                    const heightPixels = (app.durationMins / 60) * HOUR_HEIGHT;
+                    const isSmall = app.durationMins <= 45;
+
                     return (
                       <div
                         key={app.id}
                         onClick={() => onAppointmentClick(app)}
-                        className={`absolute left-1 right-1 rounded-lg border-l-4 p-2 sm:p-2.5 cursor-pointer shadow-sm hover:shadow-md transition-all z-20 flex flex-col group overflow-hidden ${getServiceColors(app.service)}`}
+                        className={`absolute left-1 right-1 sm:left-2 sm:right-2 rounded-xl border-l-4 border-y-[3px] border-r-[3px] border-white cursor-pointer shadow-[0_3px_10px_rgba(0,0,0,0.08)] transition-all z-20 flex flex-col overflow-hidden ${getServiceColors(app.service, isPast)} ${isPast ? "opacity-60" : "hover:z-50 hover:shadow-xl hover:scale-[1.02]"}`}
                         style={{ top: topPosition, height: heightPixels }}
                       >
-                        <div className="flex items-start justify-between gap-1 mb-1">
-                          <h4 className="text-[11px] sm:text-xs font-bold truncate leading-tight">
-                            {app.patientName}
-                          </h4>
-                          <MoreHorizontal className="w-4 h-4 opacity-0 group-hover:opacity-100 transition-opacity shrink-0" />
-                        </div>
-                        <p className="text-[9px] sm:text-[10px] font-medium opacity-80 truncate hidden sm:block">
-                          {app.service}
-                        </p>
-                        <div className="mt-auto flex items-center gap-1.5 text-[9px] sm:text-[10px] font-bold opacity-90">
-                          <Clock className="w-3 h-3 hidden sm:block" />{" "}
-                          {app.time}
+                        <div
+                          className={`flex flex-col h-full ${isSmall ? "p-1.5" : "p-2.5 sm:p-3"}`}
+                        >
+                          <div className="flex items-start justify-between gap-1">
+                            <h4
+                              className={`font-bold truncate leading-tight ${isSmall ? "text-[11px]" : "text-xs sm:text-sm"}`}
+                            >
+                              {app.patientName}
+                            </h4>
+                            {!isSmall && (
+                              <div className="flex items-center gap-1 text-[10px] font-bold opacity-90 bg-white/60 px-1.5 py-0.5 rounded-md shrink-0">
+                                <Clock className="w-3 h-3" /> {app.time}
+                              </div>
+                            )}
+                          </div>
+                          <p
+                            className={`font-medium opacity-80 truncate ${isSmall ? "text-[10px] mt-0" : "text-[10px] sm:text-xs mt-1"}`}
+                          >
+                            {app.service}
+                          </p>
+                          {isSmall && (
+                            <div className="mt-auto text-[10px] font-bold opacity-90 flex items-center gap-1 pt-0.5">
+                              <Clock className="w-2.5 h-2.5" /> {app.time}
+                            </div>
+                          )}
                         </div>
                       </div>
                     );

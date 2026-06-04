@@ -1,51 +1,58 @@
-import { Clock, MoreHorizontal } from "lucide-react";
-import { type AppointmentData } from "../../../../../data/mockPatients";
-
-const START_HOUR = 8;
-const END_HOUR = 18;
-const HOUR_HEIGHT = 100;
-const APPOINTMENT_DURATION = 45;
-const HOURS = Array.from(
-  { length: END_HOUR - START_HOUR + 1 },
-  (_, i) => START_HOUR + i,
-);
-
-const timeToPixels = (timeStr: string) => {
-  const [time, modifier] = timeStr.split(" ");
-  // eslint-disable-next-line prefer-const
-  let [hours, minutes] = time.split(":").map(Number);
-  if (modifier === "PM" && hours !== 12) hours += 12;
-  if (modifier === "AM" && hours === 12) hours = 0;
-  const offsetMinutes = hours * 60 + minutes - START_HOUR * 60;
-  return (offsetMinutes / 60) * HOUR_HEIGHT;
-};
-
-const getServiceColors = (service: string) => {
-  if (service.includes("Toxina"))
-    return "bg-blue-50 border-blue-500 text-blue-700";
-  if (service.includes("Hilos"))
-    return "bg-emerald-50 border-emerald-500 text-emerald-700";
-  if (service.includes("Plasma"))
-    return "bg-rose-50 border-rose-400 text-rose-700";
-  if (service.includes("Valoración"))
-    return "bg-slate-100 border-slate-400 text-slate-700";
-  return "bg-amber-50 border-amber-400 text-amber-700";
-};
+import { Clock, Ban } from "lucide-react";
+import { type DashboardAppointment } from "../../../../../lib/services/clinicService";
+import { type DashboardBlockedSlot } from "../../../../../lib/services/blockedSlotsService";
+import { type WeeklySchedule } from "../../../../../lib/services/settingsService";
+import { useCalendar } from "../../../hooks/useCalendar";
+import {
+  parseHour24,
+  timeToPixels,
+  getServiceColors,
+  isTimeSlotInPast,
+  HOUR_HEIGHT,
+  getGridHoursRange,
+} from "../../../utils/calendarUtils";
 
 interface DailyViewProps {
-  appointments: AppointmentData[];
-  onAppointmentClick: (appointment: AppointmentData) => void;
-  onEmptySlotClick: (date: string, time: string) => void;
+  appointments: DashboardAppointment[];
+  blockedSlots: DashboardBlockedSlot[];
+  onEmptySlotClick: (d: string, t: string) => void;
+  onAppointmentClick: (a: DashboardAppointment) => void;
+  onBlockClick: (b: DashboardBlockedSlot) => void;
 }
 
 export const DailyView = ({
   appointments,
-  onAppointmentClick,
+  blockedSlots,
   onEmptySlotClick,
+  onAppointmentClick,
+  onBlockClick,
 }: DailyViewProps) => {
-  // Hardcodeamos el lunes para la demostración de la vista diaria
-  const today = "16 Mar 2026";
-  const daysAppointments = appointments.filter((app) => app.date === today);
+  const { baseDate, workingSchedule } = useCalendar();
+
+  const { start: startHour, end: endHour } = getGridHoursRange(workingSchedule);
+  const HOURS = Array.from(
+    { length: endHour - startHour + 1 },
+    (_, i) => startHour + i,
+  );
+
+  const viewDateStr = baseDate
+    .toLocaleDateString("es-MX", {
+      day: "2-digit",
+      month: "short",
+      year: "numeric",
+    })
+    .replace(/\./g, "");
+  const daysAppointments = appointments.filter(
+    (app) => app.date.toLowerCase() === viewDateStr.toLowerCase(),
+  );
+  const daysBlocks = blockedSlots.filter(
+    (b) => b.date.toLowerCase() === viewDateStr.toLowerCase(),
+  );
+
+  const dayName = baseDate.toLocaleDateString("es-MX", { weekday: "long" });
+  const dayNumberAndMonth = baseDate
+    .toLocaleDateString("es-MX", { day: "2-digit", month: "long" })
+    .replace("-", " ");
 
   return (
     <div className="bg-white border border-slate-200 rounded-3xl shadow-[0_8px_30px_rgb(0,0,0,0.04)] overflow-hidden flex flex-col h-187.5">
@@ -53,16 +60,16 @@ export const DailyView = ({
         <div className="w-16 sm:w-20 shrink-0 border-r border-slate-200"></div>
         <div className="flex-1 py-4 text-center">
           <span className="text-xs font-black text-brand-primary uppercase tracking-widest">
-            Lunes
+            {dayName}
           </span>
-          <h3 className="text-xl font-bold text-brand-dark leading-none mt-1">
-            16 de Marzo
+          <h3 className="text-xl font-bold text-brand-dark leading-none mt-1 capitalize">
+            {dayNumberAndMonth}
           </h3>
         </div>
       </div>
 
-      <div className="flex-1 overflow-y-auto relative bg-white [&::-webkit-scrollbar]:w-2 [&::-webkit-scrollbar-track]:bg-slate-50/50 [&::-webkit-scrollbar-thumb]:bg-slate-200 [&::-webkit-scrollbar-thumb]:rounded-full hover:[&::-webkit-scrollbar-thumb]:bg-slate-300 transition-colors">
-        <div className="flex w-full relative min-h-max">
+      <div className="flex-1 overflow-y-auto relative bg-white">
+        <div className="flex w-full relative min-h-max pt-4 pb-4">
           <div className="w-16 sm:w-20 shrink-0 border-r border-slate-200 bg-white relative z-10">
             {HOURS.map((hour) => (
               <div
@@ -80,9 +87,9 @@ export const DailyView = ({
 
           <div className="flex-1 flex relative">
             <div className="absolute inset-0 pointer-events-none">
-              {HOURS.map((hour) => (
+              {HOURS.map((h) => (
                 <div
-                  key={`line-${hour}`}
+                  key={`line-${h}`}
                   className="w-full border-t border-slate-100"
                   style={{ height: HOUR_HEIGHT }}
                 />
@@ -90,50 +97,122 @@ export const DailyView = ({
             </div>
 
             <div className="flex-1 relative group/col">
+              {/* SLOTS VACÍOS Y BLOQUEO POR DÍA CERRADO */}
               {HOURS.slice(0, -1).map((hour) => {
                 const timeStr = `${String(hour > 12 ? hour - 12 : hour).padStart(2, "0")}:00 ${hour >= 12 ? "PM" : "AM"}`;
+                const isPast = isTimeSlotInPast(baseDate, hour);
+
+                // Evaluar si la clínica está cerrada en baseDate
+                const daySchedule =
+                  workingSchedule[baseDate.getDay() as keyof WeeklySchedule];
+                const dayStart = daySchedule?.isOpen
+                  ? parseHour24(daySchedule.start)
+                  : 24;
+                const dayEnd = daySchedule?.isOpen
+                  ? parseHour24(daySchedule.end)
+                  : 0;
+                const isClosed =
+                  !daySchedule?.isOpen || hour < dayStart || hour >= dayEnd;
+
+                const isUnavailable = isPast || isClosed;
+
                 return (
                   <div
                     key={`slot-${hour}`}
-                    onClick={() => onEmptySlotClick(today, timeStr)}
-                    className="absolute w-full opacity-0 hover:opacity-100 hover:bg-slate-50/50 cursor-pointer transition-colors z-0 flex items-center justify-center border border-transparent hover:border-brand-primary/20"
+                    onClick={() => {
+                      if (!isUnavailable)
+                        onEmptySlotClick(viewDateStr, timeStr);
+                    }}
+                    className={`absolute w-full flex items-center justify-center border border-transparent transition-colors
+                      ${isUnavailable ? "bg-slate-50/70 cursor-not-allowed opacity-100 z-0" : "opacity-0 hover:opacity-100 hover:bg-slate-50/50 cursor-pointer hover:border-brand-primary/20 z-0"}`}
                     style={{
-                      top: (hour - START_HOUR) * HOUR_HEIGHT,
+                      top: (hour - startHour) * HOUR_HEIGHT,
                       height: HOUR_HEIGHT,
                     }}
                   >
-                    <span className="text-sm font-bold text-brand-primary bg-brand-light/20 px-4 py-2 rounded-lg shadow-sm pointer-events-none">
-                      + Agendar o Bloquear {timeStr}
-                    </span>
+                    {!isUnavailable && (
+                      <span className="text-sm font-bold text-brand-primary bg-brand-light/20 px-4 py-2 rounded-lg shadow-sm pointer-events-none">
+                        + Agendar o Bloquear {timeStr}
+                      </span>
+                    )}
                   </div>
                 );
               })}
 
+              {/* BLOQUEOS DE AGENDA */}
+              {daysBlocks.map((block) => {
+                const blockHour = parseHour24(block.startTime);
+                const isPast = isTimeSlotInPast(baseDate, blockHour);
+                const topPosition = timeToPixels(block.startTime, startHour);
+                const heightPixels = (block.durationMins / 60) * HOUR_HEIGHT;
+                const isSmall = block.durationMins <= 45;
+
+                return (
+                  <div
+                    key={block.id}
+                    onClick={() => {
+                      if (!isPast) onBlockClick(block);
+                    }}
+                    className={`absolute left-1 right-1 sm:left-2 sm:right-2 rounded-xl border-l-4 border-y-[3px] border-r-[3px] border-white shadow-[0_3px_10px_rgba(0,0,0,0.08)] transition-all z-10 flex flex-col overflow-hidden ${isPast ? "bg-slate-100 border-slate-300 text-slate-500 opacity-60 cursor-not-allowed" : "bg-fuchsia-50 border-fuchsia-400 text-fuchsia-700 cursor-pointer hover:z-40 hover:shadow-xl hover:scale-[1.02]"}`}
+                    style={{ top: topPosition, height: heightPixels }}
+                    title={block.reason}
+                  >
+                    <div
+                      className={`flex flex-col items-center justify-center h-full text-center ${isSmall ? "p-1" : "p-2"}`}
+                    >
+                      <Ban
+                        className={`${isSmall ? "w-3 h-3 mb-0.5" : "w-4 h-4 sm:w-5 mb-1"} shrink-0`}
+                      />
+                      <span
+                        className={`${isSmall ? "text-[8px]" : "text-[9px] sm:text-[10px]"} font-black uppercase tracking-widest leading-none wrap-break-word`}
+                      >
+                        {block.reason}
+                      </span>
+                    </div>
+                  </div>
+                );
+              })}
+
+              {/* CITAS MÉDICAS */}
               {daysAppointments.map((app) => {
-                const topPosition = timeToPixels(app.time);
-                const heightPixels = (APPOINTMENT_DURATION / 60) * HOUR_HEIGHT;
+                const appHour = parseHour24(app.time);
+                const isPast = isTimeSlotInPast(baseDate, appHour);
+                const topPosition = timeToPixels(app.time, startHour);
+                const heightPixels = (app.durationMins / 60) * HOUR_HEIGHT;
+                const isSmall = app.durationMins <= 45;
+
                 return (
                   <div
                     key={app.id}
                     onClick={() => onAppointmentClick(app)}
-                    className={`absolute left-4 right-4 rounded-xl border-l-4 p-4 cursor-pointer shadow-sm hover:shadow-md transition-all z-20 flex flex-col group overflow-hidden ${getServiceColors(app.service)}`}
+                    className={`absolute left-1 right-1 sm:left-2 sm:right-2 rounded-xl border-l-4 border-y-[3px] border-r-[3px] border-white cursor-pointer shadow-[0_3px_10px_rgba(0,0,0,0.08)] transition-all z-20 flex flex-col overflow-hidden ${getServiceColors(app.service, isPast)} ${isPast ? "opacity-60" : "hover:z-50 hover:shadow-xl hover:scale-[1.02]"}`}
                     style={{ top: topPosition, height: heightPixels }}
                   >
-                    <div className="flex items-start justify-between gap-2">
-                      <div>
-                        <h4 className="text-sm font-bold truncate">
+                    <div
+                      className={`flex flex-col h-full ${isSmall ? "p-1.5" : "p-2.5 sm:p-3"}`}
+                    >
+                      <div className="flex items-start justify-between gap-1">
+                        <h4
+                          className={`font-bold truncate leading-tight ${isSmall ? "text-[10px]" : "text-xs sm:text-sm"}`}
+                        >
                           {app.patientName}
                         </h4>
-                        <p className="text-xs font-medium opacity-80 mt-1">
-                          {app.service}
-                        </p>
+                        {!isSmall && (
+                          <div className="flex items-center gap-1 text-[10px] font-bold opacity-90 bg-white/60 px-1.5 py-0.5 rounded-md shrink-0">
+                            <Clock className="w-3 h-3" /> {app.time}
+                          </div>
+                        )}
                       </div>
-                      <div className="flex flex-col items-end gap-2">
-                        <MoreHorizontal className="w-5 h-5 opacity-0 group-hover:opacity-100 transition-opacity" />
-                        <div className="flex items-center gap-1.5 text-xs font-bold opacity-90 bg-white/50 px-2 py-1 rounded-md">
-                          <Clock className="w-3.5 h-3.5" /> {app.time}
+                      <p
+                        className={`font-medium opacity-80 truncate ${isSmall ? "text-[9px] mt-0" : "text-[10px] sm:text-xs mt-1"}`}
+                      >
+                        {app.service}
+                      </p>
+                      {isSmall && (
+                        <div className="mt-auto text-[9px] font-bold opacity-90 flex items-center gap-1 pt-0.5">
+                          <Clock className="w-2.5 h-2.5" /> {app.time}
                         </div>
-                      </div>
+                      )}
                     </div>
                   </div>
                 );

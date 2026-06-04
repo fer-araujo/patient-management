@@ -1,4 +1,4 @@
-import { useState, useMemo } from "react";
+import { useState, useMemo, useEffect } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import {
   ChevronLeft,
@@ -6,63 +6,153 @@ import {
   User,
   Phone,
   Calendar as CalendarIcon,
-  FileText,
   Plus,
-  MessageSquare,
   Settings,
+  Ban,
+  Edit3,
 } from "lucide-react";
 import { Button } from "../../../../components/ui/Button";
 import { Modal } from "../../../../components/ui/Modal";
 import { Dropdown } from "../../../../components/ui/Dropdown";
 import { DatePicker } from "../../../../components/ui/DatePicker";
 import {
-  MOCK_APPOINTMENTS,
-  type AppointmentData,
-} from "../../../../data/mockPatients";
-
+  createAppointment,
+  cancelAppointment,
+  rescheduleAppointment,
+  type DashboardAppointment,
+} from "../../../../lib/services/clinicService";
+import {
+  deleteBlockedSlot,
+  createBlockedSlot,
+  updateBlockedSlot,
+  type DashboardBlockedSlot,
+} from "../../../../lib/services/blockedSlotsService";
+import {
+  updateClinicSettings,
+  type WeeklySchedule,
+} from "../../../../lib/services/settingsService";
+import { useCalendar } from "../../hooks/useCalendar";
 import { WeeklyView } from "./calendar/WeeklyView";
 import { DailyView } from "./calendar/DailyView";
 import { MonthlyView } from "./calendar/MonthlyView";
+import {
+  combineIsoDateAndTime,
+  parseVisualDateToISO,
+  getAvailableTimeOptions,
+} from "../../utils/calendarUtils";
 
-// Interface para que el cascarón (DoctorDashboard) maneje la navegación
+const getISODate = () => {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+};
+
 interface CalendarTabProps {
-  onStartConsultation: (appointment: AppointmentData) => void;
+  appointments: DashboardAppointment[];
+  blockedSlots: DashboardBlockedSlot[];
+  onStartConsultation: (appointment: DashboardAppointment) => void;
+  onDataChange: () => Promise<void>;
 }
 
-export const CalendarTab = ({ onStartConsultation }: CalendarTabProps) => {
+export const CalendarTab = ({
+  appointments,
+  blockedSlots,
+  onStartConsultation,
+  onDataChange,
+}: CalendarTabProps) => {
+  // USO CORRECTO DE workingSchedule
+  const {
+    baseDate,
+    setBaseDate,
+    calendarView,
+    setCalendarView,
+    workingSchedule,
+    setWorkingSchedule,
+  } = useCalendar();
+
   const confirmedAppointments = useMemo(
-    () => MOCK_APPOINTMENTS.filter((app) => app.status === "confirmed"),
-    [],
+    () => appointments.filter((app) => app.status === "confirmed"),
+    [appointments],
   );
 
-  // Opciones Dinámicas para los Dropdowns basadas en el Mock
   const patientOptions = useMemo(() => {
-    const uniqueNames = Array.from(
-      new Set(MOCK_APPOINTMENTS.map((app) => app.patientName)),
+    const patientMap = new Map<string, string>();
+    appointments.forEach((app) =>
+      patientMap.set(app.patientId, app.patientName),
+    );
+    const uniquePatients = Array.from(patientMap.entries()).map(
+      ([value, label]) => ({ label, value }),
     );
     return [
-      ...uniqueNames.map((name) => ({ label: name, value: name })),
+      ...uniquePatients,
       { label: "+ Crear nuevo paciente", value: "new", disabled: true },
     ];
-  }, []);
+  }, [appointments]);
 
   const serviceOptions = useMemo(() => {
     const uniqueServices = Array.from(
-      new Set(MOCK_APPOINTMENTS.map((app) => app.service)),
+      new Set(appointments.map((app) => app.service)),
     );
     return uniqueServices.map((service) => ({
       label: service,
       value: service,
     }));
+  }, [appointments]);
+
+  const timeOptions = useMemo(() => {
+    return Array.from({ length: 16 }, (_, i) => {
+      const hour24 = i + 6;
+      const ampm = hour24 >= 12 ? "PM" : "AM";
+      const hour12 = hour24 > 12 ? hour24 - 12 : hour24 === 0 ? 12 : hour24;
+      const timeStr = `${String(hour12).padStart(2, "0")}:00 ${ampm}`;
+      return { label: timeStr, value: timeStr };
+    });
   }, []);
 
-  const [calendarView, setCalendarView] = useState<"day" | "week" | "month">(
-    "week",
-  );
+  const handlePrevious = () => {
+    const newDate = new Date(baseDate);
+    if (calendarView === "day") newDate.setDate(newDate.getDate() - 1);
+    if (calendarView === "week") newDate.setDate(newDate.getDate() - 7);
+    if (calendarView === "month") newDate.setMonth(newDate.getMonth() - 1);
+    setBaseDate(newDate);
+  };
 
-  // Estados para Modales
+  const handleNext = () => {
+    const newDate = new Date(baseDate);
+    if (calendarView === "day") newDate.setDate(newDate.getDate() + 1);
+    if (calendarView === "week") newDate.setDate(newDate.getDate() + 7);
+    if (calendarView === "month") newDate.setMonth(newDate.getMonth() + 1);
+    setBaseDate(newDate);
+  };
+
+  const handleToday = () => setBaseDate(new Date());
+
+  const getNavLabel = () => {
+    if (calendarView === "day")
+      return `${baseDate.toLocaleDateString("es-MX", { weekday: "long" })} ${baseDate.toLocaleDateString("es-MX", { day: "2-digit" })}`;
+    if (calendarView === "week") {
+      const dayOfWeek = baseDate.getDay();
+      const diffToMonday = dayOfWeek === 0 ? -6 : 1 - dayOfWeek;
+      const start = new Date(baseDate);
+      start.setDate(baseDate.getDate() + diffToMonday);
+      const end = new Date(start);
+      end.setDate(start.getDate() + 4);
+      return `${start.toLocaleDateString("es-MX", { month: "short" }).replace(/\./g, "")} ${start.toLocaleDateString("es-MX", { day: "2-digit" })} - ${end.toLocaleDateString("es-MX", { month: "short" }).replace(/\./g, "")} ${end.toLocaleDateString("es-MX", { day: "2-digit" })}`;
+    }
+    return baseDate.toLocaleDateString("es-MX", { month: "long" });
+  };
+
   const [selectedAppointment, setSelectedAppointment] =
-    useState<AppointmentData | null>(null);
+    useState<DashboardAppointment | null>(null);
+
+  const [isCancelingAppt, setIsCancelingAppt] = useState(false);
+  const [cancelReason, setCancelReason] = useState("");
+  const [isReschedulingAppt, setIsReschedulingAppt] = useState(false);
+  const [rescheduleDate, setRescheduleDate] = useState("");
+  const [rescheduleTime, setRescheduleTime] = useState("");
+  const [isReschPickerOpen, setIsReschPickerOpen] = useState(false);
+
+  const [selectedBlock, setSelectedBlock] =
+    useState<DashboardBlockedSlot | null>(null);
   const [actionModal, setActionModal] = useState<{
     date: string;
     time: string;
@@ -70,21 +160,208 @@ export const CalendarTab = ({ onStartConsultation }: CalendarTabProps) => {
   const [actionTab, setActionTab] = useState<"schedule" | "block">("schedule");
   const [settingsModalOpen, setSettingsModalOpen] = useState(false);
 
-  // Estados de Formularios (Dropdowns y DatePickers)
   const [selectedPatient, setSelectedPatient] = useState("");
   const [selectedService, setSelectedService] = useState("");
   const [blockStartDate, setBlockStartDate] = useState("");
   const [blockEndDate, setBlockEndDate] = useState("");
+  const [blockStartTime, setBlockStartTime] = useState("09:00 AM");
+  const [blockEndTime, setBlockEndTime] = useState("10:00 AM");
   const [blockReason, setBlockReason] = useState("comida");
-
-  // Settings de Horario
-  const [workingHours, setWorkingHours] = useState({
-    start: "08:00 AM",
-    end: "08:00 PM",
-  });
-
+  const [editingBlockId, setEditingBlockId] = useState<string | null>(null);
   const [isStartPickerOpen, setIsStartPickerOpen] = useState(false);
   const [isEndPickerOpen, setIsEndPickerOpen] = useState(false);
+  const [isSubmitting, setIsSubmitting] = useState(false);
+
+  const rescheduleOptions = useMemo(() => {
+    if (!rescheduleDate || !selectedAppointment) return [];
+    return getAvailableTimeOptions(
+      rescheduleDate,
+      appointments,
+      blockedSlots,
+      workingSchedule,
+      selectedAppointment.durationMins,
+    );
+  }, [
+    rescheduleDate,
+    appointments,
+    blockedSlots,
+    workingSchedule,
+    selectedAppointment,
+  ]);
+
+  useEffect(() => {
+    if (
+      rescheduleOptions.length > 0 &&
+      !rescheduleOptions.find((opt) => opt.value === rescheduleTime)
+    ) {
+      setRescheduleTime(rescheduleOptions[0].value);
+    }
+  }, [rescheduleOptions, rescheduleTime]);
+
+  const handleOpenActionModal = (dateStr: string, timeStr: string) => {
+    setActionModal({ date: dateStr, time: timeStr });
+    setActionTab("schedule");
+    const isoDate = parseVisualDateToISO(dateStr);
+    setBlockStartDate(isoDate);
+    setBlockEndDate(isoDate);
+    setBlockStartTime(timeStr);
+    const timeIndex = timeOptions.findIndex((t) => t.value === timeStr);
+    const endTimeDefault =
+      timeIndex !== -1 && timeIndex < timeOptions.length - 1
+        ? timeOptions[timeIndex + 1].value
+        : timeStr;
+    setBlockEndTime(endTimeDefault);
+    setEditingBlockId(null);
+  };
+
+  const handleScheduleAppointment = async () => {
+    if (!actionModal || !selectedPatient || !selectedService) return;
+    try {
+      setIsSubmitting(true);
+      await createAppointment(
+        selectedPatient,
+        selectedService,
+        actionModal.date,
+        actionModal.time,
+      );
+      await onDataChange();
+      setActionModal(null);
+    } catch (err: unknown) {
+      console.error(
+        "Error al agendar:",
+        err instanceof Error ? err.message : err,
+      );
+      alert("Error al agendar cita.");
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  const handleCancelAppointment = async () => {
+    if (!selectedAppointment || !cancelReason.trim()) return;
+    try {
+      setIsSubmitting(true);
+      await cancelAppointment(selectedAppointment.id, cancelReason);
+      await onDataChange();
+      setSelectedAppointment(null);
+      setIsCancelingAppt(false);
+      setCancelReason("");
+    } catch (err: unknown) {
+      console.error(
+        "Error al cancelar:",
+        err instanceof Error ? err.message : err,
+      );
+      alert("Error al cancelar la cita.");
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  const handleConfirmRescheduleAppt = async () => {
+    if (!selectedAppointment || !rescheduleTime) return;
+    try {
+      setIsSubmitting(true);
+      const utcIsoDateTime = combineIsoDateAndTime(
+        rescheduleDate,
+        rescheduleTime,
+      );
+      await rescheduleAppointment(selectedAppointment.id, utcIsoDateTime);
+      await onDataChange();
+      setSelectedAppointment(null);
+      setIsReschedulingAppt(false);
+    } catch (err: unknown) {
+      console.error(
+        "Error al reprogramar:",
+        err instanceof Error ? err.message : err,
+      );
+      alert("Error al reprogramar.");
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  const handleSaveBlock = async () => {
+    try {
+      setIsSubmitting(true);
+      if (editingBlockId) {
+        await updateBlockedSlot(
+          editingBlockId,
+          blockStartDate,
+          blockStartTime,
+          blockEndDate,
+          blockEndTime,
+          blockReason,
+        );
+      } else {
+        await createBlockedSlot(
+          blockStartDate,
+          blockStartTime,
+          blockEndDate,
+          blockEndTime,
+          blockReason,
+        );
+      }
+      await onDataChange();
+      setActionModal(null);
+      setEditingBlockId(null);
+    } catch (err: unknown) {
+      console.error(
+        "Error al bloquear:",
+        err instanceof Error ? err.message : err,
+      );
+      alert("Error al guardar el bloqueo.");
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  const handleUnblockSlot = async () => {
+    if (!selectedBlock) return;
+    try {
+      setIsSubmitting(true);
+      await deleteBlockedSlot(selectedBlock.id);
+      await onDataChange();
+      setSelectedBlock(null);
+    } catch (err: unknown) {
+      console.error(
+        "Error al desbloquear:",
+        err instanceof Error ? err.message : err,
+      );
+      alert("Error al desbloquear.");
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  const handleEditBlock = () => {
+    if (!selectedBlock) return;
+    const isoDate = parseVisualDateToISO(selectedBlock.date);
+    setBlockStartDate(isoDate);
+    setBlockEndDate(isoDate);
+    setBlockStartTime(selectedBlock.startTime);
+    setBlockEndTime(selectedBlock.endTime);
+    setBlockReason(selectedBlock.reason);
+    setEditingBlockId(selectedBlock.id);
+    setActionModal({ date: selectedBlock.date, time: selectedBlock.startTime });
+    setActionTab("block");
+    setSelectedBlock(null);
+  };
+
+  const handleSaveSettings = async () => {
+    try {
+      setIsSubmitting(true);
+      await updateClinicSettings(workingSchedule);
+      setSettingsModalOpen(false);
+    } catch (err: unknown) {
+      console.error(
+        "Error en config:",
+        err instanceof Error ? err.message : err,
+      );
+      alert("Error al guardar la configuración.");
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
 
   return (
     <motion.div
@@ -92,24 +369,22 @@ export const CalendarTab = ({ onStartConsultation }: CalendarTabProps) => {
       animate={{ opacity: 1, y: 0 }}
       className="space-y-6"
     >
-      {/* ========================================================
-          HEADER DEL CALENDARIO
-          ======================================================== */}
       <div className="flex flex-col xl:flex-row items-center justify-between gap-4 bg-white border border-slate-200 rounded-3xl p-4 sm:p-6 shadow-[0_8px_30px_rgb(0,0,0,0.04)]">
         <div className="flex items-center gap-4 w-full xl:w-auto">
           <div className="w-12 h-12 bg-brand-light/30 text-brand-primary rounded-xl flex items-center justify-center shrink-0">
             <CalendarIcon className="w-6 h-6" />
           </div>
           <div>
-            <h2 className="text-2xl font-extrabold text-brand-dark leading-tight">
-              Marzo 2026
+            <h2 className="text-2xl font-extrabold text-brand-dark leading-tight capitalize">
+              {baseDate
+                .toLocaleDateString("es-MX", { month: "long", year: "numeric" })
+                .replace(" de ", " ")}
             </h2>
-            <p className="text-sm font-medium text-brand-gray mt-1">
-              {calendarView === "day"
-                ? "16 de Marzo, Lunes"
-                : calendarView === "week"
-                  ? "16 - 20 de Marzo"
-                  : "Mes completo"}
+            <p
+              className="text-sm font-medium text-brand-gray mt-1 cursor-pointer hover:text-brand-primary transition-colors"
+              onClick={handleToday}
+            >
+              Ir a hoy
             </p>
           </div>
         </div>
@@ -122,7 +397,6 @@ export const CalendarTab = ({ onStartConsultation }: CalendarTabProps) => {
           >
             <Settings className="w-4 h-4" /> Horarios de Clínica
           </Button>
-
           <div className="flex items-center bg-slate-100 p-1.5 rounded-xl border border-slate-200 w-full sm:w-auto justify-center">
             {(["day", "week", "month"] as const).map((view) => (
               <button
@@ -134,22 +408,19 @@ export const CalendarTab = ({ onStartConsultation }: CalendarTabProps) => {
               </button>
             ))}
           </div>
-
           <div className="flex items-center gap-2 bg-slate-50 p-1.5 rounded-2xl border border-slate-200 shrink-0">
             <Button
+              onClick={handlePrevious}
               variant="outline"
               className="p-2 rounded-xl border-none bg-white shadow-sm text-brand-dark cursor-pointer"
             >
               <ChevronLeft className="w-5 h-5" />
             </Button>
-            <span className="font-bold text-sm px-3">
-              {calendarView === "day"
-                ? "Hoy"
-                : calendarView === "week"
-                  ? "Semana Actual"
-                  : "Este Mes"}
+            <span className="font-semibold text-[13px] px-3 text-center min-w-30 capitalize">
+              {getNavLabel()}
             </span>
             <Button
+              onClick={handleNext}
               variant="outline"
               className="p-2 rounded-xl border-none bg-white shadow-sm text-brand-dark cursor-pointer"
             >
@@ -159,9 +430,6 @@ export const CalendarTab = ({ onStartConsultation }: CalendarTabProps) => {
         </div>
       </div>
 
-      {/* ========================================================
-          RENDERIZADO DINÁMICO DE VISTAS
-          ======================================================== */}
       <AnimatePresence mode="wait">
         {calendarView === "day" && (
           <motion.div
@@ -172,11 +440,10 @@ export const CalendarTab = ({ onStartConsultation }: CalendarTabProps) => {
           >
             <DailyView
               appointments={confirmedAppointments}
+              blockedSlots={blockedSlots}
               onAppointmentClick={setSelectedAppointment}
-              onEmptySlotClick={(date, time) => {
-                setActionModal({ date, time });
-                setActionTab("schedule");
-              }}
+              onBlockClick={setSelectedBlock}
+              onEmptySlotClick={handleOpenActionModal}
             />
           </motion.div>
         )}
@@ -189,11 +456,10 @@ export const CalendarTab = ({ onStartConsultation }: CalendarTabProps) => {
           >
             <WeeklyView
               appointments={confirmedAppointments}
+              blockedSlots={blockedSlots}
               onAppointmentClick={setSelectedAppointment}
-              onEmptySlotClick={(date, time) => {
-                setActionModal({ date, time });
-                setActionTab("schedule");
-              }}
+              onBlockClick={setSelectedBlock}
+              onEmptySlotClick={handleOpenActionModal}
             />
           </motion.div>
         )}
@@ -206,165 +472,278 @@ export const CalendarTab = ({ onStartConsultation }: CalendarTabProps) => {
           >
             <MonthlyView
               appointments={confirmedAppointments}
+              blockedSlots={blockedSlots}
               onAppointmentClick={setSelectedAppointment}
-              onEmptySlotClick={(date, time) => {
-                setActionModal({ date, time });
-                setActionTab("schedule");
-              }}
+              onBlockClick={setSelectedBlock}
+              onEmptySlotClick={handleOpenActionModal}
             />
           </motion.div>
         )}
       </AnimatePresence>
 
-      {/* ========================================================
-          MODAL 1: PRE-CONSULTA (ESTILO PREMIUM)
-          ======================================================== */}
       <Modal
         isOpen={!!selectedAppointment}
-        onClose={() => setSelectedAppointment(null)}
-        title="Detalles de la Cita"
-        icon={<User className="w-5 h-5 text-brand-primary" />}
+        onClose={() => {
+          setSelectedAppointment(null);
+          setIsReschedulingAppt(false);
+          setIsCancelingAppt(false);
+          setCancelReason("");
+        }}
+        title={
+          isReschedulingAppt
+            ? "Reprogramar Cita"
+            : isCancelingAppt
+              ? "Cancelar Cita"
+              : "Detalles de la Cita"
+        }
+        icon={
+          isReschedulingAppt || isCancelingAppt ? (
+            <CalendarIcon className="w-5 h-5 text-brand-primary" />
+          ) : (
+            <User className="w-5 h-5 text-brand-primary" />
+          )
+        }
         hideFooter={true}
       >
         {selectedAppointment && (
           <div className="bg-slate-50/50 -m-6 p-6 space-y-4">
-            <div className="bg-white p-4 rounded-2xl shadow-sm border border-slate-100 flex items-center gap-4">
-              <div className="w-16 h-16 bg-slate-100 rounded-full flex items-center justify-center text-brand-dark shrink-0 overflow-hidden border-2 border-white shadow-sm">
-                <User className="w-8 h-8 text-brand-gray" />
-              </div>
-              <div>
-                <h3 className="text-xl font-extrabold text-brand-dark leading-none">
-                  {selectedAppointment.patientName}
-                </h3>
-                <div className="flex flex-col sm:flex-row sm:items-center gap-2 sm:gap-4 mt-2 text-sm font-medium text-slate-500">
-                  <span className="flex items-center gap-1.5">
-                    <Phone className="w-3.5 h-3.5" />{" "}
-                    {selectedAppointment.phone}
-                  </span>
+            {!isReschedulingAppt && !isCancelingAppt ? (
+              <>
+                <div className="bg-white p-4 rounded-2xl shadow-sm border border-slate-100 flex items-center gap-4">
+                  <div className="w-16 h-16 bg-slate-100 rounded-full flex items-center justify-center text-brand-dark shrink-0 overflow-hidden border-2 border-white shadow-sm">
+                    <User className="w-8 h-8 text-brand-gray" />
+                  </div>
+                  <div>
+                    <h3 className="text-xl font-extrabold text-brand-dark leading-none">
+                      {selectedAppointment.patientName}
+                    </h3>
+                    <div className="flex flex-col sm:flex-row sm:items-center gap-2 sm:gap-4 mt-2 text-sm font-medium text-slate-500">
+                      <span className="flex items-center gap-1.5">
+                        <Phone className="w-3.5 h-3.5" />{" "}
+                        {selectedAppointment.phone}
+                      </span>
+                    </div>
+                  </div>
                 </div>
-              </div>
-            </div>
-
-            <div className="bg-white p-4 rounded-2xl shadow-sm border border-slate-100">
-              <h4 className="text-xs font-black text-brand-gray uppercase tracking-widest mb-2 flex items-center gap-2">
-                <FileText className="w-4 h-4 text-brand-primary" /> Razón de
-                Consulta / Notas
-              </h4>
-              <div className="bg-slate-50 p-3 rounded-xl text-sm font-medium text-brand-dark leading-relaxed">
-                {selectedAppointment.isNewPatient ? (
-                  "Paciente de primera vez. Agendó consulta mediante el portal web."
-                ) : (
-                  <span className="italic text-slate-600">
-                    "Acude a seguimiento. Sugerir retoque en área frontal. Piel
-                    con tendencia a sequedad." (Nota de la última cita)
-                  </span>
-                )}
-              </div>
-            </div>
-
-            {/* Mensaje al paciente (Visible en su portal) */}
-            <div className="bg-white p-4 rounded-2xl shadow-sm border border-slate-100">
-              <label className="text-brand-dark font-bold text-sm mb-2 flex items-center gap-2">
-                <MessageSquare className="w-4 h-4 text-brand-primary" />{" "}
-                Instrucciones previas para el paciente
-              </label>
-              <textarea
-                placeholder="Ej: Recuerda asistir con la cara lavada y sin maquillaje..."
-                className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-sm font-medium focus:border-brand-primary focus:bg-white outline-none resize-none h-16 transition-all"
-              />
-            </div>
-
-            <div className="grid grid-cols-2 gap-4">
-              <div className="bg-white p-4 rounded-2xl shadow-sm border border-slate-100">
-                <h4 className="text-xs font-black text-brand-gray uppercase tracking-widest mb-1">
-                  Fecha
-                </h4>
-                <p className="font-bold text-brand-dark">
-                  {selectedAppointment.date}
-                </p>
-                <p className="text-sm font-medium text-slate-500">
-                  {selectedAppointment.time} (45 Min)
-                </p>
-              </div>
-              <div className="bg-white p-4 rounded-2xl shadow-sm border border-slate-100">
-                <h4 className="text-xs font-black text-brand-gray uppercase tracking-widest mb-1">
-                  Tipo
-                </h4>
-                <p className="font-bold text-brand-primary">
-                  {selectedAppointment.service}
-                </p>
-                <p className="text-sm font-medium text-slate-500">
-                  Dra. Carmen Torres
-                </p>
-              </div>
-            </div>
-
-            <div className="pt-4 flex gap-3 bg-white -mx-6 -mb-6 p-6 border-t border-slate-200">
-              <Button
-                variant="outline"
-                onClick={() => setSelectedAppointment(null)}
-                className="flex-1 py-3.5 rounded-xl cursor-pointer font-bold"
+                <div className="grid grid-cols-2 gap-4">
+                  <div className="bg-white p-4 rounded-2xl shadow-sm border border-slate-100">
+                    <h4 className="text-xs font-black text-brand-gray uppercase tracking-widest mb-1">
+                      Fecha
+                    </h4>
+                    <p className="font-bold text-brand-dark">
+                      {selectedAppointment.date}
+                    </p>
+                    <p className="text-sm font-medium text-slate-500">
+                      {selectedAppointment.time} (
+                      {selectedAppointment.durationMins} Min)
+                    </p>
+                  </div>
+                  <div className="bg-white p-4 rounded-2xl shadow-sm border border-slate-100">
+                    <h4 className="text-xs font-black text-brand-gray uppercase tracking-widest mb-1">
+                      Tipo
+                    </h4>
+                    <p className="font-bold text-brand-primary">
+                      {selectedAppointment.service}
+                    </p>
+                  </div>
+                </div>
+                <div className="pt-4 flex flex-wrap sm:flex-nowrap gap-3 bg-white -mx-6 -mb-6 p-6 border-t border-slate-200">
+                  <Button
+                    variant="outline"
+                    onClick={() => setIsCancelingAppt(true)}
+                    disabled={isSubmitting}
+                    className="flex-1 py-3.5 rounded-xl cursor-pointer font-bold border-red-200 text-red-500 hover:bg-red-50"
+                  >
+                    Cancelar
+                  </Button>
+                  <Button
+                    variant="outline"
+                    onClick={() => {
+                      setIsReschedulingAppt(true);
+                      setRescheduleDate(
+                        parseVisualDateToISO(selectedAppointment.date),
+                      );
+                      setRescheduleTime(selectedAppointment.time);
+                    }}
+                    className="flex-1 py-3.5 rounded-xl cursor-pointer font-bold text-brand-primary border-brand-primary hover:bg-brand-light/30"
+                  >
+                    Reprogramar
+                  </Button>
+                  <Button
+                    onClick={() => {
+                      onStartConsultation(selectedAppointment);
+                      setSelectedAppointment(null);
+                    }}
+                    className="flex-1 py-3.5 rounded-xl cursor-pointer bg-brand-primary hover:bg-brand-dark text-white border-none shadow-md sm:w-auto w-full"
+                  >
+                    Iniciar
+                  </Button>
+                </div>
+              </>
+            ) : isCancelingAppt ? (
+              <motion.div
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                className="space-y-4"
               >
-                Cerrar
-              </Button>
-              <Button
-                onClick={() => {
-                  if (selectedAppointment)
-                    onStartConsultation(selectedAppointment);
-                  setSelectedAppointment(null);
-                }}
-                className="flex-1 py-3.5 rounded-xl cursor-pointer bg-brand-primary hover:bg-brand-dark text-white border-none shadow-md"
-              >
-                Iniciar Consulta
-              </Button>
-            </div>
+                <div className="bg-red-50 border border-red-100 p-4 rounded-xl space-y-3">
+                  <label className="text-sm font-bold text-red-800 block">
+                    Indique la razón de la cancelación
+                  </label>
+                  <textarea
+                    value={cancelReason}
+                    onChange={(e) => setCancelReason(e.target.value)}
+                    placeholder="Ej: El paciente avisó que no podía asistir..."
+                    className="w-full p-3 border border-red-200 rounded-lg focus:outline-none focus:border-red-400 text-sm"
+                    rows={3}
+                  />
+                </div>
+                <div className="pt-4 flex gap-3 bg-white -mx-6 -mb-6 p-6 border-t border-slate-200">
+                  <Button
+                    variant="outline"
+                    onClick={() => {
+                      setIsCancelingAppt(false);
+                      setCancelReason("");
+                    }}
+                    className="flex-1 py-3.5 rounded-xl"
+                  >
+                    Atrás
+                  </Button>
+                  <Button
+                    onClick={handleCancelAppointment}
+                    disabled={isSubmitting || !cancelReason.trim()}
+                    className="flex-1 py-3.5 rounded-xl bg-red-500 hover:bg-red-600 text-white border-none shadow-md disabled:opacity-50"
+                  >
+                    {isSubmitting ? "Cancelando..." : "Confirmar Cancelación"}
+                  </Button>
+                </div>
+              </motion.div>
+            ) : (
+              <>
+                <div className="grid grid-cols-2 gap-3 relative z-50">
+                  <div>
+                    <label className="text-brand-dark font-bold text-sm mb-2 block">
+                      Nueva Fecha
+                    </label>
+                    <button
+                      onClick={() => setIsReschPickerOpen(!isReschPickerOpen)}
+                      className="w-full px-4 py-3 bg-white border border-slate-200 rounded-xl text-sm font-medium text-left focus:ring-2 focus:ring-brand-primary/20 transition-all flex items-center justify-between group cursor-pointer"
+                    >
+                      <span
+                        className={
+                          rescheduleDate ? "text-brand-dark" : "text-brand-gray"
+                        }
+                      >
+                        {rescheduleDate || "Seleccionar..."}
+                      </span>
+                      <CalendarIcon className="w-4 h-4 text-brand-gray group-hover:text-brand-primary transition-colors" />
+                    </button>
+                    <div className="absolute top-full mt-2 z-50">
+                      <DatePicker
+                        isOpen={isReschPickerOpen}
+                        onClose={() => setIsReschPickerOpen(false)}
+                        selectedDate={rescheduleDate}
+                        minDate={getISODate()}
+                        onSelectDate={(d) => {
+                          setRescheduleDate(d);
+                          setIsReschPickerOpen(false);
+                        }}
+                      />
+                    </div>
+                  </div>
+                  <div>
+                    <label className="text-brand-dark font-bold text-sm mb-2 block">
+                      Nueva Hora
+                    </label>
+                    <Dropdown
+                      options={
+                        rescheduleOptions.length > 0
+                          ? rescheduleOptions
+                          : [{ label: "Sin horarios", value: "" }]
+                      }
+                      value={rescheduleTime}
+                      onChange={setRescheduleTime}
+                    />
+                  </div>
+                </div>
+                <div className="bg-amber-50 border border-amber-200 p-3 rounded-xl">
+                  <p className="text-xs text-amber-700 font-medium">
+                    Nota: Al reprogramar, el estado de la cita cambiará a
+                    "Pendiente" en la bandeja de entrada para llevar
+                    seguimiento.
+                  </p>
+                </div>
+                <div className="pt-4 flex gap-3 bg-white -mx-6 -mb-6 p-6 border-t border-slate-200">
+                  <Button
+                    variant="outline"
+                    onClick={() => setIsReschedulingAppt(false)}
+                    className="flex-1 py-3.5 rounded-xl"
+                  >
+                    Volver
+                  </Button>
+                  <Button
+                    onClick={handleConfirmRescheduleAppt}
+                    disabled={isSubmitting || !rescheduleTime}
+                    className="flex-1 py-3.5 rounded-xl bg-amber-500 hover:bg-amber-600 text-white border-none shadow-md disabled:opacity-50"
+                  >
+                    {isSubmitting ? "Guardando..." : "Confirmar Reprogramación"}
+                  </Button>
+                </div>
+              </>
+            )}
           </div>
         )}
       </Modal>
 
-      {/* ========================================================
-          MODAL 2: GESTIÓN DE AGENDA
-          ======================================================== */}
       <Modal
         isOpen={!!actionModal}
-        onClose={() => setActionModal(null)}
-        title="Gestión de Agenda"
-        icon={<Plus className="w-5 h-5 text-brand-primary" />}
+        onClose={() => {
+          setActionModal(null);
+          setEditingBlockId(null);
+        }}
+        title={editingBlockId ? "Editar Bloqueo" : "Gestión de Agenda"}
+        icon={
+          editingBlockId ? (
+            <Edit3 className="w-5 h-5 text-brand-primary" />
+          ) : (
+            <Plus className="w-5 h-5 text-brand-primary" />
+          )
+        }
         hideFooter={true}
       >
         {actionModal && (
           <div className="space-y-6 pb-2">
-            {" "}
-            {/* EL FIX: Adiós al pb-40 feo, regresamos a pb-2 */}
-            <div className="flex p-1 bg-slate-100 rounded-xl">
-              <button
-                onClick={() => setActionTab("schedule")}
-                className={`flex-1 py-2 text-sm font-bold rounded-lg transition-all cursor-pointer ${actionTab === "schedule" ? "bg-white text-brand-primary shadow-sm" : "text-brand-gray hover:text-brand-dark"}`}
-              >
-                Agendar Cita
-              </button>
-              <button
-                onClick={() => setActionTab("block")}
-                className={`flex-1 py-2 text-sm font-bold rounded-lg transition-all cursor-pointer ${actionTab === "block" ? "bg-brand-primary text-white shadow-sm" : "text-brand-gray hover:text-brand-dark"}`}
-              >
-                Bloquear Horario
-              </button>
-            </div>
-            {/* TAB: AGENDAR */}
-            {actionTab === "schedule" && (
+            {!editingBlockId && (
+              <div className="flex p-1 bg-slate-100 rounded-xl">
+                <button
+                  onClick={() => setActionTab("schedule")}
+                  className={`flex-1 py-2 text-sm font-bold rounded-lg transition-all cursor-pointer ${actionTab === "schedule" ? "bg-white text-brand-primary shadow-sm" : "text-brand-gray hover:text-brand-dark"}`}
+                >
+                  Agendar Cita
+                </button>
+                <button
+                  onClick={() => setActionTab("block")}
+                  className={`flex-1 py-2 text-sm font-bold rounded-lg transition-all cursor-pointer ${actionTab === "block" ? "bg-brand-primary text-white shadow-sm" : "text-brand-gray hover:text-brand-dark"}`}
+                >
+                  Bloquear Horario
+                </button>
+              </div>
+            )}
+
+            {actionTab === "schedule" && !editingBlockId && (
               <motion.div
                 initial={{ opacity: 0 }}
                 animate={{ opacity: 1 }}
                 className="space-y-4"
               >
                 <div className="bg-brand-light/20 border border-brand-light/50 rounded-xl p-3 flex justify-between items-center text-sm">
-                  <span className="text-brand-gray font-medium">Horario:</span>
+                  <span className="text-brand-gray font-medium">
+                    Horario sugerido:
+                  </span>
                   <span className="font-bold text-brand-primary">
                     {actionModal.date} a las {actionModal.time}
                   </span>
                 </div>
-
-                {/* FIX DE Z-INDEX: Le damos z-50 al de arriba y z-40 al de abajo */}
                 <div className="relative z-50">
                   <label className="text-brand-dark font-bold text-sm mb-2 block">
                     Buscar Paciente
@@ -377,7 +756,6 @@ export const CalendarTab = ({ onStartConsultation }: CalendarTabProps) => {
                     searchable={true}
                   />
                 </div>
-
                 <div className="relative z-40">
                   <label className="text-brand-dark font-bold text-sm mb-2 block">
                     Servicio a realizar
@@ -389,23 +767,28 @@ export const CalendarTab = ({ onStartConsultation }: CalendarTabProps) => {
                     placeholder="Seleccione un servicio..."
                   />
                 </div>
-
-                <Button className="w-full py-3.5 rounded-xl bg-brand-primary hover:opacity-90 text-white mt-4 cursor-pointer border-none shadow-md">
-                  Confirmar Cita
+                <Button
+                  onClick={handleScheduleAppointment}
+                  disabled={
+                    isSubmitting || !selectedPatient || !selectedService
+                  }
+                  className="w-full py-3.5 rounded-xl bg-brand-primary hover:opacity-90 text-white mt-4 cursor-pointer border-none shadow-md disabled:opacity-50"
+                >
+                  {isSubmitting ? "Guardando..." : "Confirmar Cita"}
                 </Button>
               </motion.div>
             )}
-            {/* TAB: BLOQUEAR */}
+
             {actionTab === "block" && (
               <motion.div
                 initial={{ opacity: 0 }}
                 animate={{ opacity: 1 }}
                 className="space-y-4"
               >
-                <div className="grid grid-cols-2 gap-3 relative">
+                <div className="grid grid-cols-2 gap-3 relative z-50">
                   <div>
                     <label className="text-brand-dark font-bold text-sm mb-2 block">
-                      Desde
+                      Desde (Fecha)
                     </label>
                     <button
                       onClick={() => setIsStartPickerOpen(!isStartPickerOpen)}
@@ -434,7 +817,7 @@ export const CalendarTab = ({ onStartConsultation }: CalendarTabProps) => {
                   </div>
                   <div>
                     <label className="text-brand-dark font-bold text-sm mb-2 block">
-                      Hasta
+                      Hasta (Fecha)
                     </label>
                     <button
                       onClick={() => setIsEndPickerOpen(!isEndPickerOpen)}
@@ -463,6 +846,30 @@ export const CalendarTab = ({ onStartConsultation }: CalendarTabProps) => {
                     </div>
                   </div>
                 </div>
+
+                <div className="grid grid-cols-2 gap-3 relative z-40">
+                  <div>
+                    <label className="text-brand-dark font-bold text-sm mb-2 block">
+                      Hora Inicio
+                    </label>
+                    <Dropdown
+                      options={timeOptions}
+                      value={blockStartTime}
+                      onChange={setBlockStartTime}
+                    />
+                  </div>
+                  <div>
+                    <label className="text-brand-dark font-bold text-sm mb-2 block">
+                      Hora Fin
+                    </label>
+                    <Dropdown
+                      options={timeOptions}
+                      value={blockEndTime}
+                      onChange={setBlockEndTime}
+                    />
+                  </div>
+                </div>
+
                 <div>
                   <label className="text-brand-dark font-bold text-sm mb-3 block">
                     Motivo
@@ -484,8 +891,16 @@ export const CalendarTab = ({ onStartConsultation }: CalendarTabProps) => {
                     ))}
                   </div>
                 </div>
-                <Button className="w-full py-3.5 rounded-xl bg-brand-primary hover:opacity-90 text-white mt-4 cursor-pointer border-none shadow-md">
-                  Bloquear Fechas
+                <Button
+                  onClick={handleSaveBlock}
+                  disabled={isSubmitting}
+                  className="w-full py-3.5 rounded-xl bg-brand-primary hover:opacity-90 text-white mt-4 cursor-pointer border-none shadow-md disabled:opacity-50"
+                >
+                  {isSubmitting
+                    ? "Guardando..."
+                    : editingBlockId
+                      ? "Actualizar Bloqueo"
+                      : "Bloquear Fechas"}
                 </Button>
               </motion.div>
             )}
@@ -493,60 +908,153 @@ export const CalendarTab = ({ onStartConsultation }: CalendarTabProps) => {
         )}
       </Modal>
 
-      {/* ========================================================
-          MODAL 3: CONFIGURACIÓN DE HORARIOS
-          ======================================================== */}
+      <Modal
+        isOpen={!!selectedBlock}
+        onClose={() => setSelectedBlock(null)}
+        title="Detalles del Bloqueo"
+        icon={<Ban className="w-5 h-5 text-fuchsia-500" />}
+        hideFooter={true}
+      >
+        {selectedBlock && (
+          <div className="space-y-6 pb-2 text-center">
+            <div className="w-16 h-16 bg-fuchsia-50 rounded-full flex items-center justify-center mx-auto mb-2 text-fuchsia-500">
+              <Ban className="w-8 h-8" />
+            </div>
+            <h3 className="text-xl font-bold text-brand-dark uppercase tracking-widest">
+              {selectedBlock.reason}
+            </h3>
+            <p className="text-brand-gray text-sm">
+              Horario inhabilitado el <strong>{selectedBlock.date}</strong>{" "}
+              <br /> de <strong>{selectedBlock.startTime}</strong> a{" "}
+              <strong>{selectedBlock.endTime}</strong>.
+            </p>
+            <div className="pt-4 border-t border-slate-100 flex gap-3">
+              <Button
+                variant="outline"
+                onClick={() => setSelectedBlock(null)}
+                className="flex-1 py-3 rounded-xl cursor-pointer"
+              >
+                Cerrar
+              </Button>
+              <Button
+                onClick={handleEditBlock}
+                variant="outline"
+                className="flex-1 py-3 rounded-xl cursor-pointer border-brand-primary text-brand-primary hover:bg-brand-light/30"
+              >
+                Editar
+              </Button>
+              <Button
+                onClick={handleUnblockSlot}
+                disabled={isSubmitting}
+                className="flex-1 py-3 rounded-xl bg-fuchsia-500 hover:bg-fuchsia-600 text-white cursor-pointer border-none shadow-md disabled:opacity-50"
+              >
+                {isSubmitting ? "Borrando..." : "Desbloquear"}
+              </Button>
+            </div>
+          </div>
+        )}
+      </Modal>
+
       <Modal
         isOpen={settingsModalOpen}
         onClose={() => setSettingsModalOpen(false)}
-        title="Configuración de Horarios"
+        title="Configuración Semanal"
         icon={<Settings className="w-5 h-5 text-brand-primary" />}
         hideFooter={true}
       >
-        <div className="space-y-6 pb-2">
-          <p className="text-brand-gray text-sm">
-            Define el horario laboral en el que el calendario y los pacientes
-            podrán agendar citas.
+        <div className="space-y-4 pb-2">
+          <p className="text-brand-gray text-sm mb-4">
+            Activa los días laborales y define el horario específico de entrada
+            y salida para cada uno.
           </p>
-          <div className="grid grid-cols-2 gap-4 relative z-20">
-            <div>
-              <label className="text-brand-dark font-bold text-sm mb-2 block">
-                Hora de Inicio
-              </label>
-              <Dropdown
-                options={[
-                  { label: "07:00 AM", value: "07:00 AM" },
-                  { label: "08:00 AM", value: "08:00 AM" },
-                  { label: "09:00 AM", value: "09:00 AM" },
-                ]}
-                value={workingHours.start}
-                onChange={(val) =>
-                  setWorkingHours({ ...workingHours, start: val })
-                }
-              />
-            </div>
-            <div>
-              <label className="text-brand-dark font-bold text-sm mb-2 block">
-                Hora de Fin
-              </label>
-              <Dropdown
-                options={[
-                  { label: "06:00 PM", value: "06:00 PM" },
-                  { label: "08:00 PM", value: "08:00 PM" },
-                  { label: "10:00 PM", value: "10:00 PM" },
-                ]}
-                value={workingHours.end}
-                onChange={(val) =>
-                  setWorkingHours({ ...workingHours, end: val })
-                }
-              />
-            </div>
+
+          <div className="max-h-[50vh] overflow-y-auto pr-2 space-y-3">
+            {[1, 2, 3, 4, 5, 6, 0].map((dayNum) => {
+              const dayNames: Record<number, string> = {
+                1: "Lunes",
+                2: "Martes",
+                3: "Miércoles",
+                4: "Jueves",
+                5: "Viernes",
+                6: "Sábado",
+                0: "Domingo",
+              };
+              const day = workingSchedule[dayNum as keyof WeeklySchedule];
+              if (!day) return null;
+
+              return (
+                <div
+                  key={dayNum}
+                  className={`flex flex-col sm:flex-row sm:items-center justify-between p-4 rounded-2xl border transition-all ${day.isOpen ? "border-brand-primary/30 bg-brand-light/5" : "border-slate-200 bg-slate-50 opacity-70"}`}
+                >
+                  <div className="flex items-center gap-3 mb-3 sm:mb-0">
+                    <label className="relative inline-flex items-center cursor-pointer">
+                      <input
+                        type="checkbox"
+                        className="sr-only peer"
+                        checked={day.isOpen}
+                        onChange={(e) =>
+                          setWorkingSchedule({
+                            ...workingSchedule,
+                            [dayNum]: { ...day, isOpen: e.target.checked },
+                          })
+                        }
+                      />
+                      <div className="w-11 h-6 bg-slate-300 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-0.5 after:left-0.5 after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-brand-primary"></div>
+                    </label>
+                    <span
+                      className={`font-bold text-sm ${day.isOpen ? "text-brand-dark" : "text-slate-400"}`}
+                    >
+                      {dayNames[dayNum]}
+                    </span>
+                  </div>
+
+                  {day.isOpen ? (
+                    <div className="flex items-center gap-2">
+                      <div className="w-28 sm:w-32">
+                        <Dropdown
+                          options={timeOptions}
+                          value={day.start}
+                          onChange={(val) =>
+                            setWorkingSchedule({
+                              ...workingSchedule,
+                              [dayNum]: { ...day, start: val },
+                            })
+                          }
+                        />
+                      </div>
+                      <span className="text-slate-400 font-medium text-xs">
+                        a
+                      </span>
+                      <div className="w-28 sm:w-32">
+                        <Dropdown
+                          options={timeOptions}
+                          value={day.end}
+                          onChange={(val) =>
+                            setWorkingSchedule({
+                              ...workingSchedule,
+                              [dayNum]: { ...day, end: val },
+                            })
+                          }
+                        />
+                      </div>
+                    </div>
+                  ) : (
+                    <span className="text-slate-400 font-bold text-sm italic py-2 sm:py-0">
+                      Día de descanso
+                    </span>
+                  )}
+                </div>
+              );
+            })}
           </div>
+
           <Button
-            onClick={() => setSettingsModalOpen(false)}
-            className="w-full py-3.5 rounded-xl bg-brand-dark hover:bg-slate-800 text-white mt-4 cursor-pointer border-none shadow-md"
+            onClick={handleSaveSettings}
+            disabled={isSubmitting}
+            className="w-full py-4 rounded-xl bg-brand-dark hover:bg-slate-800 text-white mt-4 cursor-pointer border-none shadow-md disabled:opacity-50 font-bold text-sm tracking-wide"
           >
-            Guardar Horarios
+            {isSubmitting ? "Guardando Cambios..." : "Guardar Esquema Semanal"}
           </Button>
         </div>
       </Modal>
