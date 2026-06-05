@@ -13,18 +13,21 @@ import {
   FileDown,
   UploadCloud,
   Search,
-  Plus,
   ChevronLeft,
   ChevronRight,
+  Plus,
 } from "lucide-react";
 import { Button } from "../../../components/ui/Button";
 import { Modal } from "../../../components/ui/Modal";
-import { type AppointmentData } from "../../../data/mockPatients";
+import { type DashboardAppointment } from "../../../lib/services/clinicService";
+import { type DashboardPatient } from "../../../lib/services/patientService";
 
+// IMPORTANTE: Ahora acepta O una cita O un paciente.
 interface ConsultationWorkspaceProps {
-  appointment: AppointmentData;
+  appointment?: DashboardAppointment;
+  patient?: DashboardPatient;
   onClose: () => void;
-  onFinishConsultation: (id: string) => void;
+  onFinishConsultation?: (id: string) => void;
 }
 
 type WorkspaceTab = "notas" | "receta" | "fotos";
@@ -46,7 +49,6 @@ const WORKSPACE_TABS: {
   { id: "fotos", label: "Galería y Estudios", icon: Camera },
 ];
 
-// FOTOS SIMULADAS PARA EL CARRUSEL
 const MOCK_PATIENT_PHOTOS = [
   "Rostro_Frente.jpg",
   "Rostro_Perfil_Derecho.jpg",
@@ -55,23 +57,30 @@ const MOCK_PATIENT_PHOTOS = [
 
 export const ConsultationWorkspace = ({
   appointment,
+  patient,
   onClose,
   onFinishConsultation,
 }: ConsultationWorkspaceProps) => {
+  // Lógica de Contexto Inteligente
+  const isReviewMode = !appointment && !!patient;
+  const targetName =
+    appointment?.patientName || patient?.name || "Paciente Desconocido";
+  const targetPhone = appointment?.phone || patient?.phone || "Sin teléfono";
+  const isNewPatient = appointment
+    ? appointment.isNewPatient
+    : patient?.totalVisits === 0;
+
   const [activeTab, setActiveTab] = useState<WorkspaceTab>("notas");
 
-  // ESTADOS DE FORMULARIOS
   const [soapNotes, setSoapNotes] = useState({
-    subjetivo: appointment.isNewPatient ? "" : "Acude a revisión. Refiere...",
+    subjetivo: isNewPatient ? "" : "Acude a revisión. Refiere...",
     objetivo: "",
     analisis: "",
     plan: "",
   });
 
-  // FIX: Signos vitales separados para la presión
   const [vitalSigns, setVitalSigns] = useState({ peso: "", sys: "", dia: "" });
 
-  // ESTADOS PARA RECETAS
   const [isPrescriptionModalOpen, setIsPrescriptionModalOpen] = useState(false);
   const [newMedication, setNewMedication] = useState({
     nombre: "",
@@ -82,18 +91,22 @@ export const ConsultationWorkspace = ({
     LocalPrescription[]
   >([]);
 
-  // ESTADOS PARA GALERÍA
   const [localFiles, setLocalFiles] = useState<string[]>([]);
   const [photoViewerIndex, setPhotoViewerIndex] = useState<number | null>(null);
 
-  // ESTADO PARA ANIMACIÓN
   const [isFinishing, setIsFinishing] = useState(false);
 
   const handleFinishClick = () => {
-    setIsFinishing(true);
-    setTimeout(() => {
-      onFinishConsultation(appointment.id);
-    }, 1500);
+    if (isReviewMode) {
+      onClose(); // Si es revisión, solo cierra.
+    } else {
+      setIsFinishing(true);
+      setTimeout(() => {
+        if (onFinishConsultation && appointment) {
+          onFinishConsultation(appointment.id);
+        }
+      }, 1500);
+    }
   };
 
   const handleAddPrescription = () => {
@@ -107,7 +120,6 @@ export const ConsultationWorkspace = ({
     }
   };
 
-  // FIX: Manejador de subida de archivos simulada
   const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.files && e.target.files.length > 0) {
       const newFiles = Array.from(e.target.files).map((file) => file.name);
@@ -128,7 +140,7 @@ export const ConsultationWorkspace = ({
           </div>
           <h2 className="text-4xl font-black mb-2">Consulta Finalizada</h2>
           <p className="text-teal-100 font-medium text-lg">
-            Guardando expediente clínico de {appointment.patientName}...
+            Guardando expediente clínico de {targetName}...
           </p>
         </motion.div>
       </div>
@@ -142,7 +154,7 @@ export const ConsultationWorkspace = ({
       exit={{ opacity: 0, y: 20 }}
       className="min-h-screen bg-slate-50 pb-10 flex flex-col"
     >
-      {/* TOP BAR */}
+      {/* TOP BAR INTELIGENTE */}
       <div className="bg-white border-b border-slate-200 px-6 py-3 sticky top-0 z-40 shadow-sm flex items-center justify-between shrink-0">
         <div className="flex items-center gap-4">
           <button
@@ -153,13 +165,17 @@ export const ConsultationWorkspace = ({
           </button>
           <div>
             <div className="flex items-center gap-2">
-              <span className="animate-pulse w-2 h-2 bg-rose-500 rounded-full"></span>
-              <h2 className="text-base font-bold text-brand-dark leading-none truncate max-w-[200px] sm:max-w-xs">
-                Consulta Activa
+              {!isReviewMode && (
+                <span className="animate-pulse w-2 h-2 bg-rose-500 rounded-full"></span>
+              )}
+              <h2 className="text-base font-bold text-brand-dark leading-none truncate max-w-50 sm:max-w-xs">
+                {isReviewMode ? "Revisión de Expediente" : "Consulta Activa"}
               </h2>
             </div>
             <p className="text-xs font-medium text-brand-gray mt-1 truncate">
-              {appointment.time} • {appointment.service}
+              {isReviewMode
+                ? "Historial y Notas"
+                : `${appointment?.time} • ${appointment?.service}`}
             </p>
           </div>
         </div>
@@ -169,19 +185,25 @@ export const ConsultationWorkspace = ({
             variant="outline"
             className="hidden sm:flex items-center gap-2 px-4 py-2.5 rounded-xl border-slate-200 text-brand-gray hover:bg-slate-50 hover:text-brand-dark cursor-pointer font-bold whitespace-nowrap"
           >
-            <Save className="w-4 h-4 shrink-0" /> Guardar Borrador
+            <Save className="w-4 h-4 shrink-0" /> Guardar Cambios
           </Button>
           <Button
             onClick={handleFinishClick}
-            className="flex items-center gap-2 px-5 py-2.5 rounded-xl bg-teal-500 hover:bg-teal-600 text-white cursor-pointer font-bold border-none shadow-sm text-sm whitespace-nowrap"
+            className={`flex items-center gap-2 px-5 py-2.5 rounded-xl text-white cursor-pointer font-bold border-none shadow-sm text-sm whitespace-nowrap ${isReviewMode ? "bg-slate-800 hover:bg-slate-900" : "bg-teal-500 hover:bg-teal-600"}`}
           >
-            <CheckCircle2 className="w-4 h-4 shrink-0" /> Finalizar Consulta
+            {isReviewMode ? (
+              "Cerrar Expediente"
+            ) : (
+              <>
+                <CheckCircle2 className="w-4 h-4 shrink-0" /> Finalizar Consulta
+              </>
+            )}
           </Button>
         </div>
       </div>
 
       {/* WORKSPACE GRID */}
-      <div className="max-w-[90rem] mx-auto px-4 sm:px-6 pt-6 grid grid-cols-1 lg:grid-cols-12 gap-6 flex-1">
+      <div className="max-w-360 mx-auto px-4 sm:px-6 pt-6 grid grid-cols-1 lg:grid-cols-12 gap-6 flex-1 w-full">
         {/* COLUMNA IZQUIERDA */}
         <div className="lg:col-span-3 space-y-4">
           <div className="bg-white rounded-2xl p-5 border border-slate-200 shadow-sm text-center relative overflow-hidden">
@@ -190,13 +212,13 @@ export const ConsultationWorkspace = ({
               <User className="w-8 h-8" />
             </div>
             <h3 className="text-lg font-extrabold text-brand-dark mt-2 leading-tight">
-              {appointment.patientName}
+              {targetName}
             </h3>
             <p className="text-xs font-medium text-brand-gray mt-0.5">
-              {appointment.phone}
+              {targetPhone}
             </p>
             <div className="mt-3 pt-3 border-t border-slate-100">
-              {appointment.isNewPatient ? (
+              {isNewPatient ? (
                 <span className="text-[10px] font-bold text-blue-600 bg-blue-50 px-2 py-1 rounded uppercase tracking-wider">
                   Primera Vez
                 </span>
@@ -218,7 +240,6 @@ export const ConsultationWorkspace = ({
                 <p className="text-[9px] font-bold text-brand-gray uppercase">
                   Peso (kg)
                 </p>
-                {/* FIX: Lógica de peso a máximo 5 caracteres numéricos */}
                 <input
                   type="text"
                   placeholder="--"
@@ -236,7 +257,6 @@ export const ConsultationWorkspace = ({
                 <p className="text-[9px] font-bold text-brand-gray uppercase">
                   Presión
                 </p>
-                {/* FIX: Presión con UX moderna (Dos inputs separados) */}
                 <div className="flex items-center gap-1 mt-0.5 text-sm font-bold text-brand-dark">
                   <input
                     type="text"
@@ -248,7 +268,7 @@ export const ConsultationWorkspace = ({
                         sys: e.target.value.replace(/\D/g, "").slice(0, 3),
                       })
                     }
-                    className="w-7 bg-transparent text-center focus:outline-none focus:bg-white focus:ring-1 focus:ring-slate-300 rounded"
+                    className="w-7 bg-transparent text-center focus:outline-none focus:bg-white focus:ring-1 focus:ring-brand-primary/30 rounded"
                   />
                   <span className="text-slate-400">/</span>
                   <input
@@ -261,20 +281,19 @@ export const ConsultationWorkspace = ({
                         dia: e.target.value.replace(/\D/g, "").slice(0, 3),
                       })
                     }
-                    className="w-7 bg-transparent text-center focus:outline-none focus:bg-white focus:ring-1 focus:ring-slate-300 rounded"
+                    className="w-7 bg-transparent text-center focus:outline-none focus:bg-white focus:ring-1 focus:ring-brand-primary/30 rounded"
                   />
                 </div>
               </div>
             </div>
           </div>
 
-          {/* FIX: El historial siempre existe, solo cambia el contenido si es nuevo */}
           <div className="bg-white rounded-2xl p-5 border border-slate-200 shadow-sm">
             <h4 className="text-[11px] font-black text-brand-gray uppercase tracking-widest flex items-center gap-1.5 mb-3">
               <Clock className="w-3.5 h-3.5 text-brand-primary" /> Últimas
               Visitas
             </h4>
-            {appointment.isNewPatient ? (
+            {isNewPatient ? (
               <p className="text-xs text-brand-gray italic text-center py-2">
                 No hay visitas registradas anteriormente.
               </p>
@@ -282,7 +301,7 @@ export const ConsultationWorkspace = ({
               <div className="space-y-3">
                 <div className="flex items-start gap-2 relative cursor-pointer group">
                   <div className="w-1.5 h-1.5 rounded-full bg-brand-primary mt-1.5 shrink-0 relative z-10 group-hover:scale-150 transition-transform"></div>
-                  <div className="absolute left-[3px] top-2.5 bottom-[-15px] w-[1px] bg-slate-200"></div>
+                  <div className="absolute left-0.75 top-2.5 -bottom-3.75 w-px bg-slate-200"></div>
                   <div>
                     <p className="text-xs font-bold text-brand-dark group-hover:text-brand-primary transition-colors">
                       Toxina Botulínica
@@ -317,11 +336,7 @@ export const ConsultationWorkspace = ({
                 <button
                   key={tab.id}
                   onClick={() => setActiveTab(tab.id)}
-                  className={`flex items-center gap-2 px-5 py-3 text-sm font-bold border-b-2 transition-all cursor-pointer whitespace-nowrap ${
-                    activeTab === tab.id
-                      ? "border-brand-primary text-brand-primary bg-white rounded-t-xl"
-                      : "border-transparent text-brand-gray hover:text-brand-dark hover:bg-slate-100 rounded-t-xl"
-                  }`}
+                  className={`flex items-center gap-2 px-5 py-3 text-sm font-bold border-b-2 transition-all cursor-pointer whitespace-nowrap ${activeTab === tab.id ? "border-brand-primary text-brand-primary bg-white rounded-t-xl" : "border-transparent text-brand-gray hover:text-brand-dark hover:bg-slate-100 rounded-t-xl"}`}
                 >
                   <Icon className="w-4 h-4 shrink-0" /> {tab.label}
                 </button>
@@ -332,7 +347,7 @@ export const ConsultationWorkspace = ({
           <div className="flex-1 overflow-y-auto p-6 [&::-webkit-scrollbar]:w-2 [&::-webkit-scrollbar-track]:bg-transparent [&::-webkit-scrollbar-thumb]:bg-slate-200 [&::-webkit-scrollbar-thumb]:rounded-full hover:[&::-webkit-scrollbar-thumb]:bg-slate-300">
             {activeTab === "notas" && (
               <div className="flex flex-col h-full gap-5">
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-5 flex-1 min-h-[200px]">
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-5 flex-1 min-h-62.5">
                   <div className="flex flex-col h-full">
                     <label className="text-brand-dark font-bold text-xs uppercase tracking-wider block">
                       S - Subjetivo
@@ -340,6 +355,7 @@ export const ConsultationWorkspace = ({
                     <p className="text-[10px] text-brand-gray mb-2">
                       Motivo de consulta y síntomas.
                     </p>
+                    {/* UI TWEAK: Textos más grandes (text-base) para mejor lectura */}
                     <textarea
                       value={soapNotes.subjetivo}
                       onChange={(e) =>
@@ -349,7 +365,7 @@ export const ConsultationWorkspace = ({
                         })
                       }
                       placeholder="Escribe aquí..."
-                      className="flex-1 w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl text-sm focus:bg-white focus:border-brand-primary outline-none resize-none transition-all"
+                      className="flex-1 w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl text-base focus:bg-white focus:border-brand-primary outline-none resize-none transition-all leading-relaxed"
                     />
                   </div>
                   <div className="flex flex-col h-full">
@@ -365,11 +381,11 @@ export const ConsultationWorkspace = ({
                         setSoapNotes({ ...soapNotes, objetivo: e.target.value })
                       }
                       placeholder="Escribe aquí..."
-                      className="flex-1 w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl text-sm focus:bg-white focus:border-brand-primary outline-none resize-none transition-all"
+                      className="flex-1 w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl text-base focus:bg-white focus:border-brand-primary outline-none resize-none transition-all leading-relaxed"
                     />
                   </div>
                 </div>
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-5 flex-1 min-h-[200px]">
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-5 flex-1 min-h-62.5">
                   <div className="flex flex-col h-full">
                     <label className="text-brand-dark font-bold text-xs uppercase tracking-wider block">
                       A - Análisis
@@ -383,7 +399,7 @@ export const ConsultationWorkspace = ({
                         setSoapNotes({ ...soapNotes, analisis: e.target.value })
                       }
                       placeholder="Escribe aquí..."
-                      className="flex-1 w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl text-sm focus:bg-white focus:border-brand-primary outline-none resize-none transition-all"
+                      className="flex-1 w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl text-base focus:bg-white focus:border-brand-primary outline-none resize-none transition-all leading-relaxed"
                     />
                   </div>
                   <div className="flex flex-col h-full">
@@ -399,7 +415,7 @@ export const ConsultationWorkspace = ({
                         setSoapNotes({ ...soapNotes, plan: e.target.value })
                       }
                       placeholder="Ej: Aplicación de 20U Toxina en frontal..."
-                      className="flex-1 w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl text-sm focus:bg-white focus:border-brand-primary outline-none resize-none transition-all"
+                      className="flex-1 w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl text-base focus:bg-white focus:border-brand-primary outline-none resize-none transition-all leading-relaxed"
                     />
                   </div>
                 </div>
@@ -414,8 +430,7 @@ export const ConsultationWorkspace = ({
                       Registro de Recetas e Indicaciones
                     </h3>
                     <p className="text-xs text-brand-gray mt-0.5">
-                      Mantén un registro interno físico de los medicamentos
-                      indicados al paciente.
+                      Mantén un registro interno de los medicamentos indicados.
                     </p>
                   </div>
                   <Button
@@ -426,12 +441,11 @@ export const ConsultationWorkspace = ({
                   </Button>
                 </div>
 
-                {localPrescriptions.length > 0 || !appointment.isNewPatient ? (
+                {localPrescriptions.length > 0 || !isNewPatient ? (
                   <div className="space-y-3">
                     <h4 className="text-[11px] font-bold text-brand-gray uppercase tracking-widest">
                       Historial de Recetas
                     </h4>
-
                     {localPrescriptions.map((med, idx) => (
                       <div
                         key={idx}
@@ -444,7 +458,7 @@ export const ConsultationWorkspace = ({
                               ({med.dosis})
                             </span>
                           </p>
-                          <p className="text-xs text-brand-gray mt-1">
+                          <p className="text-sm text-brand-gray mt-1">
                             {med.indicaciones}
                           </p>
                           <span className="text-[10px] font-bold text-brand-primary mt-2 block">
@@ -453,14 +467,13 @@ export const ConsultationWorkspace = ({
                         </div>
                       </div>
                     ))}
-
-                    {!appointment.isNewPatient && (
+                    {!isNewPatient && (
                       <div className="bg-slate-50 border border-slate-200 p-4 rounded-xl flex items-start justify-between group hover:border-brand-primary/50 transition-colors cursor-pointer">
                         <div>
                           <p className="text-sm font-bold text-brand-dark">
                             Cataflam 50mg, Mefinal 500mg
                           </p>
-                          <p className="text-xs text-brand-gray mt-1 line-clamp-1">
+                          <p className="text-sm text-brand-gray mt-1 line-clamp-1">
                             "Tomar 1 cada 8 horas por 3 días en caso de
                             dolor..."
                           </p>
@@ -490,7 +503,6 @@ export const ConsultationWorkspace = ({
 
             {activeTab === "fotos" && (
               <div className="space-y-8">
-                {/* FIX: Input File real conectado */}
                 <label className="border-2 border-dashed border-brand-primary/30 rounded-2xl p-8 flex flex-col items-center justify-center bg-brand-light/5 hover:bg-brand-light/10 transition-colors cursor-pointer group">
                   <input
                     type="file"
@@ -511,7 +523,6 @@ export const ConsultationWorkspace = ({
                 </label>
 
                 <div className="space-y-6">
-                  {/* Archivos subidos hoy */}
                   <div>
                     <h4 className="text-[11px] font-bold text-brand-gray uppercase tracking-widest mb-3 pb-2 border-b border-slate-100">
                       Hoy • {new Date().toLocaleDateString("es-MX")}
@@ -536,9 +547,7 @@ export const ConsultationWorkspace = ({
                       </div>
                     )}
                   </div>
-
-                  {/* Historial anterior */}
-                  {!appointment.isNewPatient && (
+                  {!isNewPatient && (
                     <div>
                       <h4 className="text-[11px] font-bold text-brand-gray uppercase tracking-widest mb-3 pb-2 border-b border-slate-100 flex items-center gap-2">
                         10 Mar 2026{" "}
@@ -553,8 +562,6 @@ export const ConsultationWorkspace = ({
                             Sangre.pdf
                           </span>
                         </div>
-
-                        {/* Render del array simulado para carrusel */}
                         {MOCK_PATIENT_PHOTOS.map((photo, index) => (
                           <div
                             key={index}
@@ -580,7 +587,7 @@ export const ConsultationWorkspace = ({
         </div>
       </div>
 
-      {/* MODAL DE AGREGAR RECETA */}
+      {/* MODAL DE RECETA Y VISOR DE FOTOS SE MANTIENEN IGUAL... */}
       <Modal
         isOpen={isPrescriptionModalOpen}
         onClose={() => setIsPrescriptionModalOpen(false)}
@@ -652,7 +659,6 @@ export const ConsultationWorkspace = ({
         </div>
       </Modal>
 
-      {/* FIX: MODAL DE VISOR DE FOTOS CON CARRUSEL */}
       <Modal
         isOpen={photoViewerIndex !== null}
         onClose={() => setPhotoViewerIndex(null)}
@@ -660,8 +666,7 @@ export const ConsultationWorkspace = ({
         hideFooter={true}
       >
         {photoViewerIndex !== null && (
-          <div className="flex flex-col items-center justify-center bg-slate-900 rounded-2xl min-h-[400px] border border-slate-800 relative overflow-hidden p-8 -mt-2 -mx-2 -mb-4">
-            {/* Flecha Izquierda */}
+          <div className="flex flex-col items-center justify-center bg-slate-900 rounded-2xl min-h-100 border border-slate-800 relative overflow-hidden p-8 -mt-2 -mx-2 -mb-4">
             <button
               onClick={() =>
                 setPhotoViewerIndex(
@@ -673,8 +678,6 @@ export const ConsultationWorkspace = ({
             >
               <ChevronLeft className="w-6 h-6" />
             </button>
-
-            {/* Contenido (Foto Simulada) */}
             <Camera className="w-20 h-20 text-slate-700 mb-4" />
             <p className="text-lg font-bold text-slate-300 text-center">
               Foto de Expediente
@@ -684,8 +687,6 @@ export const ConsultationWorkspace = ({
             <p className="text-sm text-slate-500 mt-2 bg-black/40 px-3 py-1 rounded-md">
               {MOCK_PATIENT_PHOTOS[photoViewerIndex]}
             </p>
-
-            {/* Flecha Derecha */}
             <button
               onClick={() =>
                 setPhotoViewerIndex(

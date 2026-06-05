@@ -127,7 +127,7 @@ export const DoctorDashboard = () => {
             />
           )}
           {activeTab === "patients" && (
-            <PatientsTab appointments={appointments} />
+            <PatientsTab />
           )}
 
           {/* Al calendario le pasamos los datos Y la función para iniciar consulta */}
