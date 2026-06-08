@@ -30,8 +30,10 @@ import { type DashboardBlockedSlot } from "../../../../lib/services/blockedSlots
 import {
   combineIsoDateAndTime,
   getAvailableTimeOptions,
+  parseVisualDateToISO,
 } from "../../utils/calendarUtils";
 import { useCalendar } from "../../hooks/useCalendar";
+import { toast } from "react-hot-toast/headless";
 
 const getISODate = () => {
   const d = new Date();
@@ -51,7 +53,9 @@ export const InboxTab = ({
 }: InboxTabProps) => {
   const [appointments, setAppointments] =
     useState<DashboardAppointment[]>(initialAppointments);
-  const { workingHours } = useCalendar();
+
+  // FIX BUG: Extraemos correctamente el workingSchedule (JSON) en lugar del workingHours viejo
+  const { workingSchedule } = useCalendar();
 
   useEffect(() => {
     setAppointments(initialAppointments);
@@ -76,7 +80,9 @@ export const InboxTab = ({
     useState<DashboardAppointment | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
 
+  // =========================================================================
   // MOTOR DINÁMICO DE HUECOS
+  // =========================================================================
   const durationMins = useMemo(() => {
     if (!rescheduleData) return 60;
     return (
@@ -85,15 +91,16 @@ export const InboxTab = ({
   }, [rescheduleData, appointments]);
 
   const availableTimeOptions = useMemo(() => {
-    if (!newDateISO) return [];
+    if (!newDateISO || !workingSchedule) return [];
+    // FIX BUG: Pasamos workingSchedule correctamente a la función de cálculo
     return getAvailableTimeOptions(
       newDateISO,
       appointments,
       blockedSlots,
-      workingHours,
+      workingSchedule,
       durationMins,
     );
-  }, [newDateISO, appointments, blockedSlots, workingHours, durationMins]);
+  }, [newDateISO, appointments, blockedSlots, workingSchedule, durationMins]);
 
   useEffect(() => {
     if (
@@ -104,7 +111,9 @@ export const InboxTab = ({
     }
   }, [availableTimeOptions, newTime]);
 
+  // =========================================================================
   // ACCIONES CON TIPADO STRICTO Y MANEJO DE ERRORES
+  // =========================================================================
   const handleApprove = async (id: string) => {
     try {
       await updateAppointmentStatus(id, "confirmed");
@@ -114,13 +123,13 @@ export const InboxTab = ({
         "Error al aprobar:",
         err instanceof Error ? err.message : err,
       );
-      alert("No se pudo aprobar la cita.");
+      toast.error("No se pudo aprobar la cita.");
     }
   };
 
   const openRescheduleModal = (appointment: DashboardAppointment) => {
     setRescheduleData(appointment);
-    setNewDateISO(getISODate());
+    setNewDateISO(parseVisualDateToISO(appointment.date));
     setNewTime(appointment.time);
   };
 
@@ -136,7 +145,7 @@ export const InboxTab = ({
         "Error al rechazar:",
         err instanceof Error ? err.message : err,
       );
-      alert("No se pudo rechazar la cita.");
+      toast.error("No se pudo rechazar la cita.");
     } finally {
       setIsSubmitting(false);
     }
@@ -146,7 +155,7 @@ export const InboxTab = ({
     if (!cancelModalData || !cancelReason.trim()) return;
     try {
       setIsSubmitting(true);
-      await cancelAppointment(cancelModalData.id, cancelReason); // AHORA PIDE MOTIVO
+      await cancelAppointment(cancelModalData.id, cancelReason);
       await onDataChange();
       setCancelModalData(null);
       setCancelReason("");
@@ -155,7 +164,7 @@ export const InboxTab = ({
         "Error al cancelar:",
         err instanceof Error ? err.message : err,
       );
-      alert("No se pudo cancelar la cita.");
+      toast.error("No se pudo cancelar la cita.");
     } finally {
       setIsSubmitting(false);
     }
@@ -174,12 +183,15 @@ export const InboxTab = ({
         "Error al reprogramar:",
         err instanceof Error ? err.message : err,
       );
-      alert("Hubo un error al reprogramar la cita.");
+      toast.error("Hubo un error al reprogramar la cita.");
     } finally {
       setIsSubmitting(false);
     }
   };
 
+  // =========================================================================
+  // DATOS DERIVADOS Y REGLAS DE NEGOCIO (INBOX FILTERING)
+  // =========================================================================
   const stats = useMemo(
     () => ({
       pending: appointments.filter((a) => a.status === "pending").length,
@@ -191,13 +203,41 @@ export const InboxTab = ({
   );
 
   const filteredData = useMemo(() => {
-    return appointments.filter((app) => {
+    // 1. Calcular la fecha de hace 30 días exactos
+    const thirtyDaysAgo = new Date();
+    thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
+    thirtyDaysAgo.setHours(0, 0, 0, 0);
+
+    const filtered = appointments.filter((app) => {
+      // 2. REGLA DE NEGOCIO: Excluir citas con más de 30 días de antigüedad
+      const isoDate = parseVisualDateToISO(app.date);
+      const appDateObj = new Date(`${isoDate}T00:00:00`);
+
+      const isWithin30Days = appDateObj >= thirtyDaysAgo;
       const matchesSearch =
         app.patientName.toLowerCase().includes(searchTerm.toLowerCase()) ||
         app.service.toLowerCase().includes(searchTerm.toLowerCase());
       const matchesStatus =
         statusFilter === "all" || app.status === statusFilter;
-      return matchesSearch && matchesStatus;
+
+      return isWithin30Days && matchesSearch && matchesStatus;
+    });
+
+    // 3. REGLA DE NEGOCIO: Ordenar inteligentemente
+    return filtered.sort((a, b) => {
+      // Prioridad 1: Estado "Pendiente" siempre hasta arriba
+      if (a.status === "pending" && b.status !== "pending") return -1;
+      if (a.status !== "pending" && b.status === "pending") return 1;
+
+      // Prioridad 2: Orden Cronológico (de la más próxima a la más lejana)
+      const dateA = new Date(
+        combineIsoDateAndTime(parseVisualDateToISO(a.date), a.time),
+      ).getTime();
+      const dateB = new Date(
+        combineIsoDateAndTime(parseVisualDateToISO(b.date), b.time),
+      ).getTime();
+
+      return dateA - dateB;
     });
   }, [appointments, searchTerm, statusFilter]);
 

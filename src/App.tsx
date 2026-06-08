@@ -12,6 +12,7 @@ import { RescheduleFlow } from "./features/appointments/components/RescheduleFlo
 // IMPORTS DE LA DOCTORA
 import { DoctorDashboard } from "./features/doctor/components/DoctorDashboard";
 import { AdminLogin } from "./features/auth/components/AdminLogin";
+import { Toast } from "./components/ui/Toast";
 
 // =========================================
 // 0. COMPONENTE GUARDIÁN (Ruta Protegida)
@@ -28,7 +29,9 @@ function DoctorProtectedRoute({ children }: { children: React.ReactNode }) {
     });
 
     // Escuchamos cambios (cuando inicia o cierra sesión)
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
+    const {
+      data: { subscription },
+    } = supabase.auth.onAuthStateChange((_event, session) => {
       setSession(session);
     });
 
@@ -115,6 +118,7 @@ function AppRoutes() {
 function App() {
   return (
     <BrowserRouter>
+      <Toast />{/* Colocamos el Toast aquí para que esté disponible en todas las rutas */}
       <AppRoutes />
     </BrowserRouter>
   );

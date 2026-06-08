@@ -47,7 +47,7 @@ export const fetchDoctorAppointments = async (): Promise<
     `,
     )
     .order("start_time", { ascending: true })
-    .returns<RawAppointmentData[]>(); // <-- TIPADO ESTRICTO RESTAURADO
+    .returns<RawAppointmentData[]>();
 
   if (error) {
     console.error("Error al obtener las citas:", error.message);
@@ -67,17 +67,17 @@ export const fetchDoctorAppointments = async (): Promise<
       })
       .replace(/\./g, "");
 
-    const formattedTime = startDate.toLocaleTimeString("es-MX", {
-      hour: "2-digit",
-      minute: "2-digit",
-      hour12: true,
-    });
+    const h = startDate.getHours();
+    const m = String(startDate.getMinutes()).padStart(2, "0");
+    const ampm = h >= 12 ? "PM" : "AM";
+    const h12 = h % 12 || 12; // Convierte formato 24h a 12h
+    const cleanTime = `${String(h12).padStart(2, "0")}:${m} ${ampm}`;
 
     const firstName = apt.patients?.first_name || "Paciente";
     const lastName = apt.patients?.last_name || "Desconocido";
     const phone = apt.patients?.phone || "Sin teléfono";
     const serviceName = apt.services?.name || "Servicio eliminado";
-    const duration = apt.services?.duration_mins || 60; // Fallback seguro
+    const duration = apt.services?.duration_mins || 60;
 
     return {
       id: apt.id,
@@ -85,7 +85,7 @@ export const fetchDoctorAppointments = async (): Promise<
       patientName: `${firstName} ${lastName}`,
       service: serviceName,
       date: formattedDate,
-      time: formattedTime.toUpperCase(),
+      time: cleanTime,
       phone: phone,
       isNewPatient: true,
       status: apt.status,
