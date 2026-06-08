@@ -40,6 +40,7 @@ import {
   parseVisualDateToISO,
   getAvailableTimeOptions,
 } from "../../utils/calendarUtils";
+import toast from "react-hot-toast";
 
 const getISODate = () => {
   const d = new Date();
@@ -231,7 +232,7 @@ export const CalendarTab = ({
         "Error al agendar:",
         err instanceof Error ? err.message : err,
       );
-      alert("Error al agendar cita.");
+      toast.error("Error al agendar cita.");
     } finally {
       setIsSubmitting(false);
     }
@@ -251,7 +252,7 @@ export const CalendarTab = ({
         "Error al cancelar:",
         err instanceof Error ? err.message : err,
       );
-      alert("Error al cancelar la cita.");
+      toast.error("Error al cancelar la cita.");
     } finally {
       setIsSubmitting(false);
     }
@@ -274,7 +275,7 @@ export const CalendarTab = ({
         "Error al reprogramar:",
         err instanceof Error ? err.message : err,
       );
-      alert("Error al reprogramar.");
+      toast.error("Error al reprogramar.");
     } finally {
       setIsSubmitting(false);
     }
@@ -309,7 +310,7 @@ export const CalendarTab = ({
         "Error al bloquear:",
         err instanceof Error ? err.message : err,
       );
-      alert("Error al guardar el bloqueo.");
+      toast.error("Error al guardar el bloqueo.");
     } finally {
       setIsSubmitting(false);
     }
@@ -327,7 +328,7 @@ export const CalendarTab = ({
         "Error al desbloquear:",
         err instanceof Error ? err.message : err,
       );
-      alert("Error al desbloquear.");
+      toast.error("Error al desbloquear.");
     } finally {
       setIsSubmitting(false);
     }
@@ -357,7 +358,7 @@ export const CalendarTab = ({
         "Error en config:",
         err instanceof Error ? err.message : err,
       );
-      alert("Error al guardar la configuración.");
+      toast.error("Error al guardar la configuración.");
     } finally {
       setIsSubmitting(false);
     }
@@ -552,9 +553,9 @@ export const CalendarTab = ({
                     variant="outline"
                     onClick={() => setIsCancelingAppt(true)}
                     disabled={isSubmitting}
-                    className="flex-1 py-3.5 rounded-xl cursor-pointer font-bold border-red-200 text-red-500 hover:bg-red-50"
+                    className="flex-1 py-3.5 rounded-xl cursor-pointer font-bold border-red-200 text-red-500 hover:bg-red-50 hover:border-red-300"
                   >
-                    Cancelar
+                    Cancelar Cita
                   </Button>
                   <Button
                     variant="outline"

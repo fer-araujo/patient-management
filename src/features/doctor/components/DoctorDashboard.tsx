@@ -1,6 +1,8 @@
 import { useEffect, useState } from "react";
+import toast from "react-hot-toast";
 import {
   fetchDoctorAppointments,
+  updateAppointmentStatus,
   type DashboardAppointment,
 } from "../../../lib/services/clinicService";
 import { Inbox, CalendarDays, FileText, Loader2 } from "lucide-react";
@@ -15,7 +17,6 @@ import {
 import { CalendarProvider } from "../context/CalendarProvider";
 
 export const DoctorDashboard = () => {
-  // 1. ESTADOS PRINCIPALES DE DATOS Y UI
   const [appointments, setAppointments] = useState<DashboardAppointment[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [activeTab, setActiveTab] = useState<"inbox" | "patients" | "calendar">(
@@ -27,7 +28,6 @@ export const DoctorDashboard = () => {
 
   const loadData = async () => {
     try {
-      // setIsLoading(true); // Opcional
       const [apptsData, blocksData] = await Promise.all([
         fetchDoctorAppointments(),
         fetchBlockedSlots(),
@@ -36,32 +36,40 @@ export const DoctorDashboard = () => {
       setBlockedSlots(blocksData);
     } catch (error) {
       console.error("Error cargando dashboard:", error);
+      toast.error("Error al sincronizar con el servidor.");
     } finally {
       setIsLoading(false);
     }
   };
 
-  // 3. CARGAR DATOS AL MONTAR EL COMPONENTE
   useEffect(() => {
     loadData();
   }, []);
 
-  // 4. Funciones puente para Iniciar y Finalizar Consulta
   const handleStartConsultation = (appointment: DashboardAppointment) => {
     setActiveConsultation(appointment);
   };
 
-  const handleFinishConsultation = (id: string) => {
-    // Pronto cambiaremos este alert por una actualización real en Supabase
-    alert(`¡Consulta ${id} finalizada y guardada!`);
-    setActiveConsultation(null); // Salimos del modo enfoque
+  // FIX FASE A: Lógica real de finalización de cita
+  const handleFinishConsultation = async (id: string) => {
+    try {
+      // 1. Cambiamos el estatus en la BD a "completed"
+      await updateAppointmentStatus(id, "completed");
+
+      // 2. Refrescamos los datos globales para que desaparezca del pending/calendario
+      await loadData();
+
+      // 3. Mostramos Toast de Éxito
+      toast.success("¡Expediente guardado y cita finalizada!");
+
+      // 4. Cerramos el Workspace
+      setActiveConsultation(null);
+    } catch (error) {
+      console.error("Error al completar cita:", error);
+      toast.error("No se pudo marcar la cita como completada.");
+    }
   };
 
-  // =======================================================================
-  // RENDERIZADO CONDICIONAL
-  // =======================================================================
-
-  // A) SI HAY UNA CONSULTA ACTIVA, OCULTAMOS EL DASHBOARD Y MOSTRAMOS EL WORKSPACE
   if (activeConsultation) {
     return (
       <ConsultationWorkspace
@@ -72,7 +80,6 @@ export const DoctorDashboard = () => {
     );
   }
 
-  // B) SI AÚN ESTÁ CARGANDO DATOS DE LA BASE DE DATOS
   if (isLoading) {
     return (
       <div className="min-h-[80vh] flex flex-col items-center justify-center">
@@ -84,15 +91,12 @@ export const DoctorDashboard = () => {
     );
   }
 
-  // C) DASHBOARD PRINCIPAL CARGADO
   return (
     <main className="max-w-360 mx-auto px-4 sm:px-6 lg:px-8 pt-8 xl:pt-10 pb-20">
-      {/* HEADER Y NAVEGACIÓN */}
       <div className="mb-8 border-b border-slate-200 pb-6">
         <h1 className="text-3xl xl:text-4xl font-extrabold text-brand-dark tracking-tight mb-6">
           Centro de Comando
         </h1>
-
         <div className="flex items-center gap-2 sm:gap-4 overflow-x-auto hide-scrollbar">
           <button
             onClick={() => setActiveTab("inbox")}
@@ -115,10 +119,8 @@ export const DoctorDashboard = () => {
         </div>
       </div>
 
-      {/* CONTENIDO DE LAS TABS */}
       <div className="mt-6">
         <CalendarProvider>
-          {/* Le pasamos los datos REALES (appointments) a cada tab */}
           {activeTab === "inbox" && (
             <InboxTab
               appointments={appointments}
@@ -126,11 +128,7 @@ export const DoctorDashboard = () => {
               blockedSlots={blockedSlots}
             />
           )}
-          {activeTab === "patients" && (
-            <PatientsTab />
-          )}
-
-          {/* Al calendario le pasamos los datos Y la función para iniciar consulta */}
+          {activeTab === "patients" && <PatientsTab />}
           {activeTab === "calendar" && (
             <CalendarTab
               appointments={appointments}

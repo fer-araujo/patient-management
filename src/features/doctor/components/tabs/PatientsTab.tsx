@@ -20,6 +20,7 @@ import {
   type DashboardPatient,
 } from "../../../../lib/services/patientService";
 import { ConsultationWorkspace } from "../ConsultationWorkspace";
+import { toast } from "react-hot-toast/headless";
 
 export const PatientsTab = () => {
   const [patients, setPatients] = useState<DashboardPatient[]>([]);
@@ -35,11 +36,8 @@ export const PatientsTab = () => {
   );
   const [patientToArchive, setPatientToArchive] =
     useState<DashboardPatient | null>(null);
-
-  // ESTADO QUE CONTROLA LA NAVEGACIÓN A PANTALLA COMPLETA
   const [selectedPatientProfile, setSelectedPatientProfile] =
     useState<DashboardPatient | null>(null);
-
   const [isSubmitting, setIsSubmitting] = useState(false);
 
   const [isNewPatientModalOpen, setIsNewPatientModalOpen] = useState(false);
@@ -103,7 +101,7 @@ export const PatientsTab = () => {
         "Error al cambiar estatus:",
         err instanceof Error ? err.message : err,
       );
-      alert("Ocurrió un error al cambiar el estatus del paciente.");
+      toast.error("Ocurrió un error al cambiar el estatus del paciente.");
     } finally {
       setIsSubmitting(false);
     }
@@ -137,7 +135,7 @@ export const PatientsTab = () => {
         "Error al crear paciente:",
         err instanceof Error ? err.message : err,
       );
-      alert("No se pudo crear el paciente. Intenta nuevamente.");
+      toast.error("No se pudo crear el paciente. Intenta nuevamente.");
     } finally {
       setIsSubmitting(false);
     }
@@ -222,28 +220,25 @@ export const PatientsTab = () => {
     },
   ];
 
-  // ============================================================================
-  // RENDER PANTALLA COMPLETA DEL EXPEDIENTE (WORKSPACE MODO REVIEW)
-  // ============================================================================
+  // FIX: Sincronización al cerrar el Workspace
   if (selectedPatientProfile) {
     return (
       <ConsultationWorkspace
         patient={selectedPatientProfile}
-        onClose={() => setSelectedPatientProfile(null)}
+        onClose={() => {
+          setSelectedPatientProfile(null);
+          loadData(); // ¡Obligamos a la tabla a refrescar el Post-it y los contadores!
+        }}
       />
     );
   }
 
-  // ============================================================================
-  // RENDER DE LA TABLA NORMAL
-  // ============================================================================
   return (
     <motion.div
       initial={{ opacity: 0, y: 10 }}
       animate={{ opacity: 1, y: 0 }}
       className="space-y-8"
     >
-      {/* KPIs DE PACIENTES */}
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 xl:gap-6">
         <div className="bg-white border border-slate-200 rounded-3xl p-6 shadow-[0_8px_30px_rgb(0,0,0,0.04)] flex items-center gap-4">
           <div className="w-14 h-14 bg-brand-light/40 text-brand-primary rounded-2xl flex items-center justify-center shrink-0">
@@ -286,7 +281,6 @@ export const PatientsTab = () => {
         </div>
       </div>
 
-      {/* CONTROLES */}
       <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4 mb-2">
         <div className="flex bg-slate-100 p-1.5 rounded-xl border border-slate-200 w-full lg:w-auto">
           <button

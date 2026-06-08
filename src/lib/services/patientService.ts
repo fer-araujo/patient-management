@@ -1,75 +1,69 @@
 import { supabase } from "../supabase";
 
-// INTERFAZ ESTRICTA PARA LA RESPUESTA DE SUPABASE (CERO ANY)
+// 1. INTERFAZ ESTRICTA PARA LA RESPUESTA DE LA BD (CERO ANYS)
+interface RawAppointmentData {
+  start_time: string;
+  status: string;
+}
+
 interface RawPatientData {
   id: string;
   first_name: string;
   last_name: string;
   phone: string | null;
+  email: string | null;
   dob: string | null;
   gender: string | null;
   blood_type: string | null;
   allergies: string | null;
   chronic_conditions: string | null;
+  notes: string | null; // El Post-it global
   status: "active" | "blocked" | "archived";
-  appointments: { start_time: string; status: string }[] | null;
+  appointments: RawAppointmentData[] | null;
 }
 
+// 2. INTERFAZ PARA EL FRONTEND
 export interface DashboardPatient {
   id: string;
   name: string;
   phone: string;
+  email?: string;
   dob?: string;
   gender?: string;
-  bloodType?: string;
-  allergies?: string;
-  chronicConditions?: string;
+  notes?: string;
   status: "active" | "blocked" | "archived";
   totalVisits: number;
   lastVisit: string | null;
 }
 
+// 3. CONSULTA DE PACIENTES
 export const fetchPatients = async (): Promise<DashboardPatient[]> => {
   const { data, error } = await supabase
     .from("patients")
     .select(
       `
-      id,
-      first_name,
-      last_name,
-      phone,
-      dob,
-      gender,
-      blood_type,
-      allergies,
-      chronic_conditions,
-      status,
-      appointments (
-        start_time,
-        status
-      )
+      id, first_name, last_name, phone, email, dob, gender, blood_type, allergies, chronic_conditions, notes, status,
+      appointments ( start_time, status )
     `,
     )
-    .order("created_at", { ascending: false })
+    .order("first_name", { ascending: true }) // Orden alfabético para que no brinquen
     .returns<RawPatientData[]>(); // OBLIGAMOS A SUPABASE A RESPETAR LA INTERFAZ
 
   if (error) throw new Error("Error al cargar pacientes.");
   if (!data) return [];
 
+  // Mapeo estrictamente tipado
   return data.map((p) => {
-    // Al estar tipado arriba, 'a' ya sabe que es { start_time: string; status: string }
     const completedApps =
       p.appointments?.filter((a) => a.status === "completed") || [];
 
     let lastVisitStr = null;
     if (completedApps.length > 0) {
-      // Sort sin any
       const sortedApps = completedApps.sort(
         (a, b) =>
           new Date(b.start_time).getTime() - new Date(a.start_time).getTime(),
       );
-      const lastDate = new Date(sortedApps[0].start_time);
-      lastVisitStr = lastDate
+      lastVisitStr = new Date(sortedApps[0].start_time)
         .toLocaleDateString("es-MX", {
           day: "2-digit",
           month: "short",
@@ -82,11 +76,10 @@ export const fetchPatients = async (): Promise<DashboardPatient[]> => {
       id: p.id,
       name: `${p.first_name} ${p.last_name}`,
       phone: p.phone || "Sin teléfono",
+      email: p.email || undefined,
       dob: p.dob || undefined,
       gender: p.gender || undefined,
-      bloodType: p.blood_type || undefined,
-      allergies: p.allergies || undefined,
-      chronicConditions: p.chronic_conditions || undefined,
+      notes: p.notes || undefined, // Cargamos la nota real de la BD
       status: p.status,
       totalVisits: completedApps.length,
       lastVisit: lastVisitStr,
@@ -94,6 +87,31 @@ export const fetchPatients = async (): Promise<DashboardPatient[]> => {
   });
 };
 
+// 4. ACTUALIZAR EL POST-IT
+export const updatePatientNotes = async (
+  id: string,
+  notes: string,
+): Promise<void> => {
+  const { error } = await supabase
+    .from("patients")
+    .update({ notes })
+    .eq("id", id);
+  if (error) throw new Error("Error al actualizar notas del paciente.");
+};
+
+// 5. CAMBIAR ESTATUS (Suspender/Archivar)
+export const updatePatientStatus = async (
+  id: string,
+  status: "active" | "blocked" | "archived",
+): Promise<void> => {
+  const { error } = await supabase
+    .from("patients")
+    .update({ status })
+    .eq("id", id);
+  if (error) throw new Error("Error al actualizar el estado del paciente.");
+};
+
+// 6. CREAR PACIENTE
 export const createPatient = async (
   firstName: string,
   lastName: string,
@@ -106,24 +124,13 @@ export const createPatient = async (
     {
       first_name: firstName,
       last_name: lastName,
-      phone: phone,
-      email: email,
-      dob: dob,
-      gender: gender,
+      phone: phone || null,
+      email: email || null,
+      dob: dob || null,
+      gender: gender || null,
       status: "active",
     },
   ]);
 
   if (error) throw new Error("Error al crear el paciente.");
-};
-
-export const updatePatientStatus = async (
-  id: string,
-  status: "active" | "blocked" | "archived",
-): Promise<void> => {
-  const { error } = await supabase
-    .from("patients")
-    .update({ status })
-    .eq("id", id);
-  if (error) throw new Error("Error al actualizar el estado del paciente.");
 };

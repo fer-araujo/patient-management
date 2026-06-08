@@ -33,6 +33,7 @@ import {
   parseVisualDateToISO,
 } from "../../utils/calendarUtils";
 import { useCalendar } from "../../hooks/useCalendar";
+import { toast } from "react-hot-toast/headless";
 
 const getISODate = () => {
   const d = new Date();
@@ -122,7 +123,7 @@ export const InboxTab = ({
         "Error al aprobar:",
         err instanceof Error ? err.message : err,
       );
-      alert("No se pudo aprobar la cita.");
+      toast.error("No se pudo aprobar la cita.");
     }
   };
 
@@ -144,7 +145,7 @@ export const InboxTab = ({
         "Error al rechazar:",
         err instanceof Error ? err.message : err,
       );
-      alert("No se pudo rechazar la cita.");
+      toast.error("No se pudo rechazar la cita.");
     } finally {
       setIsSubmitting(false);
     }
@@ -163,7 +164,7 @@ export const InboxTab = ({
         "Error al cancelar:",
         err instanceof Error ? err.message : err,
       );
-      alert("No se pudo cancelar la cita.");
+      toast.error("No se pudo cancelar la cita.");
     } finally {
       setIsSubmitting(false);
     }
@@ -182,7 +183,7 @@ export const InboxTab = ({
         "Error al reprogramar:",
         err instanceof Error ? err.message : err,
       );
-      alert("Hubo un error al reprogramar la cita.");
+      toast.error("Hubo un error al reprogramar la cita.");
     } finally {
       setIsSubmitting(false);
     }
