@@ -1,5 +1,6 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { motion } from "framer-motion";
+import toast from "react-hot-toast";
 import {
   ArrowLeft,
   Save,
@@ -18,6 +19,8 @@ import {
   Copy,
   StickyNote,
   Loader2,
+  ZoomIn,
+  ZoomOut,
 } from "lucide-react";
 import { Button } from "../../../components/ui/Button";
 import { Modal } from "../../../components/ui/Modal";
@@ -34,6 +37,11 @@ import {
   type MedicationItem,
   type SoapNote,
 } from "../../../lib/services/soapService";
+import {
+  uploadPatientFile,
+  getPatientFiles,
+  type ClinicalFile,
+} from "../../../lib/services/storageService";
 
 interface ConsultationWorkspaceProps {
   appointment?: DashboardAppointment;
@@ -54,8 +62,6 @@ const WORKSPACE_TABS: {
   { id: "fotos", label: "Galería y Estudios", icon: Camera },
 ];
 
-const MOCK_PATIENT_PHOTOS = ["Rostro_Frente.jpg", "Rostro_Perfil_Derecho.jpg"];
-
 export const ConsultationWorkspace = ({
   appointment,
   patient,
@@ -75,11 +81,8 @@ export const ConsultationWorkspace = ({
   const [isLoadingHistory, setIsLoadingHistory] = useState(true);
   const [history, setHistory] = useState<PatientClinicalHistory | null>(null);
 
-  // Estado para ver una nota histórica en modo revisión
   const [viewingHistoricalNote, setViewingHistoricalNote] =
     useState<SoapNote | null>(null);
-
-  // ESTADO: POST-IT PERMANENTE (patients.notes)
   const [globalNotes, setGlobalNotes] = useState(patient?.notes || "");
 
   const [soapNotes, setSoapNotes] = useState({
@@ -90,7 +93,6 @@ export const ConsultationWorkspace = ({
   });
 
   const [vitalSigns, setVitalSigns] = useState({ peso: "", sys: "", dia: "" });
-
   const [isPrescriptionModalOpen, setIsPrescriptionModalOpen] = useState(false);
   const [newMedication, setNewMedication] = useState<MedicationItem>({
     nombre: "",
@@ -101,41 +103,56 @@ export const ConsultationWorkspace = ({
     MedicationItem[]
   >([]);
 
-  const [localFiles, setLocalFiles] = useState<string[]>([]);
+  const [patientFiles, setPatientFiles] = useState<ClinicalFile[]>([]);
+  const [isUploadingFile, setIsUploadingFile] = useState(false);
   const [photoViewerIndex, setPhotoViewerIndex] = useState<number | null>(null);
 
-  // FIX: Solo un estado de guardado, sin pantalla verde.
   const [isSaving, setIsSaving] = useState(false);
 
+  //ESTADO PARA EL ZOOM
+  const [zoomLevel, setZoomLevel] = useState(100);
+
+  const imageContainerRef = useRef<HTMLDivElement>(null);
+  const [isDragging, setIsDragging] = useState(false);
+  const [dragStart, setDragStart] = useState({ x: 0, y: 0 });
+  const [scrollStart, setScrollStart] = useState({ left: 0, top: 0 });
+
   useEffect(() => {
-    const loadHistory = async () => {
+    const loadWorkspaceData = async () => {
       if (!targetId) return;
       setIsLoadingHistory(true);
       try {
-        const data = await fetchPatientHistory(targetId);
-        setHistory(data);
+        const [historyData, filesData] = await Promise.all([
+          fetchPatientHistory(targetId),
+          getPatientFiles(targetId),
+        ]);
+        setHistory(historyData);
+        setPatientFiles(filesData);
+
+        // AUTO-SELECCIONAR LA ÚLTIMA CITA EN MODO REVISIÓN
+        if (isReviewMode && historyData.notes.length > 0) {
+          setViewingHistoricalNote(historyData.notes[0]);
+        }
       } catch (err: unknown) {
-        console.error(
-          "Error cargando historial:",
-          err instanceof Error ? err.message : err,
-        );
+        console.error("Error cargando datos del workspace:", err);
+        toast.error("Error al cargar el expediente.");
       } finally {
         setIsLoadingHistory(false);
       }
     };
-    loadHistory();
-  }, [targetId]);
+    loadWorkspaceData();
+  }, [targetId, isReviewMode]);
 
-  // FIX: Unificamos el guardado para la flecha de atrás y el botón de finalizar
   const handleFinishClick = async () => {
     setIsSaving(true);
-
     if (isReviewMode) {
       if (patient && globalNotes !== (patient.notes || "")) {
         try {
           await updatePatientNotes(patient.id, globalNotes);
+          toast.success("Recordatorios actualizados.");
         } catch (e) {
           console.error(e);
+          toast.error("Error al guardar recordatorios.");
         }
       }
       onClose();
@@ -173,11 +190,8 @@ export const ConsultationWorkspace = ({
         }
       }
     } catch (err: unknown) {
-      console.error(
-        "Error guardando consulta:",
-        err instanceof Error ? err.message : err,
-      );
-      alert("Hubo un error al guardar la consulta.");
+      console.error("Error guardando consulta:", err);
+      toast.error("Hubo un error al guardar la consulta.");
       setIsSaving(false);
     }
   };
@@ -190,12 +204,60 @@ export const ConsultationWorkspace = ({
     }
   };
 
-  const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
-    if (e.target.files && e.target.files.length > 0) {
-      const newFiles = Array.from(e.target.files).map((file) => file.name);
-      setLocalFiles([...localFiles, ...newFiles]);
+  const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (!e.target.files || e.target.files.length === 0) return;
+
+    setIsUploadingFile(true);
+    const loadingToast = toast.loading("Subiendo archivos...");
+
+    try {
+      const uploadPromises = Array.from(e.target.files).map((file) =>
+        uploadPatientFile(targetId, file),
+      );
+      await Promise.all(uploadPromises);
+
+      const newFilesData = await getPatientFiles(targetId);
+      setPatientFiles(newFilesData);
+
+      toast.success("Archivos subidos correctamente", { id: loadingToast });
+    } catch (err) {
+      console.error(err);
+      toast.error("Error al subir los archivos", { id: loadingToast });
+    } finally {
+      setIsUploadingFile(false);
+      e.target.value = "";
     }
   };
+
+  // Función para cambiar de foto y resetear el zoom
+  const handleChangePhoto = (newIndex: number) => {
+    setPhotoViewerIndex(newIndex);
+    setZoomLevel(100); // Resetea el zoom al cambiar de imagen
+  };
+
+  const handleMouseDown = (e: React.MouseEvent) => {
+    if (!imageContainerRef.current) return;
+    setIsDragging(true);
+    setDragStart({ x: e.pageX, y: e.pageY });
+    setScrollStart({
+      left: imageContainerRef.current.scrollLeft,
+      top: imageContainerRef.current.scrollTop,
+    });
+  };
+
+  const handleMouseMove = (e: React.MouseEvent) => {
+    if (!isDragging || !imageContainerRef.current) return;
+    e.preventDefault();
+    const dx = e.pageX - dragStart.x;
+    const dy = e.pageY - dragStart.y;
+    imageContainerRef.current.scrollLeft = scrollStart.left - dx;
+    imageContainerRef.current.scrollTop = scrollStart.top - dy;
+  };
+
+  const handleMouseUp = () => setIsDragging(false);
+
+  const imageFiles = patientFiles.filter((f) => f.isImage);
+  const docFiles = patientFiles.filter((f) => !f.isImage);
 
   return (
     <motion.div
@@ -204,10 +266,8 @@ export const ConsultationWorkspace = ({
       exit={{ opacity: 0, y: 20 }}
       className="min-h-screen bg-slate-50 pb-10 flex flex-col"
     >
-      {/* TOP BAR */}
       <div className="bg-white border-b border-slate-200 px-6 py-3 sticky top-0 z-40 shadow-sm flex items-center justify-between shrink-0">
         <div className="flex items-center gap-4">
-          {/* FIX: La flecha ahora dispara el guardado automático */}
           <button
             onClick={handleFinishClick}
             disabled={isSaving}
@@ -252,9 +312,7 @@ export const ConsultationWorkspace = ({
         </div>
       </div>
 
-      {/* WORKSPACE GRID */}
       <div className="max-w-360 mx-auto px-4 sm:px-6 pt-6 grid grid-cols-1 lg:grid-cols-12 gap-6 flex-1 w-full">
-        {/* COLUMNA IZQUIERDA */}
         <div className="lg:col-span-3 space-y-4">
           <div className="bg-white rounded-2xl p-5 border border-slate-200 shadow-sm text-center relative overflow-hidden">
             <div className="absolute top-0 left-0 w-full h-12 bg-brand-light/30"></div>
@@ -264,33 +322,33 @@ export const ConsultationWorkspace = ({
             <h3 className="text-lg font-extrabold text-brand-dark mt-2 leading-tight">
               {targetName}
             </h3>
-            <p className="text-xs font-medium text-brand-gray mt-0.5">
+            <p className="text-sm font-medium text-brand-gray mt-0.5">
               {targetPhone}
             </p>
           </div>
 
           <div className="bg-amber-50 rounded-2xl p-4 border border-amber-200 shadow-sm relative overflow-hidden">
             <div className="absolute top-0 left-0 w-1 h-full bg-amber-400"></div>
-            <h4 className="text-[11px] font-black text-amber-800 uppercase tracking-widest flex items-center gap-1.5 mb-2">
-              <StickyNote className="w-3.5 h-3.5" /> Recordatorios Internos
+            <h4 className="text-xs font-black text-amber-800 uppercase tracking-widest flex items-center gap-1.5 mb-2">
+              <StickyNote className="w-4 h-4" /> Recordatorios Internos
             </h4>
             <textarea
               value={globalNotes}
               onChange={(e) => setGlobalNotes(e.target.value)}
               placeholder="Anota detalles administrativos aquí..."
-              className="w-full bg-amber-50/50 border-none text-sm font-medium text-amber-900 focus:outline-none focus:ring-0 min-h-30 max-h-100 overflow-y-auto resize-y placeholder:text-amber-700/50 [&::-webkit-scrollbar]:w-1.5 [&::-webkit-scrollbar-track]:bg-transparent [&::-webkit-scrollbar-thumb]:bg-amber-300 hover:[&::-webkit-scrollbar-thumb]:bg-amber-400 [&::-webkit-scrollbar-thumb]:rounded-full transition-colors"
+              className="w-full bg-amber-50/50 border-none text-base font-medium text-amber-900 focus:outline-none focus:ring-0 min-h-30 max-h-100 overflow-y-auto resize-y placeholder:text-amber-700/50 [&::-webkit-scrollbar]:w-1.5 [&::-webkit-scrollbar-track]:bg-transparent [&::-webkit-scrollbar-thumb]:bg-amber-300 hover:[&::-webkit-scrollbar-thumb]:bg-amber-400 [&::-webkit-scrollbar-thumb]:rounded-full transition-colors"
             />
           </div>
 
           {!isReviewMode && (
             <div className="bg-white rounded-2xl p-5 border border-slate-200 shadow-sm">
-              <h4 className="text-[11px] font-black text-brand-gray uppercase tracking-widest flex items-center gap-1.5 mb-3">
-                <Activity className="w-3.5 h-3.5 text-brand-primary" /> Signos
+              <h4 className="text-xs font-black text-brand-gray uppercase tracking-widest flex items-center gap-1.5 mb-3">
+                <Activity className="w-4 h-4 text-brand-primary" /> Signos
                 Vitales
               </h4>
               <div className="grid grid-cols-2 gap-2">
                 <div className="bg-slate-50 p-2 rounded-lg border border-slate-100">
-                  <p className="text-[9px] font-bold text-brand-gray uppercase">
+                  <p className="text-[10px] font-bold text-brand-gray uppercase">
                     Peso (kg)
                   </p>
                   <input
@@ -303,14 +361,14 @@ export const ConsultationWorkspace = ({
                         peso: e.target.value.replace(/[^\d.]/g, "").slice(0, 5),
                       })
                     }
-                    className="w-full bg-transparent text-sm font-bold text-brand-dark focus:outline-none mt-0.5"
+                    className="w-full bg-transparent text-base font-bold text-brand-dark focus:outline-none mt-0.5"
                   />
                 </div>
                 <div className="bg-slate-50 p-2 rounded-lg border border-slate-100">
-                  <p className="text-[9px] font-bold text-brand-gray uppercase">
+                  <p className="text-[10px] font-bold text-brand-gray uppercase">
                     Presión
                   </p>
-                  <div className="flex items-center gap-1 mt-0.5 text-sm font-bold text-brand-dark">
+                  <div className="flex items-center gap-1 mt-0.5 text-base font-bold text-brand-dark">
                     <input
                       type="text"
                       placeholder="120"
@@ -321,7 +379,7 @@ export const ConsultationWorkspace = ({
                           sys: e.target.value.replace(/\D/g, "").slice(0, 3),
                         })
                       }
-                      className="w-7 bg-transparent text-center focus:outline-none focus:bg-white focus:ring-1 focus:ring-brand-primary/30 rounded"
+                      className="w-8 bg-transparent text-center focus:outline-none focus:bg-white focus:ring-1 focus:ring-brand-primary/30 rounded"
                     />
                     <span className="text-slate-400">/</span>
                     <input
@@ -334,7 +392,7 @@ export const ConsultationWorkspace = ({
                           dia: e.target.value.replace(/\D/g, "").slice(0, 3),
                         })
                       }
-                      className="w-7 bg-transparent text-center focus:outline-none focus:bg-white focus:ring-1 focus:ring-brand-primary/30 rounded"
+                      className="w-8 bg-transparent text-center focus:outline-none focus:bg-white focus:ring-1 focus:ring-brand-primary/30 rounded"
                     />
                   </div>
                 </div>
@@ -343,16 +401,16 @@ export const ConsultationWorkspace = ({
           )}
 
           <div className="bg-white rounded-2xl p-5 border border-slate-200 shadow-sm">
-            <h4 className="text-[11px] font-black text-brand-gray uppercase tracking-widest flex items-center gap-1.5 mb-3">
-              <Clock className="w-3.5 h-3.5 text-brand-primary" /> Historial de
+            <h4 className="text-xs font-black text-brand-gray uppercase tracking-widest flex items-center gap-1.5 mb-3">
+              <Clock className="w-4 h-4 text-brand-primary" /> Historial de
               Visitas
             </h4>
             {isLoadingHistory ? (
-              <p className="text-xs text-brand-gray italic text-center py-2">
-                Cargando...
-              </p>
+              <div className="flex justify-center py-4">
+                <Loader2 className="w-6 h-6 animate-spin text-brand-primary opacity-50" />
+              </div>
             ) : history?.notes && history.notes.length > 0 ? (
-              <div className="space-y-3">
+              <div className="space-y-4 mt-2">
                 {history.notes.map((note, idx) => (
                   <div
                     key={idx}
@@ -362,21 +420,21 @@ export const ConsultationWorkspace = ({
                         setActiveTab("notas");
                       }
                     }}
-                    className={`flex items-start gap-2 relative group ${isReviewMode ? "cursor-pointer" : "cursor-default"}`}
+                    className={`flex items-start gap-3 relative group ${isReviewMode ? "cursor-pointer" : "cursor-default"}`}
                   >
                     <div
-                      className={`w-1.5 h-1.5 rounded-full mt-1.5 shrink-0 relative z-10 transition-all ${viewingHistoricalNote?.id === note.id ? "bg-brand-primary scale-150" : "bg-slate-300 group-hover:bg-brand-primary"}`}
+                      className={`w-2 h-2 rounded-full mt-1.5 shrink-0 relative z-10 transition-all ${viewingHistoricalNote?.id === note.id ? "bg-brand-primary scale-150" : "bg-slate-300 group-hover:bg-brand-primary"}`}
                     ></div>
                     {idx !== history.notes.length - 1 && (
-                      <div className="absolute left-0.75 top-2.5 -bottom-3.75 w-px bg-slate-200"></div>
+                      <div className="absolute left-0.75 top-3.5 -bottom-5 w-0.5 bg-slate-100"></div>
                     )}
                     <div>
                       <p
-                        className={`text-xs font-bold transition-colors line-clamp-1 ${viewingHistoricalNote?.id === note.id ? "text-brand-primary" : "text-brand-dark group-hover:text-brand-primary"}`}
+                        className={`text-sm font-bold transition-colors line-clamp-1 ${viewingHistoricalNote?.id === note.id ? "text-brand-primary" : "text-brand-dark group-hover:text-brand-primary"}`}
                       >
                         {note.analysis || "Visita de rutina"}
                       </p>
-                      <p className="text-[10px] font-medium text-brand-gray">
+                      <p className="text-xs font-medium text-brand-gray mt-0.5">
                         {new Date(note.createdAt).toLocaleDateString("es-MX")}
                       </p>
                     </div>
@@ -384,14 +442,13 @@ export const ConsultationWorkspace = ({
                 ))}
               </div>
             ) : (
-              <p className="text-xs text-brand-gray italic text-center py-2">
+              <p className="text-sm text-brand-gray italic text-center py-2">
                 No hay visitas previas.
               </p>
             )}
           </div>
         </div>
 
-        {/* COLUMNA DERECHA (Espacio de Trabajo) */}
         <div className="lg:col-span-9 bg-white border border-slate-200 rounded-3xl shadow-sm overflow-hidden flex flex-col h-[calc(100vh-120px)]">
           <div className="flex border-b border-slate-200 bg-slate-50/80 px-2 pt-2 overflow-x-auto hide-scrollbar shrink-0">
             {WORKSPACE_TABS.map((tab) => {
@@ -415,7 +472,7 @@ export const ConsultationWorkspace = ({
                   viewingHistoricalNote ? (
                     <>
                       <div className="bg-brand-light/10 border border-brand-primary/20 rounded-xl p-4 mb-2 flex items-center justify-between">
-                        <h3 className="font-bold text-brand-dark text-sm">
+                        <h3 className="font-bold text-brand-dark text-base">
                           Mostrando expediente del:{" "}
                           {new Date(
                             viewingHistoricalNote.createdAt,
@@ -426,13 +483,13 @@ export const ConsultationWorkspace = ({
                             day: "numeric",
                           })}
                         </h3>
-                        <span className="text-[10px] font-bold bg-brand-light/30 text-brand-primary px-2 py-1 rounded uppercase tracking-wider">
+                        <span className="text-xs font-bold bg-brand-light/30 text-brand-primary px-3 py-1.5 rounded uppercase tracking-wider">
                           Solo Lectura
                         </span>
                       </div>
                       <div className="grid grid-cols-1 md:grid-cols-2 gap-5 flex-1 min-h-62.5">
                         <div className="flex flex-col h-full">
-                          <label className="text-brand-dark font-bold text-xs uppercase tracking-wider block">
+                          <label className="text-brand-dark font-bold text-sm uppercase tracking-wider block">
                             S - Motivo y Síntomas
                           </label>
                           <textarea
@@ -444,7 +501,7 @@ export const ConsultationWorkspace = ({
                           />
                         </div>
                         <div className="flex flex-col h-full">
-                          <label className="text-brand-dark font-bold text-xs uppercase tracking-wider block">
+                          <label className="text-brand-dark font-bold text-sm uppercase tracking-wider block">
                             O - Exploración Física
                           </label>
                           <textarea
@@ -458,7 +515,7 @@ export const ConsultationWorkspace = ({
                       </div>
                       <div className="grid grid-cols-1 md:grid-cols-2 gap-5 flex-1 min-h-62.5">
                         <div className="flex flex-col h-full">
-                          <label className="text-brand-dark font-bold text-xs uppercase tracking-wider block">
+                          <label className="text-brand-dark font-bold text-sm uppercase tracking-wider block">
                             A - Diagnóstico (Análisis)
                           </label>
                           <textarea
@@ -470,7 +527,7 @@ export const ConsultationWorkspace = ({
                           />
                         </div>
                         <div className="flex flex-col h-full">
-                          <label className="text-brand-dark font-bold text-xs uppercase tracking-wider block">
+                          <label className="text-brand-dark font-bold text-sm uppercase tracking-wider block">
                             P - Tratamiento (Plan)
                           </label>
                           <textarea
@@ -483,17 +540,15 @@ export const ConsultationWorkspace = ({
                     </>
                   ) : (
                     <div className="text-center py-20 bg-slate-50 rounded-2xl border border-dashed border-slate-200 my-auto">
-                      <FileText className="w-12 h-12 text-slate-300 mx-auto mb-3" />
-                      <h3 className="text-lg font-bold text-brand-dark">
+                      <FileText className="w-16 h-16 text-slate-300 mx-auto mb-4" />
+                      <h3 className="text-xl font-bold text-brand-dark">
                         Modo de Solo Lectura
                       </h3>
-                      <p className="text-sm text-brand-gray max-w-md mx-auto mt-2">
-                        Haz clic en alguna de las fechas del{" "}
-                        <strong className="text-brand-dark">
-                          Historial de Visitas
-                        </strong>{" "}
-                        en el panel izquierdo para leer las notas clínicas de
-                        ese día.
+                      <p className="text-base text-brand-gray max-w-md mx-auto mt-2">
+                        Cuando se registren notas clínicas en futuras citas,
+                        aparecerán aquí. Haz clic en las fechas del{" "}
+                        <strong>Historial de Visitas</strong> en el panel
+                        izquierdo para navegar entre ellas.
                       </p>
                     </div>
                   )
@@ -501,7 +556,7 @@ export const ConsultationWorkspace = ({
                   <>
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-5 flex-1 min-h-62.5">
                       <div className="flex flex-col h-full">
-                        <label className="text-brand-dark font-bold text-xs uppercase tracking-wider block">
+                        <label className="text-brand-dark font-bold text-sm uppercase tracking-wider block">
                           S - Motivo y Síntomas
                         </label>
                         <textarea
@@ -517,7 +572,7 @@ export const ConsultationWorkspace = ({
                         />
                       </div>
                       <div className="flex flex-col h-full">
-                        <label className="text-brand-dark font-bold text-xs uppercase tracking-wider block">
+                        <label className="text-brand-dark font-bold text-sm uppercase tracking-wider block">
                           O - Exploración Física
                         </label>
                         <textarea
@@ -535,7 +590,7 @@ export const ConsultationWorkspace = ({
                     </div>
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-5 flex-1 min-h-62.5">
                       <div className="flex flex-col h-full">
-                        <label className="text-brand-dark font-bold text-xs uppercase tracking-wider block">
+                        <label className="text-brand-dark font-bold text-sm uppercase tracking-wider block">
                           A - Diagnóstico (Análisis)
                         </label>
                         <textarea
@@ -551,7 +606,7 @@ export const ConsultationWorkspace = ({
                         />
                       </div>
                       <div className="flex flex-col h-full">
-                        <label className="text-brand-dark font-bold text-xs uppercase tracking-wider block">
+                        <label className="text-brand-dark font-bold text-sm uppercase tracking-wider block">
                           P - Tratamiento (Plan)
                         </label>
                         <textarea
@@ -573,42 +628,42 @@ export const ConsultationWorkspace = ({
               <div className="space-y-6">
                 <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-4 border-b border-slate-100">
                   <div>
-                    <h3 className="text-base font-bold text-brand-dark">
+                    <h3 className="text-lg font-bold text-brand-dark">
                       Registro de Recetas
                     </h3>
-                    <p className="text-xs text-brand-gray mt-0.5">
+                    <p className="text-sm text-brand-gray mt-0.5">
                       Medicamentos indicados al paciente.
                     </p>
                   </div>
                   {!isReviewMode && (
                     <Button
                       onClick={() => setIsPrescriptionModalOpen(true)}
-                      className="w-full sm:w-auto px-4 py-2.5 text-sm rounded-lg cursor-pointer whitespace-nowrap shrink-0 flex items-center gap-2"
+                      className="w-full sm:w-auto px-5 py-3 text-sm rounded-lg cursor-pointer whitespace-nowrap shrink-0 flex items-center gap-2"
                     >
-                      <Plus className="w-4 h-4" /> Nueva Indicación
+                      <Plus className="w-5 h-5" /> Nueva Indicación
                     </Button>
                   )}
                 </div>
 
                 {localPrescriptions.length > 0 ||
                 (history?.prescriptions && history.prescriptions.length > 0) ? (
-                  <div className="space-y-3">
+                  <div className="space-y-4">
                     {localPrescriptions.map((med, idx) => (
                       <div
                         key={`local-${idx}`}
-                        className="bg-brand-light/10 border border-brand-primary/30 p-4 rounded-xl flex items-start justify-between"
+                        className="bg-brand-light/10 border border-brand-primary/30 p-5 rounded-xl flex items-start justify-between"
                       >
                         <div>
-                          <p className="text-sm font-bold text-brand-dark">
+                          <p className="text-base font-bold text-brand-dark">
                             {med.nombre}{" "}
                             <span className="text-brand-primary font-medium">
                               ({med.dosis})
                             </span>
                           </p>
-                          <p className="text-sm text-brand-gray mt-1">
+                          <p className="text-base text-brand-gray mt-1">
                             {med.indicaciones}
                           </p>
-                          <span className="text-[10px] font-bold text-brand-primary mt-2 block">
+                          <span className="text-xs font-bold text-brand-primary mt-2 block">
                             Emitida: HOY
                           </span>
                         </div>
@@ -618,19 +673,19 @@ export const ConsultationWorkspace = ({
                       pres.medications.map((med, mIdx) => (
                         <div
                           key={`hist-${pres.id}-${mIdx}`}
-                          className="bg-slate-50 border border-slate-200 p-4 rounded-xl flex items-start justify-between group hover:border-brand-primary/50 transition-colors cursor-pointer"
+                          className="bg-slate-50 border border-slate-200 p-5 rounded-xl flex items-start justify-between group transition-colors"
                         >
                           <div className="flex-1 pr-4">
-                            <p className="text-sm font-bold text-brand-dark">
+                            <p className="text-base font-bold text-brand-dark">
                               {med.nombre}{" "}
                               <span className="text-brand-gray font-medium">
                                 ({med.dosis})
                               </span>
                             </p>
-                            <p className="text-xs text-brand-gray mt-1 line-clamp-1">
+                            <p className="text-sm text-brand-gray mt-1 line-clamp-1">
                               {med.indicaciones}
                             </p>
-                            <span className="text-[10px] font-bold text-slate-400 mt-2 block">
+                            <span className="text-xs font-bold text-slate-400 mt-2 block">
                               Emitida:{" "}
                               {new Date(pres.createdAt).toLocaleDateString(
                                 "es-MX",
@@ -638,8 +693,8 @@ export const ConsultationWorkspace = ({
                             </span>
                           </div>
                           {!isReviewMode && (
-                            <button className="opacity-0 group-hover:opacity-100 transition-opacity text-[10px] font-bold py-1.5 px-2.5 rounded-lg border border-slate-200 bg-white text-slate-600 hover:bg-slate-100 hover:text-brand-dark flex items-center gap-1.5 shrink-0 cursor-pointer shadow-sm">
-                              <Copy className="w-3 h-3" /> Copiar
+                            <button className="opacity-0 group-hover:opacity-100 transition-opacity text-xs font-bold py-2 px-3 rounded-lg border border-slate-200 bg-white text-slate-600 hover:bg-slate-100 hover:text-brand-dark flex items-center gap-1.5 shrink-0 cursor-pointer shadow-sm">
+                              <Copy className="w-4 h-4" /> Copiar
                             </button>
                           )}
                         </div>
@@ -647,9 +702,9 @@ export const ConsultationWorkspace = ({
                     )}
                   </div>
                 ) : (
-                  <div className="text-center py-10 bg-slate-50 rounded-xl border border-dashed border-slate-200">
-                    <Pill className="w-8 h-8 text-slate-300 mx-auto mb-2" />
-                    <p className="text-sm font-medium text-brand-gray">
+                  <div className="text-center py-12 bg-slate-50 rounded-xl border border-dashed border-slate-200">
+                    <Pill className="w-10 h-10 text-slate-300 mx-auto mb-3" />
+                    <p className="text-base font-medium text-brand-gray">
                       No hay recetas previas en el historial.
                     </p>
                   </div>
@@ -659,87 +714,126 @@ export const ConsultationWorkspace = ({
 
             {activeTab === "fotos" && (
               <div className="space-y-8">
-                {!isReviewMode && (
-                  <label className="border-2 border-dashed border-brand-primary/30 rounded-2xl p-8 flex flex-col items-center justify-center bg-brand-light/5 hover:bg-brand-light/10 transition-colors cursor-pointer group">
-                    <input
-                      type="file"
-                      multiple
-                      accept="image/*,.pdf"
-                      className="hidden"
-                      onChange={handleFileUpload}
-                    />
-                    <div className="w-12 h-12 bg-white rounded-full flex items-center justify-center text-brand-primary shadow-sm mb-3 group-hover:scale-110 transition-transform">
+                <label
+                  className={`border-2 border-dashed rounded-2xl p-8 flex flex-col items-center justify-center transition-colors cursor-pointer group ${isUploadingFile ? "border-slate-300 bg-slate-50 pointer-events-none opacity-60" : "border-brand-primary/30 bg-brand-light/5 hover:bg-brand-light/10"}`}
+                >
+                  <input
+                    type="file"
+                    multiple
+                    accept="image/*,.pdf"
+                    className="hidden"
+                    onChange={handleFileUpload}
+                    disabled={isUploadingFile}
+                  />
+                  <div className="w-14 h-14 bg-white rounded-full flex items-center justify-center text-brand-primary shadow-sm mb-3 group-hover:scale-110 transition-transform">
+                    {isUploadingFile ? (
+                      <Loader2 className="w-6 h-6 animate-spin" />
+                    ) : (
                       <UploadCloud className="w-6 h-6" />
-                    </div>
-                    <p className="text-sm font-bold text-brand-dark">
-                      Sube fotos o estudios a esta consulta
-                    </p>
-                    <p className="text-xs text-brand-gray mt-1">
-                      Soporta JPG, PNG, PDF (Max 10MB)
-                    </p>
-                  </label>
-                )}
-                <div className="space-y-6">
-                  {localFiles.length > 0 && (
-                    <div>
-                      <h4 className="text-[11px] font-bold text-brand-gray uppercase tracking-widest mb-3 pb-2 border-b border-slate-100">
-                        Hoy
-                      </h4>
-                      <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
-                        {localFiles.map((filename, i) => (
-                          <div
-                            key={i}
-                            className="aspect-square bg-slate-100 rounded-xl border border-slate-200 flex flex-col items-center justify-center p-2 text-center"
-                          >
-                            <FileDown className="w-8 h-8 text-brand-primary mb-2" />
-                            <span className="text-xs font-bold text-slate-600 truncate w-full">
-                              {filename}
-                            </span>
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-                  )}
-                  <div>
-                    <h4 className="text-[11px] font-bold text-brand-gray uppercase tracking-widest mb-3 pb-2 border-b border-slate-100 flex items-center gap-2">
-                      Historial Visual
-                    </h4>
-                    <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
-                      {MOCK_PATIENT_PHOTOS.map((photo, index) => (
-                        <div
-                          key={index}
-                          onClick={() => setPhotoViewerIndex(index)}
-                          className="aspect-square bg-slate-100 rounded-xl border border-slate-200 overflow-hidden relative group cursor-pointer flex flex-col items-center justify-center"
-                        >
-                          <Camera className="w-8 h-8 text-slate-300" />
-                          <div className="absolute inset-0 bg-brand-dark/0 group-hover:bg-brand-dark/20 transition-colors flex items-center justify-center">
-                            <Search className="w-6 h-6 text-white opacity-0 group-hover:opacity-100 transition-opacity" />
-                          </div>
-                          <span className="absolute bottom-2 left-2 text-[10px] font-bold text-white bg-black/50 px-1.5 rounded truncate max-w-[90%]">
-                            {photo}
-                          </span>
-                        </div>
-                      ))}
-                    </div>
+                    )}
                   </div>
-                </div>
+                  <p className="text-base font-bold text-brand-dark">
+                    {isUploadingFile
+                      ? "Subiendo archivos..."
+                      : "Sube fotos o estudios a este expediente"}
+                  </p>
+                  <p className="text-sm text-brand-gray mt-1">
+                    Soporta JPG, PNG, PDF
+                  </p>
+                </label>
+
+                {isLoadingHistory ? (
+                  <div className="flex justify-center py-10">
+                    <Loader2 className="w-8 h-8 animate-spin text-brand-primary opacity-50" />
+                  </div>
+                ) : (
+                  <div className="space-y-6">
+                    {docFiles.length > 0 && (
+                      <div>
+                        <h4 className="text-xs font-bold text-brand-gray uppercase tracking-widest mb-3 pb-2 border-b border-slate-100 flex items-center gap-2">
+                          <FileText className="w-4 h-4" /> Estudios y Documentos
+                        </h4>
+                        <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
+                          {docFiles.map((file, i) => (
+                            <a
+                              key={i}
+                              href={file.url}
+                              target="_blank"
+                              rel="norenoopener noreferrer"
+                              className="aspect-square bg-slate-100 rounded-xl border border-slate-200 flex flex-col items-center justify-center p-3 text-center hover:border-brand-primary hover:shadow-md transition-all cursor-pointer group"
+                            >
+                              <FileDown className="w-10 h-10 text-brand-primary mb-3 group-hover:-translate-y-1 transition-transform" />
+                              <span
+                                className="text-xs font-bold text-slate-600 w-full line-clamp-2"
+                                title={file.originalName}
+                              >
+                                {file.originalName}
+                              </span>
+                              <span className="text-[10px] text-slate-400 mt-1">
+                                {new Date(file.createdAt).toLocaleDateString(
+                                  "es-MX",
+                                )}
+                              </span>
+                            </a>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+
+                    {imageFiles.length > 0 && (
+                      <div>
+                        <h4 className="text-xs font-bold text-brand-gray uppercase tracking-widest mb-3 pb-2 border-b border-slate-100 flex items-center gap-2">
+                          <Camera className="w-4 h-4" /> Historial Fotográfico
+                        </h4>
+                        <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
+                          {imageFiles.map((file, index) => (
+                            <div
+                              key={index}
+                              onClick={() => setPhotoViewerIndex(index)}
+                              className="aspect-square bg-slate-100 rounded-xl border border-slate-200 overflow-hidden relative group cursor-pointer flex flex-col items-center justify-center"
+                            >
+                              <img
+                                src={file.url}
+                                alt={file.originalName}
+                                className="w-full h-full object-cover"
+                              />
+                              <div className="absolute inset-0 bg-brand-dark/0 group-hover:bg-brand-dark/40 transition-colors flex items-center justify-center">
+                                <Search className="w-8 h-8 text-white opacity-0 group-hover:opacity-100 transition-opacity scale-75 group-hover:scale-100" />
+                              </div>
+                              <span className="absolute bottom-2 left-2 right-2 text-[10px] font-bold text-white bg-black/60 px-2 py-1 rounded truncate backdrop-blur-sm text-center">
+                                {new Date(file.createdAt).toLocaleDateString(
+                                  "es-MX",
+                                )}
+                              </span>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+
+                    {docFiles.length === 0 && imageFiles.length === 0 && (
+                      <p className="text-sm text-brand-gray italic text-center py-6">
+                        No hay archivos en este expediente.
+                      </p>
+                    )}
+                  </div>
+                )}
               </div>
             )}
           </div>
         </div>
       </div>
 
-      {/* MODALES */}
       <Modal
         isOpen={isPrescriptionModalOpen}
         onClose={() => setIsPrescriptionModalOpen(false)}
         title="Nueva Indicación Médica"
-        icon={<Pill className="w-5 h-5 text-brand-primary" />}
+        icon={<Pill className="w-6 h-6 text-brand-primary" />}
         hideFooter={true}
       >
-        <div className="space-y-4 pb-2">
+        <div className="space-y-5 pb-2">
           <div>
-            <label className="text-brand-dark font-bold text-sm mb-1 block">
+            <label className="text-brand-dark font-bold text-base mb-2 block">
               Nombre del Medicamento
             </label>
             <input
@@ -749,11 +843,11 @@ export const ConsultationWorkspace = ({
                 setNewMedication({ ...newMedication, nombre: e.target.value })
               }
               placeholder="Ej. Ibuprofeno..."
-              className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl text-sm focus:border-brand-primary outline-none"
+              className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl text-base focus:border-brand-primary outline-none"
             />
           </div>
           <div>
-            <label className="text-brand-dark font-bold text-sm mb-1 block">
+            <label className="text-brand-dark font-bold text-base mb-2 block">
               Dosis y Presentación
             </label>
             <input
@@ -763,11 +857,11 @@ export const ConsultationWorkspace = ({
                 setNewMedication({ ...newMedication, dosis: e.target.value })
               }
               placeholder="Ej. 400mg, 1 Tableta..."
-              className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl text-sm focus:border-brand-primary outline-none"
+              className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl text-base focus:border-brand-primary outline-none"
             />
           </div>
           <div>
-            <label className="text-brand-dark font-bold text-sm mb-1 block">
+            <label className="text-brand-dark font-bold text-base mb-2 block">
               Indicaciones / Frecuencia
             </label>
             <textarea
@@ -779,21 +873,21 @@ export const ConsultationWorkspace = ({
                 })
               }
               placeholder="Ej. Tomar 1 tableta cada 8 horas..."
-              className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl text-sm focus:border-brand-primary outline-none resize-none h-24"
+              className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl text-base focus:border-brand-primary outline-none resize-none h-32"
             />
           </div>
           <div className="pt-4 border-t border-slate-100 flex gap-3 mt-4">
             <Button
               variant="outline"
               onClick={() => setIsPrescriptionModalOpen(false)}
-              className="flex-1 py-3 rounded-xl cursor-pointer"
+              className="flex-1 py-4 rounded-xl cursor-pointer text-base"
             >
               Cancelar
             </Button>
             <Button
               onClick={handleAddPrescription}
               disabled={!newMedication.nombre}
-              className="flex-1 py-3 rounded-xl bg-brand-primary hover:bg-brand-dark text-white border-none shadow-md disabled:opacity-50 cursor-pointer"
+              className="flex-1 py-4 rounded-xl bg-brand-primary hover:bg-brand-dark text-white border-none shadow-md disabled:opacity-50 cursor-pointer text-base font-bold"
             >
               Añadir a la Receta
             </Button>
@@ -803,42 +897,114 @@ export const ConsultationWorkspace = ({
 
       <Modal
         isOpen={photoViewerIndex !== null}
-        onClose={() => setPhotoViewerIndex(null)}
-        title="Visor de Imagen"
+        onClose={() => {
+          setPhotoViewerIndex(null);
+          setZoomLevel(100); // Reseteamos el zoom al cerrar
+        }}
+        title="Visor de Imagen y Estudios"
         hideFooter={true}
+        maxWidth="max-w-5xl" // <- El ancho extra que definimos en tu Modal.tsx
       >
-        {photoViewerIndex !== null && (
-          <div className="flex flex-col items-center justify-center bg-slate-900 rounded-2xl min-h-100 border border-slate-800 relative overflow-hidden p-8 -mt-2 -mx-2 -mb-4">
+        {photoViewerIndex !== null && imageFiles[photoViewerIndex] && (
+          <div className="flex flex-col bg-white rounded-2xl min-h-[60vh] border border-slate-200 relative p-0 -mt-2 -mx-2 -mb-4 overflow-hidden shadow-inner">
+            {/* BARRA DE HERRAMIENTAS FLOTANTE (ZOOM) */}
+            <div className="absolute top-4 right-4 z-20 flex bg-white/90 backdrop-blur-md rounded-xl shadow-md border border-slate-200 p-1">
+              <button
+                onClick={() => setZoomLevel((prev) => Math.max(50, prev - 25))}
+                className="p-2 hover:bg-slate-100 text-brand-dark rounded-lg transition-colors cursor-pointer"
+                title="Alejar"
+              >
+                <ZoomOut className="w-5 h-5" />
+              </button>
+              <button
+                onClick={() => setZoomLevel(100)}
+                className="px-3 hover:bg-slate-100 text-brand-dark font-bold text-xs rounded-lg transition-colors cursor-pointer w-14 text-center"
+                title="Restaurar tamaño"
+              >
+                {zoomLevel}%
+              </button>
+              <button
+                onClick={() => setZoomLevel((prev) => Math.min(300, prev + 25))}
+                className="p-2 hover:bg-slate-100 text-brand-dark rounded-lg transition-colors cursor-pointer"
+                title="Acercar"
+              >
+                <ZoomIn className="w-5 h-5" />
+              </button>
+            </div>
+
+            {/* BOTÓN ANTERIOR */}
             <button
               onClick={() =>
-                setPhotoViewerIndex(
-                  (photoViewerIndex - 1 + MOCK_PATIENT_PHOTOS.length) %
-                    MOCK_PATIENT_PHOTOS.length,
+                handleChangePhoto(
+                  (photoViewerIndex - 1 + imageFiles.length) %
+                    imageFiles.length,
                 )
               }
-              className="absolute left-4 p-2 bg-white/10 hover:bg-white/20 text-white rounded-full backdrop-blur-md transition-colors cursor-pointer"
+              className="absolute left-4 top-1/2 -translate-y-1/2 p-3 bg-white/80 hover:bg-white text-brand-dark shadow-lg border border-slate-200 rounded-full transition-all cursor-pointer z-20"
             >
               <ChevronLeft className="w-6 h-6" />
             </button>
-            <Camera className="w-20 h-20 text-slate-700 mb-4" />
-            <p className="text-lg font-bold text-slate-300 text-center">
-              Foto de Expediente
-              <br />
-              {photoViewerIndex + 1} de {MOCK_PATIENT_PHOTOS.length}
-            </p>
-            <p className="text-sm text-slate-500 mt-2 bg-black/40 px-3 py-1 rounded-md">
-              {MOCK_PATIENT_PHOTOS[photoViewerIndex]}
-            </p>
+
+            {/* CONTENEDOR DE LA IMAGEN CON SCROLL Y DRAG */}
+            <div
+              ref={imageContainerRef}
+              onMouseDown={handleMouseDown}
+              onMouseMove={handleMouseMove}
+              onMouseUp={handleMouseUp}
+              onMouseLeave={handleMouseUp}
+              className={`w-full h-[60vh] overflow-auto bg-slate-50/50 select-none ${zoomLevel > 100 ? (isDragging ? "cursor-grabbing" : "cursor-grab") : "cursor-default"}`}
+              style={{
+                backgroundImage:
+                  "radial-gradient(#e2e8f0 1px, transparent 1px)",
+                backgroundSize: "20px 20px",
+              }}
+            >
+              <div
+                className={`min-w-full min-h-full flex p-4 transition-all duration-200 ease-in-out pointer-events-none
+                  ${zoomLevel > 100 ? "items-start justify-start" : "items-center justify-center"}
+                `}
+              >
+                <img
+                  src={imageFiles[photoViewerIndex].url}
+                  alt={imageFiles[photoViewerIndex].originalName}
+                  style={{
+                    width: zoomLevel === 100 ? "auto" : `${zoomLevel}%`,
+                    maxWidth: zoomLevel === 100 ? "100%" : "none",
+                    maxHeight: zoomLevel === 100 ? "55vh" : "none",
+                  }}
+                  className="object-contain rounded-md shadow-sm transition-all duration-200 ease-in-out pointer-events-none"
+                  draggable={false}
+                />
+              </div>
+            </div>
+
+            {/* BOTÓN SIGUIENTE */}
             <button
               onClick={() =>
-                setPhotoViewerIndex(
-                  (photoViewerIndex + 1) % MOCK_PATIENT_PHOTOS.length,
-                )
+                handleChangePhoto((photoViewerIndex + 1) % imageFiles.length)
               }
-              className="absolute right-4 p-2 bg-white/10 hover:bg-white/20 text-white rounded-full backdrop-blur-md transition-colors cursor-pointer"
+              className="absolute right-4 top-1/2 -translate-y-1/2 p-3 bg-white/80 hover:bg-white text-brand-dark shadow-lg border border-slate-200 rounded-full transition-all cursor-pointer z-20"
             >
               <ChevronRight className="w-6 h-6" />
             </button>
+
+            {/* PIE DE FOTO (INFO) */}
+            <div className="absolute bottom-0 w-full bg-white/90 backdrop-blur-md border-t border-slate-200 p-4 flex justify-between items-center z-20">
+              <div>
+                <p className="text-sm font-bold text-brand-dark">
+                  {imageFiles[photoViewerIndex].originalName}
+                </p>
+                <p className="text-xs text-brand-gray mt-0.5">
+                  Subida el{" "}
+                  {new Date(
+                    imageFiles[photoViewerIndex].createdAt,
+                  ).toLocaleDateString("es-MX")}
+                </p>
+              </div>
+              <span className="text-xs font-bold bg-brand-light/30 text-brand-primary px-3 py-1.5 rounded-lg uppercase tracking-wider">
+                Foto {photoViewerIndex + 1} de {imageFiles.length}
+              </span>
+            </div>
           </div>
         )}
       </Modal>

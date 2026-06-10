@@ -1,4 +1,4 @@
-import { useState, useMemo } from "react";
+import { useState, useMemo, useEffect } from "react";
 import { motion, type Variants } from "framer-motion";
 import {
   Calendar as CalendarIcon,
@@ -6,23 +6,31 @@ import {
   ArrowLeft,
   CheckCircle2,
   CalendarSearch,
+  Loader2,
+  Sun,
+  CloudSun,
 } from "lucide-react";
 import { Button } from "../../../components/ui/Button";
 import { DatePicker } from "../../../components/ui/DatePicker";
+import { fetchActiveServices } from "../../../lib/services/catalogService";
+import {
+  fetchDoctorAppointments,
+  type DashboardAppointment,
+} from "../../../lib/services/clinicService";
+import {
+  fetchBlockedSlots,
+  type DashboardBlockedSlot,
+} from "../../../lib/services/blockedSlotsService";
+import { type WeeklySchedule } from "../../../lib/services/settingsService";
+import {
+  getAvailableTimeOptions,
+  filterFutureTimesOnly,
+} from "../../doctor/utils/calendarUtils";
 
 const SHORT_DAY_NAMES = ["Dom", "Lun", "Mar", "Mié", "Jue", "Vie", "Sáb"];
 
-// Usamos formato de 24hrs interno para comparar más fácil, pero mostramos formato 12hrs
-const RAW_TIMES = [
-  { time24: "09:00", display: "09:00 AM" },
-  { time24: "09:45", display: "09:45 AM" },
-  { time24: "11:30", display: "11:30 AM" },
-  { time24: "12:15", display: "12:15 PM" },
-  { time24: "16:00", display: "04:00 PM" },
-  { time24: "17:30", display: "05:30 PM" },
-];
-
 interface Props {
+  serviceId: string;
   initialDate?: string;
   initialTime?: string;
   isDirectMode?: boolean;
@@ -31,36 +39,55 @@ interface Props {
 }
 
 export const DateTimeSelector = ({
+  serviceId,
   initialDate,
   initialTime,
   isDirectMode = false,
   onBack,
   onSubmit,
 }: Props) => {
-  // Lógica para obtener la fecha de arranque "inteligente"
-  const getSmartStartDate = () => {
-    const now = new Date();
-    const todayStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
+  const [isLoading, setIsLoading] = useState(true);
+  const [serviceDuration, setServiceDuration] = useState<number>(60);
+  const [appointments, setAppointments] = useState<DashboardAppointment[]>([]);
+  const [blockedSlots, setBlockedSlots] = useState<DashboardBlockedSlot[]>([]);
 
-    // Si ya pasaron las 17:30 (la última cita), arrancar mañana
+  const [workingSchedule] = useState<WeeklySchedule>({
+    1: { isOpen: true, start: "09:00 AM", end: "06:00 PM" },
+    2: { isOpen: true, start: "09:00 AM", end: "06:00 PM" },
+    3: { isOpen: true, start: "09:00 AM", end: "06:00 PM" },
+    4: { isOpen: true, start: "09:00 AM", end: "06:00 PM" },
+    5: { isOpen: true, start: "09:00 AM", end: "06:00 PM" },
+    6: { isOpen: true, start: "09:00 AM", end: "02:00 PM" },
+    0: { isOpen: false, start: "09:00 AM", end: "06:00 PM" }, // DOMINGO CERRADO
+  });
+
+  // FIX: Lógica Inteligente de Fecha Inicial
+  const getSmartStartDate = (schedule: WeeklySchedule) => {
+    const now = new Date();
+    // Si ya es tarde, pasamos al siguiente día
     if (
       now.getHours() >= 17 ||
       (now.getHours() === 17 && now.getMinutes() >= 30)
     ) {
-      const tomorrow = new Date(now);
-      tomorrow.setDate(tomorrow.getDate() + 1);
-      return `${tomorrow.getFullYear()}-${String(tomorrow.getMonth() + 1).padStart(2, "0")}-${String(tomorrow.getDate()).padStart(2, "0")}`;
+      now.setDate(now.getDate() + 1);
     }
-    return todayStr;
+
+    // Buscamos el próximo día que SÍ esté abierto en el workingSchedule
+    for (let i = 0; i < 7; i++) {
+      const dayOfWeek = now.getDay() as keyof WeeklySchedule;
+      if (schedule[dayOfWeek]?.isOpen) {
+        break; // Encontramos un día válido, salimos del loop
+      }
+      now.setDate(now.getDate() + 1); // Brincamos al siguiente si está cerrado
+    }
+
+    return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
   };
 
-  // Necesitamos el "hoy real" para bloquear fechas pasadas en el Modal
-  const realTodayStr = useMemo(() => {
-    const d = new Date();
-    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
-  }, []);
-
-  const smartStartStr = useMemo(() => getSmartStartDate(), []);
+  const smartStartStr = useMemo(
+    () => getSmartStartDate(workingSchedule),
+    [workingSchedule],
+  );
 
   const [selectedDay, setSelectedDay] = useState<string | null>(
     initialDate || smartStartStr,
@@ -69,54 +96,100 @@ export const DateTimeSelector = ({
     initialTime || null,
   );
   const [isCalendarOpen, setIsCalendarOpen] = useState(false);
-
   const [visibleStartDate, setVisibleStartDate] = useState<string>(
     initialDate || smartStartStr,
   );
 
+  useEffect(() => {
+    const loadAgendaData = async () => {
+      try {
+        const [servicesData, apptsData, blocksData] = await Promise.all([
+          fetchActiveServices(),
+          fetchDoctorAppointments(),
+          fetchBlockedSlots(),
+        ]);
+
+        const selectedService = servicesData.find((s) => s.id === serviceId);
+        if (selectedService) {
+          setServiceDuration(selectedService.durationMins);
+        }
+
+        setAppointments(apptsData);
+        setBlockedSlots(blocksData);
+      } catch (error) {
+        console.error("Error al cargar la agenda:", error);
+      } finally {
+        setIsLoading(false);
+      }
+    };
+    loadAgendaData();
+  }, [serviceId]);
+
+  // FIX: Carrusel Inteligente que brinca domingos (o días cerrados)
   const visibleDays = useMemo(() => {
-    const baseDate = new Date(`${visibleStartDate}T12:00:00`);
-    return Array.from({ length: 5 }).map((_, i) => {
-      const d = new Date(baseDate);
-      d.setDate(d.getDate() + i);
-      return {
-        id: d.toISOString().split("T")[0],
-        dayName: SHORT_DAY_NAMES[d.getDay()],
-        dayNumber: String(d.getDate()),
-      };
-    });
-  }, [visibleStartDate]);
+    const days = [];
+    const currentDate = new Date(`${visibleStartDate}T12:00:00`);
 
-  // ============================================================================
-  // FILTRO INTELIGENTE DE HORARIOS
-  // ============================================================================
+    // Ciclo while para obtener exactamente 5 días útiles
+    while (days.length < 5) {
+      const dayOfWeek = currentDate.getDay() as keyof WeeklySchedule;
+
+      // Solo agregamos el botón si el esquema dice que la doctora trabaja ese día
+      if (workingSchedule[dayOfWeek]?.isOpen) {
+        days.push({
+          id: currentDate.toISOString().split("T")[0],
+          dayName: SHORT_DAY_NAMES[currentDate.getDay()],
+          dayNumber: String(currentDate.getDate()),
+        });
+      }
+      currentDate.setDate(currentDate.getDate() + 1); // Avanzamos un día y repetimos
+    }
+    return days;
+  }, [visibleStartDate, workingSchedule]);
+
   const availableTimesForSelectedDay = useMemo(() => {
-    if (!selectedDay) return [];
+    if (!selectedDay || isLoading || !workingSchedule) return [];
 
-    const now = new Date();
-    const isToday = selectedDay === realTodayStr;
+    // 1. Obtenemos TODOS los huecos matemáticos posibles
+    const options = getAvailableTimeOptions(
+      selectedDay,
+      appointments,
+      blockedSlots,
+      workingSchedule,
+      serviceDuration,
+    );
 
-    // Si no es hoy, devolvemos todos los horarios
-    if (!isToday) return RAW_TIMES.map((t) => t.display);
+    const allTimes12h = options.map((opt) => opt.value);
 
-    // Si es hoy, filtramos los que ya pasaron
-    const currentHour = now.getHours();
-    const currentMinute = now.getMinutes();
+    // 2. Filtramos el pasado usando la nueva utilidad limpia
+    return filterFutureTimesOnly(allTimes12h, selectedDay);
+  }, [
+    selectedDay,
+    isLoading,
+    appointments,
+    blockedSlots,
+    workingSchedule,
+    serviceDuration,
+  ]);
 
-    return RAW_TIMES.filter((t) => {
-      const [hourStr, minStr] = t.time24.split(":");
-      const hour = parseInt(hourStr, 10);
-      const min = parseInt(minStr, 10);
+  const morningSlots = useMemo(
+    () => availableTimesForSelectedDay.filter((t) => t.includes("AM")),
+    [availableTimesForSelectedDay],
+  );
+  const afternoonSlots = useMemo(
+    () => availableTimesForSelectedDay.filter((t) => t.includes("PM")),
+    [availableTimesForSelectedDay],
+  );
 
-      // Solo dejamos las horas futuras (le damos 1 hora de margen para que no agenden "ahorita")
-      // Ej: Si son las 9:15, no pueden agendar a las 9:45. Tienen que agendar a las 11:30.
-      if (hour > currentHour + 1) return true;
-      if (hour === currentHour + 1 && min > currentMinute) return true;
-      return false;
-    }).map((t) => t.display);
-  }, [selectedDay, realTodayStr]);
-
-  // ============================================================================
+  useEffect(() => {
+    if (
+      availableTimesForSelectedDay.length > 0 &&
+      selectedTime &&
+      !availableTimesForSelectedDay.includes(selectedTime)
+    ) {
+      setSelectedTime(null);
+    }
+  }, [availableTimesForSelectedDay, selectedTime]);
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -127,13 +200,8 @@ export const DateTimeSelector = ({
     setSelectedDay(date);
     setSelectedTime(null);
 
-    const selectedTimeMs = new Date(`${date}T12:00:00`).getTime();
-    const startTimeMs = new Date(`${visibleStartDate}T12:00:00`).getTime();
-    const endTimeMs = startTimeMs + 4 * 24 * 60 * 60 * 1000;
-
-    if (selectedTimeMs < startTimeMs || selectedTimeMs > endTimeMs) {
-      setVisibleStartDate(date);
-    }
+    // Al elegir una fecha del modal, la establecemos como el nuevo inicio del carrusel
+    setVisibleStartDate(date);
   };
 
   const container: Variants = {
@@ -148,6 +216,17 @@ export const DateTimeSelector = ({
   const currentMonthName = new Date(
     `${visibleStartDate}T12:00:00`,
   ).toLocaleDateString("es-MX", { month: "long", year: "numeric" });
+
+  if (isLoading) {
+    return (
+      <div className="flex flex-col items-center justify-center py-20 w-full">
+        <Loader2 className="w-10 h-10 animate-spin text-brand-primary mb-4" />
+        <p className="text-brand-gray font-medium">
+          Calculando disponibilidad...
+        </p>
+      </div>
+    );
+  }
 
   return (
     <>
@@ -193,12 +272,11 @@ export const DateTimeSelector = ({
         <h2 className="text-4xl sm:text-5xl font-bold text-brand-dark mb-4 leading-tight tracking-tight">
           ¿Cuándo te <br /> viene bien?
         </h2>
-
         <p className="text-lg text-brand-gray/80 font-medium mb-8 max-w-md">
           Selecciona el día y la hora de tu preferencia.
         </p>
 
-        <form onSubmit={handleSubmit} className="space-y-8">
+        <form onSubmit={handleSubmit} className="space-y-6">
           <motion.div variants={container} initial="hidden" animate="show">
             <div className="flex items-center justify-between mb-4 pr-2">
               <div className="flex items-center gap-2">
@@ -207,7 +285,6 @@ export const DateTimeSelector = ({
                   {currentMonthName}
                 </h3>
               </div>
-
               <button
                 type="button"
                 onClick={() => setIsCalendarOpen(true)}
@@ -229,7 +306,7 @@ export const DateTimeSelector = ({
                       setSelectedDay(day.id);
                       setSelectedTime(null);
                     }}
-                    className={`cursor-pointer snap-center shrink-0 flex flex-col items-center justify-center w-20 h-24 rounded-3xl border-2 transition-all ${
+                    className={`cursor-pointer snap-center shrink-0 flex flex-col items-center justify-center w-20 h-22 rounded-3xl border-2 transition-all ${
                       isSelected
                         ? "bg-brand-primary border-brand-primary text-white shadow-lg shadow-brand-primary/20"
                         : "bg-white border-brand-light hover:border-brand-primary/50 text-brand-dark"
@@ -257,24 +334,66 @@ export const DateTimeSelector = ({
 
             {selectedDay ? (
               availableTimesForSelectedDay.length > 0 ? (
-                <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
-                  {availableTimesForSelectedDay.map((time) => {
-                    const isSelected = selectedTime === time;
-                    return (
-                      <button
-                        key={time}
-                        type="button"
-                        onClick={() => setSelectedTime(time)}
-                        className={`cursor-pointer py-3.5 px-2 rounded-2xl font-bold text-sm sm:text-base border-2 transition-all ${
-                          isSelected
-                            ? "bg-brand-dark border-brand-dark text-white shadow-md"
-                            : "bg-white border-brand-light hover:border-brand-dark/30 text-brand-dark"
-                        }`}
-                      >
-                        {time}
-                      </button>
-                    );
-                  })}
+                <div className="max-h-65 overflow-y-auto pr-2 space-y-5 [&::-webkit-scrollbar]:w-1.5 [&::-webkit-scrollbar-track]:bg-transparent [&::-webkit-scrollbar-thumb]:bg-brand-light [&::-webkit-scrollbar-thumb]:rounded-full hover:[&::-webkit-scrollbar-thumb]:bg-brand-primary/50 transition-colors">
+                  {morningSlots.length > 0 && (
+                    <div>
+                      <h4 className="text-xs font-bold text-brand-gray mb-3 flex items-center gap-1.5 uppercase tracking-wider">
+                        <Sun className="w-4 h-4" /> Mañana
+                      </h4>
+                      <div className="grid grid-cols-2 sm:grid-cols-3 gap-2.5">
+                        {morningSlots.map((time) => {
+                          const isSelected = selectedTime === time;
+                          return (
+                            <button
+                              key={time}
+                              type="button"
+                              onClick={() => setSelectedTime(time)}
+                              className={`cursor-pointer py-3 px-2 rounded-xl font-bold text-sm sm:text-base border-2 transition-all ${
+                                isSelected
+                                  ? "bg-brand-dark border-brand-dark text-white shadow-md"
+                                  : "bg-white border-slate-100 hover:border-brand-dark/30 text-brand-dark"
+                              }`}
+                            >
+                              {time}
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  )}
+
+                  {afternoonSlots.length > 0 && (
+                    <div
+                      className={
+                        morningSlots.length > 0
+                          ? "pt-2 border-t border-slate-100"
+                          : ""
+                      }
+                    >
+                      <h4 className="text-xs font-bold text-brand-gray mb-3 flex items-center gap-1.5 uppercase tracking-wider">
+                        <CloudSun className="w-4 h-4" /> Tarde
+                      </h4>
+                      <div className="grid grid-cols-2 sm:grid-cols-3 gap-2.5">
+                        {afternoonSlots.map((time) => {
+                          const isSelected = selectedTime === time;
+                          return (
+                            <button
+                              key={time}
+                              type="button"
+                              onClick={() => setSelectedTime(time)}
+                              className={`cursor-pointer py-3 px-2 rounded-xl font-bold text-sm sm:text-base border-2 transition-all ${
+                                isSelected
+                                  ? "bg-brand-dark border-brand-dark text-white shadow-md"
+                                  : "bg-white border-slate-100 hover:border-brand-dark/30 text-brand-dark"
+                              }`}
+                            >
+                              {time}
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  )}
                 </div>
               ) : (
                 <div className="bg-slate-50 border border-brand-light/50 rounded-2xl p-6 text-center flex flex-col items-center gap-2">
@@ -283,8 +402,8 @@ export const DateTimeSelector = ({
                     Sin horarios disponibles
                   </p>
                   <p className="text-brand-gray font-medium text-sm">
-                    Ya no hay citas para el día de hoy. Por favor, selecciona
-                    otro día.
+                    Ya no hay citas suficientes para la duración de este
+                    servicio. Por favor, selecciona otro día.
                   </p>
                 </div>
               )
@@ -297,14 +416,11 @@ export const DateTimeSelector = ({
             )}
           </motion.div>
 
-          <motion.div
-            variants={item}
-            className="pt-6 border-t border-brand-light"
-          >
+          <motion.div variants={item} className="pt-4">
             <Button
               type="submit"
               disabled={!selectedDay || !selectedTime}
-              className="w-full sm:w-fit px-8 rounded-full text-lg disabled:opacity-50 transition-all cursor-pointer"
+              className="w-full sm:w-fit px-8 rounded-full text-lg disabled:opacity-50 transition-all cursor-pointer shadow-md"
             >
               Confirmar Cita
               {selectedDay && selectedTime && (
@@ -319,7 +435,7 @@ export const DateTimeSelector = ({
         isOpen={isCalendarOpen}
         onClose={() => setIsCalendarOpen(false)}
         selectedDate={selectedDay}
-        minDate={smartStartStr} // Bloqueamos el calendario para que no puedan elegir el "hoy" si ya acabó su jornada
+        minDate={smartStartStr}
         onSelectDate={handleModalDateSelect}
       />
     </>

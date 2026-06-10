@@ -9,38 +9,26 @@ import {
 } from "lucide-react";
 import { Button } from "../../../components/ui/Button";
 
-// Un pequeño diccionario para mostrar el nombre real del servicio
-const SERVICE_NAMES: Record<string, string> = {
-  valoracion: "Consulta de Valoración",
-  estetica: "Medicina Estética",
-  regenerativa: "Medicina Regenerativa",
-  "toxina-botulinica": "Toxina Botulínica (Botox)", // <-- Agregué los tuyos por si acaso
-  "acido-hialuronico": "Relleno con Ácido Hialurónico",
-  "hilos-tensores": "Hilos Tensores",
-  prp: "Plasma Rico en Plaquetas (PRP)",
-  ozonoterapia: "Sueroterapia y Ozono",
-};
-
 interface Props {
   bookingData: {
-    serviceId: string;
+    serviceName?: string;
     date: string;
     time: string;
   };
-  isReschedule?: boolean; // <--- NUEVA PROP MÁGICA
+  isReschedule?: boolean;
   onGoToDashboard: () => void;
-  onGoHome?: () => void; // La hacemos opcional porque en reprogramación no se usa
+  onGoHome?: () => void;
 }
 
 export const BookingSuccess = ({
   bookingData,
-  isReschedule = false, // Por defecto es false
+  isReschedule = false,
   onGoToDashboard,
   onGoHome,
 }: Props) => {
-  const serviceName = SERVICE_NAMES[bookingData.serviceId] || "Consulta Médica";
+  // Si no nos pasan el nombre por alguna razón (como en el flujo actual), ponemos un genérico elegante
+  const serviceName = bookingData.serviceName || "Consulta Médica General";
 
-  // Animaciones
   const container: Variants = {
     hidden: { opacity: 0 },
     show: {
@@ -48,7 +36,6 @@ export const BookingSuccess = ({
       transition: { staggerChildren: 0.15, delayChildren: 0.2 },
     },
   };
-
   const item: Variants = {
     hidden: { opacity: 0, y: 20 },
     show: { opacity: 1, y: 0, transition: { duration: 0.5, ease: "easeOut" } },
@@ -67,7 +54,6 @@ export const BookingSuccess = ({
         animate="show"
         className="w-full"
       >
-        {/* ICONO GIGANTE DE ÉXITO */}
         <motion.div
           variants={item}
           className="mb-8 flex justify-center sm:justify-start"
@@ -89,7 +75,6 @@ export const BookingSuccess = ({
                 strokeWidth={2.5}
               />
             </motion.div>
-            {/* Partículas de celebración sutiles */}
             <motion.div
               animate={{ rotate: 360 }}
               transition={{ duration: 20, repeat: Infinity, ease: "linear" }}
@@ -98,7 +83,6 @@ export const BookingSuccess = ({
           </div>
         </motion.div>
 
-        {/* MENSAJE PRINCIPAL DINÁMICO */}
         <motion.div variants={item}>
           <h1 className="text-4xl sm:text-5xl font-extrabold text-brand-dark mb-4 tracking-tight">
             {isReschedule ? "¡Cita" : "¡Solicitud"}{" "}
@@ -109,7 +93,6 @@ export const BookingSuccess = ({
           </h1>
         </motion.div>
 
-        {/* RESUMEN DE LA CITA */}
         <motion.div
           variants={item}
           className="w-full bg-white border-2 border-slate-100 rounded-4xl p-6 mb-6 shadow-sm"
@@ -133,7 +116,6 @@ export const BookingSuccess = ({
           </div>
         </motion.div>
 
-        {/* MANEJO DE EXPECTATIVAS (SMS/WhatsApp) */}
         <motion.div
           variants={item}
           className="w-full bg-brand-light/40 border border-brand-light rounded-4xl p-6 mb-10 flex gap-4 items-start text-left"
@@ -153,14 +135,12 @@ export const BookingSuccess = ({
           </div>
         </motion.div>
 
-        {/* BOTONES DE ACCIÓN DINÁMICOS */}
         <motion.div
           variants={item}
           className="flex flex-col sm:flex-row gap-4 w-full"
         >
           <Button
             onClick={onGoToDashboard}
-            // Si es reschedule, el botón ocupa todo el ancho. Si no, comparte espacio.
             className={`w-full py-4 rounded-xl text-base font-bold group cursor-pointer ${!isReschedule && "sm:flex-1"}`}
           >
             <span>Ir a mi Perfil</span>
@@ -169,15 +149,13 @@ export const BookingSuccess = ({
             </div>
           </Button>
 
-          {/* SÓLO SE MUESTRA SI NO ES REPROGRAMACIÓN */}
           {!isReschedule && onGoHome && (
             <Button
               onClick={onGoHome}
               variant="outline"
               className="w-full sm:w-auto px-6 py-4 rounded-xl font-bold text-base cursor-pointer hover:bg-slate-50"
             >
-              <Plus className="w-5 h-5 mr-2" />
-              <span>Agendar otra cita</span>
+              <Plus className="w-5 h-5 mr-2" /> <span>Agendar otra cita</span>
             </Button>
           )}
         </motion.div>

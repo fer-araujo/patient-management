@@ -7,16 +7,20 @@ import {
   User,
   Lock,
   ArrowLeft,
+  Loader2,
 } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
+import { useNavigate } from "react-router-dom";
+import toast from "react-hot-toast";
+
 import { Button } from "../../../components/ui/Button";
 import { Input } from "../../../components/ui/Input";
-import { useNavigate } from "react-router-dom";
+
+import { supabase } from "../../../lib/supabase";
+import { checkPatientExists } from "../../../lib/services/patientBookingService";
 
 interface Props {
-  // Cuando es un paciente nuevo que va a iniciar el flujo de agendar
   onSubmitNewPatient: (countryCode: string, number: string) => void;
-  // Cuando es un paciente existente que ya validó su OTP
   onLoginSuccess: (countryCode: string, number: string) => void;
 }
 
@@ -27,33 +31,107 @@ export const PatientPhoneLogin = ({
   const [countryCode, setCountryCode] = useState("+52");
   const [phoneNumber, setPhoneNumber] = useState("");
   const [otp, setOtp] = useState("");
+  const [isLoading, setIsLoading] = useState(false); // ESTADO DE CARGA AÑADIDO
 
-  // Estados para manejar el flujo internamente
   const [mode, setMode] = useState<"new" | "login_phone" | "login_otp">("new");
-
   const navigate = useNavigate();
 
-  const handleNewPatientSubmit = (e: React.FormEvent) => {
+  // FLUJO 1: "Agendar Cita" (Botón público principal)
+  const handleNewPatientSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    onSubmitNewPatient(countryCode, phoneNumber);
+    if (phoneNumber.length < 10) return;
+
+    setIsLoading(true);
+    const fullPhone = countryCode + phoneNumber;
+
+    try {
+      // 1. Verificamos si ya existe el paciente
+      const exists = await checkPatientExists(fullPhone);
+
+      if (exists) {
+        // 2A. SI EXISTE: Lo interceptamos, mandamos OTP y cambiamos pantalla
+        toast.success(
+          "Encontramos tu expediente. Te enviaremos un código de acceso.",
+        );
+
+        const { error } = await supabase.auth.signInWithOtp({
+          phone: fullPhone,
+        });
+        if (error) throw error;
+
+        setMode("login_otp");
+      } else {
+        // 2B. SI NO EXISTE: Avanza al registro normal (Paso 2)
+        onSubmitNewPatient(countryCode, phoneNumber);
+      }
+    } catch (error) {
+      console.error(error);
+      toast.error("Ocurrió un error al verificar tu número.");
+    } finally {
+      setIsLoading(false);
+    }
   };
 
-  const handleRequestOtp = (e: React.FormEvent) => {
+  // FLUJO 2: "Entrar a mi Portal" (Botón de login explícito)
+  const handleRequestOtp = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (phoneNumber.length >= 10) {
-      // Aquí en producción llamarías a tu API para mandar el SMS/WhatsApp
+    if (phoneNumber.length < 10) return;
+
+    setIsLoading(true);
+    const fullPhone = countryCode + phoneNumber;
+
+    try {
+      const exists = await checkPatientExists(fullPhone);
+      if (!exists) {
+        toast.error(
+          "No encontramos un expediente con este número. Por favor agenda una nueva cita.",
+        );
+        setIsLoading(false);
+        return;
+      }
+
+      const { error } = await supabase.auth.signInWithOtp({ phone: fullPhone });
+      if (error) throw error;
+
       setMode("login_otp");
+      toast.success("Código enviado por SMS/WhatsApp");
+    } catch (error) {
+      console.error(error);
+      toast.error("Error al enviar el código de acceso.");
+    } finally {
+      setIsLoading(false);
     }
   };
 
-  const handleVerifyOtp = (e: React.FormEvent) => {
+  // FLUJO 3: Validar el Código
+  const handleVerifyOtp = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (otp.length === 4) {
-      // Aquí validas el OTP con el backend
-      onLoginSuccess(countryCode, phoneNumber);
+    // Nota: Dependiendo de tu proveedor de SMS (Twilio, etc), el token suele ser de 6 dígitos.
+    // Si tu config en Supabase dice 6, cambia el .length === 6 y el maxLength del input.
+    if (otp.length < 4) return;
+
+    setIsLoading(true);
+    const fullPhone = countryCode + phoneNumber;
+
+    try {
+      const { data, error } = await supabase.auth.verifyOtp({
+        phone: fullPhone,
+        token: otp,
+        type: "sms",
+      });
+
+      if (error) throw error;
+
+      if (data.session) {
+        onLoginSuccess(countryCode, phoneNumber);
+      }
+    } catch (error) {
+      console.error(error);
+      toast.error("Código incorrecto o expirado.");
+    } finally {
+      setIsLoading(false);
     }
   };
-
   return (
     <motion.div
       initial={{ opacity: 0, x: -20 }}
@@ -74,9 +152,6 @@ export const PatientPhoneLogin = ({
       </div>
 
       <AnimatePresence mode="wait">
-        {/* =========================================================
-            MODO 1: PACIENTE NUEVO (Agendar)
-            ========================================================= */}
         {mode === "new" && (
           <motion.div
             key="new"
@@ -86,11 +161,9 @@ export const PatientPhoneLogin = ({
             transition={{ duration: 0.3 }}
           >
             <h1 className="text-5xl sm:text-6xl lg:text-5xl xl:text-[4rem] font-bold text-brand-dark mb-6 leading-[1.05] tracking-tight">
-              Cuidado médico <br />
-              que <span className="text-brand-primary">realmente</span> <br />
-              te escucha.
+              Cuidado médico <br /> que{" "}
+              <span className="text-brand-primary">realmente</span> te escucha.
             </h1>
-
             <p className="text-lg xl:text-xl text-brand-gray/80 leading-relaxed font-medium mb-10 xl:mb-12 max-w-sm">
               Agende su consulta de forma rápida y segura. Sin contraseñas
               complicadas.
@@ -137,12 +210,22 @@ export const PatientPhoneLogin = ({
               <div className="pt-2 xl:pt-4">
                 <Button
                   type="submit"
+                  disabled={phoneNumber.length < 10 || isLoading}
                   className="group w-fit px-8 xl:px-10 rounded-full text-base xl:text-lg"
                 >
-                  <span>Agendar Cita</span>
-                  <div className="bg-white/20 rounded-full p-1.5 ml-2 transition-transform duration-300 ease-out group-hover:translate-x-1.5">
-                    <ArrowRight className="w-5 h-5" strokeWidth={2.5} />
-                  </div>
+                  {isLoading ? (
+                    <span className="flex items-center gap-2">
+                      <Loader2 className="w-5 h-5 animate-spin" />{" "}
+                      Verificando...
+                    </span>
+                  ) : (
+                    <span className="flex items-center">
+                      Agendar Cita
+                      <div className="bg-white/20 rounded-full p-1.5 ml-2 transition-transform duration-300 ease-out group-hover:translate-x-1.5">
+                        <ArrowRight className="w-5 h-5" strokeWidth={2.5} />
+                      </div>
+                    </span>
+                  )}
                 </Button>
               </div>
             </form>
@@ -161,9 +244,6 @@ export const PatientPhoneLogin = ({
           </motion.div>
         )}
 
-        {/* =========================================================
-            MODO 2: LOGIN - PEDIR TELÉFONO
-            ========================================================= */}
         {mode === "login_phone" && (
           <motion.div
             key="login_phone"
@@ -178,7 +258,6 @@ export const PatientPhoneLogin = ({
             >
               <ArrowLeft className="w-4 h-4" /> Volver
             </button>
-
             <h1 className="text-4xl sm:text-5xl font-bold text-brand-dark mb-4 tracking-tight">
               Portal de <br /> Pacientes
             </h1>
@@ -188,6 +267,7 @@ export const PatientPhoneLogin = ({
             </p>
 
             <form onSubmit={handleRequestOtp} className="space-y-6">
+              {/* Mismos inputs de país y número que arriba */}
               <div className="flex gap-3 sm:gap-4 items-end">
                 <div className="relative w-28 sm:w-1/3 shrink-0">
                   <label className="text-brand-dark font-medium text-base xl:text-lg block mb-2 ml-1">
@@ -225,19 +305,22 @@ export const PatientPhoneLogin = ({
 
               <Button
                 type="submit"
-                disabled={phoneNumber.length < 10}
+                disabled={phoneNumber.length < 10 || isLoading}
                 className="w-full sm:w-fit px-8 py-3.5 rounded-2xl text-base group"
               >
-                Recibir código
-                <ArrowRight className="w-4 h-4 ml-2 group-hover:translate-x-1 transition-transform" />
+                {isLoading ? (
+                  <Loader2 className="w-5 h-5 animate-spin mx-auto" />
+                ) : (
+                  <>
+                    Recibir código
+                    <ArrowRight className="w-4 h-4 ml-2 group-hover:translate-x-1 transition-transform" />
+                  </>
+                )}
               </Button>
             </form>
           </motion.div>
         )}
 
-        {/* =========================================================
-            MODO 3: LOGIN - VERIFICAR OTP
-            ========================================================= */}
         {mode === "login_otp" && (
           <motion.div
             key="login_otp"
@@ -252,7 +335,6 @@ export const PatientPhoneLogin = ({
             >
               <ArrowLeft className="w-4 h-4" /> Cambiar número
             </button>
-
             <h1 className="text-4xl sm:text-5xl font-bold text-brand-dark mb-4 tracking-tight">
               Ingresa tu código
             </h1>
@@ -274,18 +356,24 @@ export const PatientPhoneLogin = ({
                   onChange={(e) => setOtp(e.target.value.replace(/\D/g, ""))}
                   className="block w-full pl-12 pr-4 py-4 text-center tracking-[0.75em] bg-white border-2 border-brand-light rounded-2xl text-brand-dark font-black text-3xl focus:border-brand-primary focus:ring-4 focus:ring-brand-primary/10 transition-all outline-none"
                   placeholder="••••"
-                  maxLength={4}
+                  maxLength={6} // <-- Revisa si tu Supabase manda 4 o 6 dígitos
                   autoFocus
                 />
               </div>
 
               <Button
                 type="submit"
-                disabled={otp.length < 4}
+                disabled={otp.length < 4 || isLoading}
                 className="w-full sm:w-fit px-10 py-3.5 rounded-2xl text-base group"
               >
-                Verificar y Entrar
-                <ArrowRight className="w-4 h-4 ml-2 group-hover:translate-x-1 transition-transform" />
+                {isLoading ? (
+                  <Loader2 className="w-5 h-5 animate-spin mx-auto" />
+                ) : (
+                  <>
+                    Verificar y Entrar
+                    <ArrowRight className="w-4 h-4 ml-2 group-hover:translate-x-1 transition-transform" />
+                  </>
+                )}
               </Button>
             </form>
           </motion.div>
@@ -301,8 +389,6 @@ export const PatientPhoneLogin = ({
             encriptada.
           </p>
         </div>
-
-        {/* BOTÓN MINI ADMIN */}
         <button
           onClick={() => navigate("/doctor/dashboard")}
           className="p-2 text-brand-gray/30 hover:text-brand-primary transition-colors cursor-pointer rounded-full hover:bg-brand-primary/5"
