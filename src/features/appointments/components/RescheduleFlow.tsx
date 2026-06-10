@@ -1,30 +1,59 @@
-import { useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { useState, useEffect } from "react";
+import { useNavigate, useLocation } from "react-router-dom";
 import { AnimatePresence, motion } from "framer-motion";
+import toast from "react-hot-toast";
+import { Loader2 } from "lucide-react";
 
 import { DateTimeSelector } from "./DateTimeSelector";
 import { BookingSuccess } from "./BookingSuccess";
+import { rescheduleAppointment } from "../../../lib/services/clinicService";
+import { combineIsoDateAndTime } from "../../doctor/utils/calendarUtils";
 
 export const RescheduleFlow = () => {
   const navigate = useNavigate();
-  const [step, setStep] = useState<1 | 2>(1);
+  const location = useLocation();
 
-  // Simulamos los datos de la cita ACTUAL que el paciente quiere cambiar
-  // En producción, esto vendría de tu backend (ej. un useParams con el ID de la cita)
+  const { appointmentId, serviceId, serviceName, currentDate, currentTime } =
+    location.state || {};
+
+  // 1. TODOS LOS HOOKS HASTA ARRIBA (Cero errores condicionales)
+  const [step, setStep] = useState<1 | 2>(1);
+  const [isSubmitting, setIsSubmitting] = useState(false);
   const [bookingData, setBookingData] = useState({
-    serviceId: "regenerativa", // Para que BookingSuccess sepa qué servicio es
-    date: "2026-03-16", // Fecha actual pre-seleccionada
-    time: "11:30 AM", // Hora actual pre-seleccionada
+    serviceName: serviceName || "Consulta Médica",
+    date: currentDate || "",
+    time: currentTime || "",
   });
 
-  const handleDateTimeSubmit = (newDate: string, newTime: string) => {
-    setBookingData((prev) => ({ ...prev, date: newDate, time: newTime }));
-    console.log("Cita REPROGRAMADA a:", {
-      ...bookingData,
-      date: newDate,
-      time: newTime,
-    });
-    setStep(2);
+  // 2. EFECTO DE SEGURIDAD PARA REDIRECCIÓN
+  useEffect(() => {
+    if (!appointmentId || !serviceId) {
+      navigate("/dashboard");
+    }
+  }, [appointmentId, serviceId, navigate]);
+
+  // 3. EARLY RETURN DESPUÉS DE TODOS LOS HOOKS
+  if (!appointmentId || !serviceId) return null;
+
+  const handleDateTimeSubmit = async (newDate: string, newTime: string) => {
+    if (isSubmitting) return;
+
+    setIsSubmitting(true);
+    const loadingToast = toast.loading("Reprogramando tu cita...");
+
+    try {
+      const utcIsoDateTime = combineIsoDateAndTime(newDate, newTime);
+      await rescheduleAppointment(appointmentId, utcIsoDateTime);
+
+      setBookingData((prev) => ({ ...prev, date: newDate, time: newTime }));
+      toast.success("Cita reprogramada con éxito.", { id: loadingToast });
+      setStep(2);
+    } catch (error) {
+      console.error(error);
+      toast.error("Error al reprogramar la cita.", { id: loadingToast });
+    } finally {
+      setIsSubmitting(false);
+    }
   };
 
   return (
@@ -34,26 +63,34 @@ export const RescheduleFlow = () => {
 
         <div className="relative z-10 flex justify-center w-full">
           <AnimatePresence mode="wait">
-            {/* PASO 1: Selector pre-llenado */}
             {step === 1 && (
               <motion.div
                 key="step1"
                 initial={{ opacity: 0, x: 20 }}
                 animate={{ opacity: 1, x: 0 }}
                 exit={{ opacity: 0, x: -20 }}
-                className="w-full flex justify-center"
+                className="w-full flex justify-center relative"
               >
+                {isSubmitting && (
+                  <div className="absolute inset-0 z-50 bg-white/80 backdrop-blur-sm flex flex-col items-center justify-center rounded-3xl">
+                    <Loader2 className="w-10 h-10 animate-spin text-brand-primary mb-4" />
+                    <p className="font-bold text-brand-dark">
+                      Conectando con la agenda...
+                    </p>
+                  </div>
+                )}
+
                 <DateTimeSelector
+                  serviceId={serviceId}
                   initialDate={bookingData.date}
                   initialTime={bookingData.time}
-                  isDirectMode={true} // <-- MAGIA 1: Muestra el botón de "Volver" en vez del paso 2 de 2
+                  isDirectMode={true}
                   onBack={() => navigate("/dashboard")}
                   onSubmit={handleDateTimeSubmit}
                 />
               </motion.div>
             )}
 
-            {/* PASO 2: Éxito Reprogramado */}
             {step === 2 && (
               <motion.div
                 key="step2"
@@ -64,9 +101,8 @@ export const RescheduleFlow = () => {
               >
                 <BookingSuccess
                   bookingData={bookingData}
-                  isReschedule={true} // <-- MAGIA 2: Cambia textos y oculta el botón secundario
+                  isReschedule={true}
                   onGoToDashboard={() => navigate("/dashboard")}
-                  // onGoHome ya no es necesario aquí gracias al isReschedule
                 />
               </motion.div>
             )}

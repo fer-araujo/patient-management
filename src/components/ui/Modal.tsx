@@ -9,6 +9,7 @@ interface ModalProps {
   icon?: ReactNode;
   hideFooter?: boolean;
   children: ReactNode;
+  maxWidth?: string;
 }
 
 export const Modal = ({
@@ -17,13 +18,13 @@ export const Modal = ({
   title,
   icon,
   hideFooter = false,
+  maxWidth = "max-w-2xl",
   children,
 }: ModalProps) => {
   return (
     <AnimatePresence>
       {isOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center px-4 sm:px-6">
-          {/* Fondo oscuro con blur */}
           <motion.div
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
@@ -32,15 +33,14 @@ export const Modal = ({
             className="absolute inset-0 bg-brand-dark/40 backdrop-blur-sm"
           />
 
-          {/* Contenedor del Modal */}
           <motion.div
             initial={{ opacity: 0, scale: 0.95, y: 20 }}
             animate={{ opacity: 1, scale: 1, y: 0 }}
             exit={{ opacity: 0, scale: 0.95, y: 20 }}
-            className="relative w-full max-w-2xl bg-white rounded-4xl shadow-2xl overflow-hidden flex flex-col max-h-[85vh]"
+            // APLICAMOS EL ANCHO DINÁMICO AQUÍ:
+            className={`relative w-full ${maxWidth} bg-white rounded-4xl shadow-2xl overflow-hidden flex flex-col max-h-[85vh]`}
           >
-            {/* Header Fijo */}
-            <div className="px-6 py-4 border-b border-brand-light flex items-center justify-between bg-slate-50 sticky top-0 z-10">
+            <div className="px-6 py-4 border-b border-brand-light flex items-center justify-between bg-slate-50 sticky top-0 z-10 shrink-0">
               <div className="flex items-center gap-3">
                 {icon}
                 <h3 className="text-xl font-bold text-brand-dark">{title}</h3>
@@ -53,14 +53,12 @@ export const Modal = ({
               </button>
             </div>
 
-            {/* Contenido scrolleable */}
             <div className="px-6 py-6 overflow-y-auto text-sm text-brand-gray leading-relaxed space-y-5">
               {children}
             </div>
 
-            {/* Footer Fijo */}
             {!hideFooter && (
-              <div className="px-6 py-4 border-t border-brand-light bg-slate-50 flex justify-end">
+              <div className="px-6 py-4 border-t border-brand-light bg-slate-50 flex justify-end shrink-0">
                 <button
                   onClick={onClose}
                   className="bg-brand-primary cursor-pointer text-white font-bold px-8 py-2.5 rounded-xl hover:bg-teal-500 transition-colors shadow-md"

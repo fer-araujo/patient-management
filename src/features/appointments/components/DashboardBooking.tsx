@@ -6,45 +6,67 @@ import { ServiceSelector } from "./ServiceSelector";
 import { DateTimeSelector } from "./DateTimeSelector";
 import { BookingSuccess } from "./BookingSuccess";
 
+import { createAuthenticatedAppointment } from "../../../lib/services/patientBookingService";
+import toast from "react-hot-toast";
+
 export const DashboardBooking = () => {
   const navigate = useNavigate();
   const location = useLocation();
 
-  // Si venimos del carrusel, empezamos en el paso 2
   const initialService = location.state?.preselectedService || "";
+  const initialServiceName =
+    location.state?.preselectedServiceName || "Consulta Médica";
   const initialStep = initialService ? 2 : 1;
 
   const [step, setStep] = useState<1 | 2 | 3>(initialStep);
   const [bookingData, setBookingData] = useState({
     serviceId: initialService,
+    serviceName: initialServiceName, // <--- AÑADIDO
     date: "",
     time: "",
   });
 
-  const handleServiceSelect = (serviceId: string) => {
-    setBookingData((prev) => ({ ...prev, serviceId }));
+  const [isSubmitting, setIsSubmitting] = useState(false);
+
+  const handleServiceSelect = (serviceId: string, serviceName?: string) => {
+    setBookingData((prev) => ({
+      ...prev,
+      serviceId,
+      serviceName: serviceName || "Consulta Médica",
+    }));
     setStep(2);
   };
 
-  const handleDateTimeSubmit = (date: string, time: string) => {
-    setBookingData((prev) => ({ ...prev, date, time }));
-    console.log("Nueva cita agendada desde Dashboard:", {
-      ...bookingData,
-      date,
-      time,
-    });
-    setStep(3); // Vamos al Success
+  const handleDateTimeSubmit = async (date: string, time: string) => {
+    if (isSubmitting) return;
+
+    setIsSubmitting(true);
+    const loadingToast = toast.loading("Registrando tu cita...");
+
+    try {
+      await createAuthenticatedAppointment(bookingData.serviceId, date, time);
+
+      setBookingData((prev) => ({ ...prev, date, time }));
+      toast.success("Cita solicitada con éxito.", { id: loadingToast });
+      setStep(3);
+    } catch (error: unknown) {
+      console.error(error);
+      toast.error((error as Error).message || "No se pudo registrar la cita.", {
+        id: loadingToast,
+      });
+    } finally {
+      setIsSubmitting(false);
+    }
   };
 
-  // =================================================================
-  // EL FIX MAGISTRAL: "Agendar otra cita"
-  // =================================================================
   const handleBookAnother = () => {
-    // 1. Limpiamos los datos
-    setBookingData({ serviceId: "", date: "", time: "" });
-    // 2. Volvemos al paso 1
+    setBookingData({
+      serviceId: "",
+      serviceName: "Consulta Médica",
+      date: "",
+      time: "",
+    });
     setStep(1);
-    // 3. Limpiamos la memoria del router (por si venía del carrusel)
     navigate(location.pathname, { replace: true, state: {} });
   };
 
@@ -55,7 +77,6 @@ export const DashboardBooking = () => {
 
         <div className="relative z-10 flex justify-center w-full">
           <AnimatePresence mode="wait">
-            {/* PASO 1: Elegir Servicio */}
             {step === 1 && (
               <motion.div
                 key="step1"
@@ -65,14 +86,13 @@ export const DashboardBooking = () => {
                 className="w-full flex justify-center"
               >
                 <ServiceSelector
-                  isDirectMode={true} // <-- Usamos el modo directo para que el botón diga "Volver al Dashboard"
+                  isDirectMode={true}
                   onBack={() => navigate("/dashboard")}
                   onSelect={handleServiceSelect}
                 />
               </motion.div>
             )}
 
-            {/* PASO 2: Elegir Fecha y Hora */}
             {step === 2 && (
               <motion.div
                 key="step2"
@@ -82,7 +102,8 @@ export const DashboardBooking = () => {
                 className="w-full flex justify-center"
               >
                 <DateTimeSelector
-                  isDirectMode={initialStep === 2} // Solo dice "Volver al Dashboard" si saltamos directo al paso 2
+                  isDirectMode={initialStep === 2}
+                  serviceId={bookingData.serviceId}
                   onBack={() => {
                     if (initialStep === 2) {
                       navigate("/dashboard");
@@ -95,7 +116,6 @@ export const DashboardBooking = () => {
               </motion.div>
             )}
 
-            {/* PASO 3: Éxito */}
             {step === 3 && (
               <motion.div
                 key="step3"
@@ -106,9 +126,9 @@ export const DashboardBooking = () => {
               >
                 <BookingSuccess
                   bookingData={bookingData}
-                  isReschedule={false} // Es cita nueva
+                  isReschedule={false}
                   onGoToDashboard={() => navigate("/dashboard")}
-                  onGoHome={handleBookAnother} // <--- AQUI CONECTAMOS NUESTRA FUNCIÓN
+                  onGoHome={handleBookAnother}
                 />
               </motion.div>
             )}

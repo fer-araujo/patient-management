@@ -1,3 +1,4 @@
+import { useState, useEffect } from "react";
 import {
   Sparkles,
   Activity,
@@ -8,17 +9,47 @@ import {
   Droplet,
   MoveUp,
   Wind,
+  Loader2,
 } from "lucide-react";
 import { motion, type Variants } from "framer-motion";
-import { CLINIC_SERVICES } from "../../../data/mockServices";
+import {
+  fetchActiveServices,
+  type ClinicService,
+} from "../../../lib/services/catalogService";
+import toast from "react-hot-toast";
 
 interface Props {
-  isDirectMode?: boolean; // <-- NUEVA PROP
+  isDirectMode?: boolean;
   onBack: () => void;
   onSelect: (serviceId: string) => void;
 }
 
-export const ServiceSelector = ({ isDirectMode = false, onBack, onSelect }: Props) => {
+export const ServiceSelector = ({
+  isDirectMode = false,
+  onBack,
+  onSelect,
+}: Props) => {
+  const [services, setServices] = useState<ClinicService[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
+
+  useEffect(() => {
+    const loadServices = async () => {
+      try {
+        const data = await fetchActiveServices();
+        setServices(data);
+      } catch (error: unknown) {
+        console.error(
+          "Error al cargar los tratamientos:",
+          error instanceof Error ? error.message : error
+        );
+        toast.error("Error al cargar los tratamientos.");
+      } finally {
+        setIsLoading(false);
+      }
+    };
+    loadServices();
+  }, []);
+
   const container: Variants = {
     hidden: { opacity: 0 },
     show: { opacity: 1, transition: { staggerChildren: 0.1 } },
@@ -29,16 +60,53 @@ export const ServiceSelector = ({ isDirectMode = false, onBack, onSelect }: Prop
     show: { opacity: 1, y: 0, transition: { duration: 0.3, ease: "easeOut" } },
   };
 
-  const getIconForService = (id: string) => {
-    switch (id) {
-      case "toxina-botulinica": return <Syringe className="w-5 h-5" />;
-      case "acido-hialuronico": return <Droplet className="w-5 h-5" />;
-      case "hilos-tensores": return <MoveUp className="w-5 h-5" />;
-      case "prp": return <Activity className="w-5 h-5" />;
-      case "ozonoterapia": return <Wind className="w-5 h-5" />;
-      default: return <Sparkles className="w-5 h-5" />;
+  // Mapeador Inteligente UI (Basado en el nombre o categoría, no en el UUID)
+  const getVisualsForService = (name: string) => {
+    const lowerName = name.toLowerCase();
+    if (lowerName.includes("toxina") || lowerName.includes("botox")) {
+      return {
+        icon: <Syringe className="w-5 h-5" />,
+        colorClass: "text-rose-500 bg-rose-50 border-rose-100",
+      };
     }
+    if (lowerName.includes("hialuronico") || lowerName.includes("relleno")) {
+      return {
+        icon: <Droplet className="w-5 h-5" />,
+        colorClass: "text-blue-500 bg-blue-50 border-blue-100",
+      };
+    }
+    if (lowerName.includes("hilos")) {
+      return {
+        icon: <MoveUp className="w-5 h-5" />,
+        colorClass: "text-amber-500 bg-amber-50 border-amber-100",
+      };
+    }
+    if (lowerName.includes("prp") || lowerName.includes("plasma")) {
+      return {
+        icon: <Activity className="w-5 h-5" />,
+        colorClass: "text-fuchsia-500 bg-fuchsia-50 border-fuchsia-100",
+      };
+    }
+    if (lowerName.includes("ozono") || lowerName.includes("suero")) {
+      return {
+        icon: <Wind className="w-5 h-5" />,
+        colorClass: "text-cyan-500 bg-cyan-50 border-cyan-100",
+      };
+    }
+    // Default
+    return {
+      icon: <Sparkles className="w-5 h-5" />,
+      colorClass: "text-brand-primary bg-brand-light/30 border-brand-light/50",
+    };
   };
+
+  // Buscamos la "Consulta de Valoración" por nombre
+  const valoracionService = services.find(
+    (s) =>
+      s.name.toLowerCase().includes("valoración") ||
+      s.name.toLowerCase().includes("valoracion"),
+  );
+  const otherServices = services.filter((s) => s.id !== valoracionService?.id);
 
   return (
     <motion.div
@@ -49,9 +117,8 @@ export const ServiceSelector = ({ isDirectMode = false, onBack, onSelect }: Prop
       className="max-w-3xl w-full mx-auto py-4"
     >
       <div className="flex items-center gap-4 mb-8">
-        {/* LÓGICA DEL BOTÓN ATRÁS (COMO EN EL DATETIME) */}
         {isDirectMode ? (
-           <>
+          <>
             <button
               onClick={onBack}
               className="w-10 h-10 cursor-pointer rounded-full bg-brand-light/40 flex items-center justify-center text-brand-primary hover:bg-brand-light/70 transition-colors shrink-0"
@@ -90,63 +157,84 @@ export const ServiceSelector = ({ isDirectMode = false, onBack, onSelect }: Prop
         disponibles de la Dra. Carmen Torres.
       </p>
 
-      <motion.div variants={container} initial="hidden" animate="show" className="space-y-8">
-        
-        <motion.div variants={item}>
-          <h3 className="text-sm font-bold text-brand-gray uppercase tracking-wider mb-3 ml-2">
-            Si es tu primera vez
-          </h3>
-          <button
-            onClick={() => onSelect("valoracion")}
-            className="w-full cursor-pointer text-left bg-linear-to-br from-white to-brand-light/20 border-2 border-brand-light/60 rounded-3xl p-5 sm:p-6 hover:border-brand-primary hover:shadow-xl hover:shadow-brand-primary/10 transition-all group flex items-center justify-between"
-          >
-            <div className="flex items-center gap-5 sm:gap-6 pr-4">
-              <div className="w-16 h-16 rounded-2xl flex items-center justify-center shrink-0 border border-blue-100 bg-blue-50 text-blue-600 transition-transform group-hover:scale-110 shadow-sm">
-                <Stethoscope className="w-8 h-8" />
-              </div>
-              <div>
-                <h3 className="text-xl font-bold text-brand-dark mb-1 group-hover:text-brand-primary transition-colors">
-                  Consulta de Valoración
-                </h3>
-                <p className="text-sm text-brand-gray font-medium leading-relaxed">
-                  Revisión general y diagnóstico. Ideal si no estás seguro de qué tratamiento necesitas.
-                </p>
-              </div>
-            </div>
-
-            <div className="w-10 h-10 rounded-full bg-white border border-slate-100 shadow-sm flex items-center justify-center text-brand-gray/40 group-hover:bg-brand-primary group-hover:border-brand-primary group-hover:text-white transition-all shrink-0">
-              <ChevronRight className="w-6 h-6" />
-            </div>
-          </button>
-        </motion.div>
-
-        <motion.div variants={item}>
-          <h3 className="text-sm font-bold text-brand-gray uppercase tracking-wider mb-3 ml-2">
-            Tratamientos Específicos
-          </h3>
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-4">
-            {CLINIC_SERVICES.map((service) => (
+      {isLoading ? (
+        <div className="flex flex-col items-center justify-center py-12">
+          <Loader2 className="w-10 h-10 animate-spin text-brand-primary mb-4" />
+          <p className="text-brand-gray font-medium">
+            Cargando catálogo de servicios...
+          </p>
+        </div>
+      ) : (
+        <motion.div
+          variants={container}
+          initial="hidden"
+          animate="show"
+          className="space-y-8"
+        >
+          {valoracionService && (
+            <motion.div variants={item}>
+              <h3 className="text-sm font-bold text-brand-gray uppercase tracking-wider mb-3 ml-2">
+                Si es tu primera vez
+              </h3>
               <button
-                key={service.id}
-                onClick={() => onSelect(service.id)}
-                className="w-full cursor-pointer text-left bg-white border border-slate-200 rounded-2xl p-4 hover:border-brand-primary hover:shadow-md hover:shadow-brand-primary/10 transition-all group flex items-start gap-4"
+                onClick={() => onSelect(valoracionService.id)}
+                className="w-full cursor-pointer text-left bg-linear-to-br from-white to-brand-light/20 border-2 border-brand-light/60 rounded-3xl p-5 sm:p-6 hover:border-brand-primary hover:shadow-xl hover:shadow-brand-primary/10 transition-all group flex items-center justify-between"
               >
-                <div className={`w-12 h-12 rounded-xl flex items-center justify-center shrink-0 border transition-transform group-hover:scale-105 ${service.color}`}>
-                  {getIconForService(service.id)}
+                <div className="flex items-center gap-5 sm:gap-6 pr-4">
+                  <div className="w-16 h-16 rounded-2xl flex items-center justify-center shrink-0 border border-blue-100 bg-blue-50 text-blue-600 transition-transform group-hover:scale-110 shadow-sm">
+                    <Stethoscope className="w-8 h-8" />
+                  </div>
+                  <div>
+                    <h3 className="text-xl font-bold text-brand-dark mb-1 group-hover:text-brand-primary transition-colors">
+                      {valoracionService.name}
+                    </h3>
+                    <p className="text-sm text-brand-gray font-medium leading-relaxed">
+                      {valoracionService.description ||
+                        "Revisión general y diagnóstico."}
+                    </p>
+                  </div>
                 </div>
-                <div className="flex-1 pr-2 mt-0.5">
-                  <h4 className="text-base font-bold text-brand-dark mb-1 group-hover:text-brand-primary transition-colors leading-tight">
-                    {service.name}
-                  </h4>
-                  <p className="text-xs text-brand-gray font-medium leading-snug line-clamp-2">
-                    {service.desc}
-                  </p>
+
+                <div className="w-10 h-10 rounded-full bg-white border border-slate-100 shadow-sm flex items-center justify-center text-brand-gray/40 group-hover:bg-brand-primary group-hover:border-brand-primary group-hover:text-white transition-all shrink-0">
+                  <ChevronRight className="w-6 h-6" />
                 </div>
               </button>
-            ))}
-          </div>
+            </motion.div>
+          )}
+
+          <motion.div variants={item}>
+            <h3 className="text-sm font-bold text-brand-gray uppercase tracking-wider mb-3 ml-2">
+              Tratamientos Específicos
+            </h3>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-4">
+              {otherServices.map((service) => {
+                const visuals = getVisualsForService(service.name);
+                return (
+                  <button
+                    key={service.id}
+                    onClick={() => onSelect(service.id)}
+                    className="w-full cursor-pointer text-left bg-white border border-slate-200 rounded-2xl p-4 hover:border-brand-primary hover:shadow-md hover:shadow-brand-primary/10 transition-all group flex items-start gap-4"
+                  >
+                    <div
+                      className={`w-12 h-12 rounded-xl flex items-center justify-center shrink-0 border transition-transform group-hover:scale-105 ${visuals.colorClass}`}
+                    >
+                      {visuals.icon}
+                    </div>
+                    <div className="flex-1 pr-2 mt-0.5">
+                      <h4 className="text-base font-bold text-brand-dark mb-1 group-hover:text-brand-primary transition-colors leading-tight">
+                        {service.name}
+                      </h4>
+                      <p className="text-xs text-brand-gray font-medium leading-snug line-clamp-2">
+                        {service.description}
+                      </p>
+                    </div>
+                  </button>
+                );
+              })}
+            </div>
+          </motion.div>
         </motion.div>
-      </motion.div>
+      )}
     </motion.div>
   );
 };
