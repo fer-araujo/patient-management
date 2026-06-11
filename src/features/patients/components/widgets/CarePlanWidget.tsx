@@ -1,14 +1,8 @@
 import { Pill, Sparkles } from "lucide-react";
+import type { CarePlanItem } from "../../../../lib/services/patientDashboardService";
 
-interface CareItem {
-  id: number;
-  type: string;
-  name: string;
-  instruction: string;
-  daysLeft: string;
-}
 
-export const CarePlanWidget = ({ plan }: { plan: CareItem[] }) => (
+export const CarePlanWidget = ({ plan }: { plan: CarePlanItem[] }) => (
   <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
     {plan.map((item) => (
       <div

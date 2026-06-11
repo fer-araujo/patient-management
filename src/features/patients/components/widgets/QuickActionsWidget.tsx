@@ -1,85 +1,103 @@
 import { useRef } from "react";
-import { Upload, Leaf } from "lucide-react";
+import { Upload, Leaf, FileText, ChevronRight } from "lucide-react";
 
 interface QuickActionsProps {
   onFileUpload: (e: React.ChangeEvent<HTMLInputElement>) => void;
-  onOpenCareGuide?: () => void; // Para abrir el modal de cuidados post-tratamiento en el futuro
+  onOpenCareGuide: () => void;
+  onOpenRecipe: () => void;
 }
 
 export const QuickActionsWidget = ({
   onFileUpload,
   onOpenCareGuide,
+  onOpenRecipe,
 }: QuickActionsProps) => {
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   return (
     <>
-      {/* 1. SUBIR ESTUDIOS (Teal) */}
-      <div
-        onClick={() => fileInputRef.current?.click()}
-        className="cursor-pointer bg-teal-50 hover:bg-teal-100/50 border border-teal-200 rounded-3xl p-5 group transition-all shadow-[0_2px_10px_rgb(0,0,0,0.02)]"
-      >
-        <input
-          type="file"
-          accept="image/*, application/pdf"
-          className="hidden"
-          ref={fileInputRef}
-          onChange={onFileUpload}
-        />
-        <div className="flex items-center justify-between">
-          <div>
-            <h3 className="text-lg font-bold text-teal-950 mb-0.5">
-              Subir Estudios
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+        {/* 1. ESTUDIOS - Premium Horizontal */}
+        <div
+          onClick={() => fileInputRef.current?.click()}
+          className="cursor-pointer bg-white border border-slate-100 rounded-2xl p-4 flex items-center gap-4 shadow-[0_2px_10px_rgb(0,0,0,0.02)] hover:shadow-[0_4px_15px_rgb(0,0,0,0.05)] hover:border-teal-200 transition-all group"
+        >
+          <input
+            type="file"
+            accept="image/*, application/pdf"
+            className="hidden"
+            ref={fileInputRef}
+            onChange={onFileUpload}
+          />
+          {/* FIX: Contenedor cuadrado w-12 h-12 */}
+          <div className="w-12 h-12 bg-teal-50 text-teal-600 rounded-xl flex items-center justify-center shrink-0 group-hover:scale-105 transition-transform">
+            <Upload className="w-5 h-5" strokeWidth={2.5} />
+          </div>
+          <div className="flex-1 text-left">
+            <h3 className="text-sm font-extrabold text-brand-dark mb-0.5">
+              Estudios
             </h3>
-            <p className="text-sm text-teal-700 font-medium">
-              Labs o Radiografías
+            <p className="text-[12px] text-brand-gray font-medium leading-tight">
+              Subir laboratorios
             </p>
           </div>
-          <div className="w-12 h-12 bg-white rounded-full flex items-center justify-center text-teal-600 shadow-sm group-hover:scale-105 transition-transform">
-            <Upload className="w-5 h-5" />
-          </div>
+          <ChevronRight className="w-4 h-4 text-slate-300 group-hover:text-teal-500 transition-colors shrink-0" />
         </div>
-      </div>
 
-      {/* 2. CUIDADOS POST-TRATAMIENTO (Violeta/Lila suave para regeneración) */}
-      <div
-        onClick={onOpenCareGuide}
-        className="cursor-pointer bg-violet-50 hover:bg-violet-100/50 border border-violet-200 rounded-3xl p-5 group transition-all shadow-[0_2px_10px_rgb(0,0,0,0.02)]"
-      >
-        <div className="flex items-center justify-between">
-          <div>
-            <h3 className="text-lg font-bold text-violet-950 mb-0.5">
-              Guía de Cuidados
+        {/* 2. MI RECETA - Premium Horizontal */}
+        <div
+          onClick={onOpenRecipe}
+          className="cursor-pointer bg-white border border-slate-100 rounded-2xl p-4 flex items-center gap-4 shadow-[0_2px_10px_rgb(0,0,0,0.02)] hover:shadow-[0_4px_15px_rgb(0,0,0,0.05)] hover:border-indigo-200 transition-all group"
+        >
+          {/* FIX: Contenedor cuadrado w-12 h-12 */}
+          <div className="w-12 h-12 bg-indigo-50 text-indigo-600 rounded-xl flex items-center justify-center shrink-0 group-hover:scale-105 transition-transform">
+            <FileText className="w-5 h-5" strokeWidth={2.5} />
+          </div>
+          <div className="flex-1 text-left">
+            <h3 className="text-sm font-extrabold text-brand-dark mb-0.5">
+              Mi Receta
             </h3>
-            <p className="text-sm text-violet-700 font-medium">
+            <p className="text-[12px] text-brand-gray font-medium leading-tight">
+              Indicaciones médicas
+            </p>
+          </div>
+          <ChevronRight className="w-4 h-4 text-slate-300 group-hover:text-indigo-500 transition-colors shrink-0" />
+        </div>
+
+        {/* 3. CUIDADOS - Premium Horizontal */}
+        <div
+          onClick={onOpenCareGuide}
+          className="cursor-pointer bg-white border border-slate-100 rounded-2xl p-4 flex items-center gap-4 shadow-[0_2px_10px_rgb(0,0,0,0.02)] hover:shadow-[0_4px_15px_rgb(0,0,0,0.05)] hover:border-violet-200 transition-all group"
+        >
+          {/* FIX: Contenedor cuadrado w-12 h-12 */}
+          <div className="w-12 h-12 bg-violet-50 text-violet-600 rounded-xl flex items-center justify-center shrink-0 group-hover:scale-105 transition-transform">
+            <Leaf className="w-5 h-5" strokeWidth={2.5} />
+          </div>
+          <div className="flex-1 text-left">
+            <h3 className="text-sm font-extrabold text-brand-dark mb-0.5">
+              Cuidados
+            </h3>
+            <p className="text-[12px] text-brand-gray font-medium leading-tight">
               Post-tratamiento
             </p>
           </div>
-          <div className="w-12 h-12 bg-white rounded-full flex items-center justify-center text-violet-500 shadow-sm group-hover:scale-105 transition-transform">
-            <Leaf className="w-5 h-5" />
-          </div>
+          <ChevronRight className="w-4 h-4 text-slate-300 group-hover:text-violet-500 transition-colors shrink-0" />
         </div>
       </div>
 
       {/* =========================================================
-          TODO: MVP Fase 2 - Facturación (Descomentar cuando el nuevo consultorio esté listo fiscalmente)
+          TODO: MVP Fase 2 - Facturación
           ========================================================= */}
-      {/* <div className="cursor-pointer bg-blue-50 hover:bg-blue-100/50 border border-blue-200 rounded-3xl p-5 group transition-all shadow-[0_2px_10px_rgb(0,0,0,0.02)] sm:col-span-2">
-        <div className="flex items-center justify-between">
-          <div>
-            <h3 className="text-lg font-bold text-blue-950 mb-0.5">
-              Solicitar Factura
-            </h3>
-            <p className="text-sm text-blue-700 font-medium">
-              De tu última cita
-            </p>
-          </div>
-          <div className="w-12 h-12 bg-white rounded-full flex items-center justify-center text-blue-500 shadow-sm group-hover:scale-105 transition-transform">
-            <Receipt className="w-5 h-5" />
-          </div>
+      {/* <div className="cursor-pointer bg-white border border-slate-100 rounded-2xl p-4 flex items-center gap-4 shadow-[0_2px_10px_rgb(0,0,0,0.02)] hover:shadow-[0_4px_15px_rgb(0,0,0,0.05)] hover:border-blue-200 transition-all mt-4 group">
+        <div className="w-12 h-12 bg-blue-50 text-blue-600 rounded-xl flex items-center justify-center shrink-0 group-hover:scale-105 transition-transform">
+          <Receipt className="w-5 h-5" strokeWidth={2.5} />
         </div>
-      </div> 
-      */}
+        <div className="flex-1 text-left">
+          <h3 className="text-sm font-extrabold text-brand-dark mb-0.5">Solicitar Factura</h3>
+          <p className="text-[12px] text-brand-gray font-medium leading-tight">De tu última cita</p>
+        </div>
+        <ChevronRight className="w-4 h-4 text-slate-300 group-hover:text-blue-500 transition-colors shrink-0" />
+      </div> */}
     </>
   );
 };
