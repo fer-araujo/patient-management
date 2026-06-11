@@ -1,5 +1,11 @@
 import { useEffect, useState } from "react";
-import { BrowserRouter, Routes, Route, useNavigate } from "react-router-dom";
+import {
+  BrowserRouter,
+  Routes,
+  Route,
+  useNavigate,
+  Navigate,
+} from "react-router-dom";
 import type { Session } from "@supabase/supabase-js";
 import { supabase } from "./lib/supabase";
 
@@ -9,26 +15,24 @@ import { DashboardLayout } from "./components/layout/DashboardLayout";
 import { DashboardBooking } from "./features/appointments/components/DashboardBooking";
 import { RescheduleFlow } from "./features/appointments/components/RescheduleFlow";
 
-// IMPORTS DE LA DOCTORA
 import { DoctorDashboard } from "./features/doctor/components/DoctorDashboard";
 import { AdminLogin } from "./features/auth/components/AdminLogin";
 import { Toast } from "./components/ui/Toast";
+import { Loader2 } from "lucide-react";
 
 // =========================================
-// 0. COMPONENTE GUARDIÁN (Ruta Protegida)
+// 0A. COMPONENTE GUARDIÁN (LA DOCTORA)
 // =========================================
 function DoctorProtectedRoute({ children }: { children: React.ReactNode }) {
   const [session, setSession] = useState<Session | null>(null);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    // Revisamos la sesión inicial
     supabase.auth.getSession().then(({ data: { session } }) => {
       setSession(session);
       setLoading(false);
     });
 
-    // Escuchamos cambios (cuando inicia o cierra sesión)
     const {
       data: { subscription },
     } = supabase.auth.onAuthStateChange((_event, session) => {
@@ -38,71 +42,101 @@ function DoctorProtectedRoute({ children }: { children: React.ReactNode }) {
     return () => subscription.unsubscribe();
   }, []);
 
-  if (loading) {
+  if (loading)
     return (
       <div className="min-h-screen bg-slate-50 flex items-center justify-center text-brand-primary font-bold">
         Verificando acceso médico...
       </div>
     );
-  }
+  if (!session) return <AdminLogin onLoginSuccess={() => {}} />;
 
-  // Si no hay sesión de administrador, mostramos el Login.
-  // (La función onLoginSuccess no hace nada aquí porque el onAuthStateChange de arriba detecta el login automáticamente)
-  if (!session) {
-    return <AdminLogin onLoginSuccess={() => {}} />;
-  }
-
-  // Si hay sesión, renderizamos los hijos (El Dashboard)
   return <>{children}</>;
 }
 
-// 1. Extraemos las rutas a un componente interno
+// =========================================
+// 0B. 🛡️ NUEVO COMPONENTE GUARDIÁN (PACIENTES) 🛡️
+// =========================================
+function PatientProtectedRoute({ children }: { children: React.ReactNode }) {
+  const [session, setSession] = useState<Session | null>(null);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    supabase.auth.getSession().then(({ data: { session } }) => {
+      setSession(session);
+      setLoading(false);
+    });
+
+    // No necesitamos suscripción reactiva aquí porque si cierran sesión los pateamos manualmente,
+    // pero verificamos al instante de montar el componente.
+  }, []);
+
+  if (loading) {
+    return (
+      <div className="min-h-screen bg-white flex items-center justify-center">
+        <Loader2 className="w-10 h-10 animate-spin text-brand-primary" />
+      </div>
+    );
+  }
+
+  // Si alguien escribe /dashboard en la URL y NO tiene token, lo pateamos a la página principal.
+  if (!session) {
+    return <Navigate to="/" replace />;
+  }
+
+  return <>{children}</>;
+}
+
+// =========================================
+// 1. RUTAS
+// =========================================
 function AppRoutes() {
   const navigate = useNavigate();
 
   return (
     <Routes>
-      {/* =========================================
-          RUTAS PÚBLICAS Y DE PACIENTES
-          (Estas siguen funcionando igual que antes)
-          ========================================= */}
       <Route
         path="/"
         element={<BookingFlow onComplete={() => navigate("/dashboard")} />}
       />
 
+      {/* TODAS LAS RUTAS DEL PACIENTE ESTÁN AHORA DENTRO DE SU GUARDIÁN */}
       <Route
         path="/dashboard"
         element={
-          <DashboardLayout>
-            <PatientDashboard />
-          </DashboardLayout>
-        }
-      />
-      <Route
-        path="/dashboard/agendar"
-        element={
-          <DashboardLayout>
-            <DashboardBooking />
-          </DashboardLayout>
-        }
-      />
-      <Route
-        path="/dashboard/reprogramar"
-        element={
-          <DashboardLayout>
-            <RescheduleFlow />
-          </DashboardLayout>
+          <PatientProtectedRoute>
+            <DashboardLayout>
+              <PatientDashboard />
+            </DashboardLayout>
+          </PatientProtectedRoute>
         }
       />
 
-      {/* =========================================
-          RUTAS DE LA DOCTORA (AHORA PROTEGIDAS)
-          ========================================= */}
+      <Route
+        path="/dashboard/agendar"
+        element={
+          <PatientProtectedRoute>
+            <DashboardLayout>
+              <DashboardBooking />
+            </DashboardLayout>
+          </PatientProtectedRoute>
+        }
+      />
+
+      <Route
+        path="/dashboard/reprogramar"
+        element={
+          <PatientProtectedRoute>
+            <DashboardLayout>
+              <RescheduleFlow />
+            </DashboardLayout>
+          </PatientProtectedRoute>
+        }
+      />
+
+      {/* RUTAS DE LA DOCTORA */}
       <Route
         path="/doctor/dashboard"
         element={
-          /* Envolvemos el Dashboard con el Guardián */
           <DoctorProtectedRoute>
             <DashboardLayout>
               <DoctorDashboard />
@@ -114,11 +148,10 @@ function AppRoutes() {
   );
 }
 
-// 2. App envuelve todo en el BrowserRouter
 function App() {
   return (
     <BrowserRouter>
-      <Toast />{/* Colocamos el Toast aquí para que esté disponible en todas las rutas */}
+      <Toast />
       <AppRoutes />
     </BrowserRouter>
   );

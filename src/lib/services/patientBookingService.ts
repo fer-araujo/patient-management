@@ -74,29 +74,43 @@ export const createAuthenticatedAppointment = async (
   } = await supabase.auth.getUser();
   if (authError || !user) throw new Error("Sesión del paciente no encontrada.");
 
+  // FIX MAGISTRAL: Normalizamos el teléfono igual que en el Dashboard
+  let phoneToSearch = user.phone || "";
+  if (!phoneToSearch.startsWith("+")) {
+    phoneToSearch = `+${phoneToSearch}`;
+  }
+
+  // Buscamos por teléfono, NO por profile_id
   const { data: patient, error: patientError } = await supabase
     .from("patients")
     .select("id")
-    .eq("profile_id", user.id)
-    .single();
+    .eq("phone", phoneToSearch)
+    .maybeSingle(); // Usamos maybeSingle para evitar el error 406
 
-  if (patientError || !patient)
+  if (patientError || !patient) {
+    console.error(
+      "[BookingService] Error al buscar expediente autenticado:",
+      patientError,
+    );
     throw new Error(
       "No se encontró un expediente clínico vinculado a tu cuenta.",
     );
+  }
 
-  // USO DE TU UTILIDAD EXISTENTE
+  // Usamos tu utilidad existente
   const utcIsoDateTime = combineIsoDateAndTime(date, time);
 
   const { error: apptError } = await supabase.from("appointments").insert({
-    patient_id: patient.id,
+    patient_id: patient.id, // Ahora sí tenemos el ID correcto
     service_id: serviceId,
     start_time: utcIsoDateTime,
     status: "pending",
   });
 
-  if (apptError)
+  if (apptError) {
+    console.error("[BookingService] Error al insertar nueva cita:", apptError);
     throw new Error(`Error al registrar cita: ${apptError.message}`);
+  }
 };
 
 // Revisa si el paciente ya tiene un expediente basado en su número

@@ -1,13 +1,20 @@
 import { useState } from "react";
-import { ChevronRight, Calendar, User, Syringe, ArrowRight } from "lucide-react";
+import {
+  ChevronRight,
+  Calendar,
+  User,
+  Syringe,
+  ArrowRight,
+} from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import { Modal } from "../../../../components/ui/Modal";
 import { Button } from "../../../../components/ui/Button";
 
 export interface PastAppointment {
-  id: number;
+  id: string;
   date: string;
   service: string;
+  serviceId: string | undefined;
   doctor: string;
 }
 
@@ -17,7 +24,8 @@ export const PastAppointmentsList = ({
   appointments: PastAppointment[];
 }) => {
   const navigate = useNavigate();
-  const [selectedAppointment, setSelectedAppointment] = useState<PastAppointment | null>(null);
+  const [selectedAppointment, setSelectedAppointment] =
+    useState<PastAppointment | null>(null);
 
   return (
     <>
@@ -124,13 +132,16 @@ export const PastAppointmentsList = ({
               <Button
                 onClick={() =>
                   navigate("/dashboard/agendar", {
-                    state: { preselectedService: "toxina-botulinica" }, // <-- En prod usamos selectedAppointment.serviceId
+                    state: {
+                      preselectedService: selectedAppointment.serviceId,
+                      preselectedServiceName: selectedAppointment.service,
+                    },
                   })
                 }
                 className="w-full sm:w-2/5 py-3 rounded-xl shadow-md group cursor-pointer text-base font-bold"
               >
                 Agendar de nuevo
-                <ArrowRight className="w-4 h-4 group-hover:translate-x-1 transition-transform" />
+                <ArrowRight className="w-4 h-4 group-hover:translate-x-1 transition-transform ml-2" />
               </Button>
             </div>
           </div>

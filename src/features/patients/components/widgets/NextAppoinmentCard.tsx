@@ -6,9 +6,10 @@ interface NextAppointmentProps {
   doctor: string;
   date: string;
   time: string;
-  status?: "pending" | "confirmed";
+  location?: string;
+  status?: "pending" | "confirmed" | "completed" | "cancelled" | "rejected";
   onReschedule?: () => void;
-  onCancel?: () => void; // <-- NUEVA PROP
+  onCancel?: () => void;
 }
 
 export const NextAppointmentCard = ({
@@ -18,7 +19,7 @@ export const NextAppointmentCard = ({
   time,
   status,
   onReschedule,
-  onCancel, // <-- RECIBIMOS LA PROP
+  onCancel,
 }: NextAppointmentProps) => {
   const isConfirmed = status === "confirmed";
 
@@ -71,7 +72,7 @@ export const NextAppointmentCard = ({
           <Button
             variant="outline"
             onClick={onReschedule}
-            className="w-full py-3 rounded-2xl text-sm font-bold text-brand-dark/70 hover:text-brand-dark hover:bg-slate-50 transition-colors border border-transparent hover:border-slate-200 cursor-pointer"
+            className="w-full py-3 rounded-2xl text-base font-bold text-brand-dark/70 hover:text-brand-dark hover:bg-slate-50 transition-colors border border-transparent hover:border-slate-200 cursor-pointer"
           >
             Reprogramar
           </Button>
@@ -79,7 +80,7 @@ export const NextAppointmentCard = ({
           {/* NUEVO BOTÓN DE CANCELAR (Sutil para no fomentar la cancelación rápida) */}
           <button
             onClick={onCancel}
-            className="text-xs font-bold text-red-400 hover:text-red-600 transition-colors mt-1 py-1 cursor-pointer w-full text-center"
+            className="text-base font-bold text-red-400 hover:text-red-600 transition-colors mt-1 py-1 cursor-pointer w-full text-center"
           >
             Cancelar cita
           </button>

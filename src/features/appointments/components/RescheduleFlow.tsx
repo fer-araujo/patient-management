@@ -16,24 +16,42 @@ export const RescheduleFlow = () => {
   const { appointmentId, serviceId, serviceName, currentDate, currentTime } =
     location.state || {};
 
-  // 1. TODOS LOS HOOKS HASTA ARRIBA (Cero errores condicionales)
+  // =========================================================================
+  // EL ESCUDO ANTI-CICLOS (FIX DEFINITIVO PARA EL CPU)
+  // Convertimos "2026-06-10T23:15:00+00:00" -> "2026-06-10"
+  // =========================================================================
+  const safeDate =
+    typeof currentDate === "string" && currentDate.includes("T")
+      ? currentDate.split("T")[0]
+      : currentDate;
+
   const [step, setStep] = useState<1 | 2>(1);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [bookingData, setBookingData] = useState({
     serviceName: serviceName || "Consulta Médica",
-    date: currentDate || "",
+    date: safeDate || "", // <--- USAMOS LA FECHA LIMPIA AQUÍ
     time: currentTime || "",
   });
 
-  // 2. EFECTO DE SEGURIDAD PARA REDIRECCIÓN
   useEffect(() => {
-    if (!appointmentId || !serviceId) {
+    // PROTECCIÓN DE TITANIO CONTRA UUIDS FALSOS
+    const isValidUUID = (id: string) =>
+      /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(
+        id || "",
+      );
+
+    if (!appointmentId || !serviceId || !isValidUUID(serviceId)) {
+      console.error(
+        "[RescheduleFlow] ALERTA: Datos inválidos. Deteniendo ciclo infinito. Expulsando al dashboard...",
+        { appointmentId, serviceId },
+      );
       navigate("/dashboard");
     }
   }, [appointmentId, serviceId, navigate]);
 
-  // 3. EARLY RETURN DESPUÉS DE TODOS LOS HOOKS
-  if (!appointmentId || !serviceId) return null;
+  // Si los datos son inválidos, ni siquiera intentamos renderizar
+  if (!appointmentId || !serviceId || !/^[0-9a-f]{8}-/i.test(serviceId))
+    return null;
 
   const handleDateTimeSubmit = async (newDate: string, newTime: string) => {
     if (isSubmitting) return;
@@ -48,8 +66,8 @@ export const RescheduleFlow = () => {
       setBookingData((prev) => ({ ...prev, date: newDate, time: newTime }));
       toast.success("Cita reprogramada con éxito.", { id: loadingToast });
       setStep(2);
-    } catch (error) {
-      console.error(error);
+    } catch (error: unknown) {
+      console.error("[RescheduleFlow] Error al reprogramar la cita:", error);
       toast.error("Error al reprogramar la cita.", { id: loadingToast });
     } finally {
       setIsSubmitting(false);
@@ -82,7 +100,7 @@ export const RescheduleFlow = () => {
 
                 <DateTimeSelector
                   serviceId={serviceId}
-                  initialDate={bookingData.date}
+                  initialDate={bookingData.date} // AHORA RECIBE LA FECHA SEGURA
                   initialTime={bookingData.time}
                   isDirectMode={true}
                   onBack={() => navigate("/dashboard")}
