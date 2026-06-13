@@ -31,25 +31,33 @@ export const PatientPhoneLogin = ({
   const [countryCode, setCountryCode] = useState("+52");
   const [phoneNumber, setPhoneNumber] = useState("");
   const [otp, setOtp] = useState("");
-  const [isLoading, setIsLoading] = useState(false); // ESTADO DE CARGA AÑADIDO
+  const [isLoading, setIsLoading] = useState(false);
 
   const [mode, setMode] = useState<"new" | "login_phone" | "login_otp">("new");
   const navigate = useNavigate();
 
+  // =========================================================
   // FLUJO 1: "Agendar Cita" (Botón público principal)
+  // =========================================================
   const handleNewPatientSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (phoneNumber.length < 10) return;
+
+    // FIX DE UX: Validamos explícitamente y avisamos al paciente
+    if (phoneNumber.length < 10) {
+      const faltan = 10 - phoneNumber.length;
+      toast.error(
+        `Ingresa un número a 10 dígitos (te falta${faltan > 1 ? "n" : ""} ${faltan}).`,
+      );
+      return;
+    }
 
     setIsLoading(true);
     const fullPhone = countryCode + phoneNumber;
 
     try {
-      // 1. Verificamos si ya existe el paciente
       const exists = await checkPatientExists(fullPhone);
 
       if (exists) {
-        // 2A. SI EXISTE: Lo interceptamos, mandamos OTP y cambiamos pantalla
         toast.success(
           "Encontramos tu expediente. Te enviaremos un código de acceso.",
         );
@@ -61,7 +69,6 @@ export const PatientPhoneLogin = ({
 
         setMode("login_otp");
       } else {
-        // 2B. SI NO EXISTE: Avanza al registro normal (Paso 2)
         onSubmitNewPatient(countryCode, phoneNumber);
       }
     } catch (error) {
@@ -72,10 +79,20 @@ export const PatientPhoneLogin = ({
     }
   };
 
+  // =========================================================
   // FLUJO 2: "Entrar a mi Portal" (Botón de login explícito)
+  // =========================================================
   const handleRequestOtp = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (phoneNumber.length < 10) return;
+
+    // FIX DE UX: Validamos explícitamente y avisamos al paciente
+    if (phoneNumber.length < 10) {
+      const faltan = 10 - phoneNumber.length;
+      toast.error(
+        `Ingresa un número a 10 dígitos (te falta${faltan > 1 ? "n" : ""} ${faltan}).`,
+      );
+      return;
+    }
 
     setIsLoading(true);
     const fullPhone = countryCode + phoneNumber;
@@ -103,12 +120,18 @@ export const PatientPhoneLogin = ({
     }
   };
 
+  // =========================================================
   // FLUJO 3: Validar el Código
+  // =========================================================
   const handleVerifyOtp = async (e: React.FormEvent) => {
     e.preventDefault();
-    // Nota: Dependiendo de tu proveedor de SMS (Twilio, etc), el token suele ser de 6 dígitos.
-    // Si tu config en Supabase dice 6, cambia el .length === 6 y el maxLength del input.
-    if (otp.length < 4) return;
+
+    // FIX DE UX: Validamos que ingrese todos los dígitos del OTP
+    if (otp.length < 6) {
+      // Asumo 6 dígitos de Supabase. Cámbialo a 4 si configuraste eso.
+      toast.error("Ingresa el código completo enviado a tu celular.");
+      return;
+    }
 
     setIsLoading(true);
     const fullPhone = countryCode + phoneNumber;
@@ -132,6 +155,7 @@ export const PatientPhoneLogin = ({
       setIsLoading(false);
     }
   };
+
   return (
     <motion.div
       initial={{ opacity: 0, x: -20 }}
@@ -208,9 +232,10 @@ export const PatientPhoneLogin = ({
               </div>
 
               <div className="pt-2 xl:pt-4">
+                {/* FIX DE UX: El botón ya NO está disabled por longitud de teléfono, solo por carga */}
                 <Button
                   type="submit"
-                  disabled={phoneNumber.length < 10 || isLoading}
+                  disabled={isLoading}
                   className="group w-fit px-8 xl:px-10 rounded-full text-base xl:text-lg"
                 >
                   {isLoading ? (
@@ -267,7 +292,6 @@ export const PatientPhoneLogin = ({
             </p>
 
             <form onSubmit={handleRequestOtp} className="space-y-6">
-              {/* Mismos inputs de país y número que arriba */}
               <div className="flex gap-3 sm:gap-4 items-end">
                 <div className="relative w-28 sm:w-1/3 shrink-0">
                   <label className="text-brand-dark font-medium text-base xl:text-lg block mb-2 ml-1">
@@ -303,9 +327,10 @@ export const PatientPhoneLogin = ({
                 />
               </div>
 
+              {/* FIX DE UX: El botón ya NO está disabled por longitud */}
               <Button
                 type="submit"
-                disabled={phoneNumber.length < 10 || isLoading}
+                disabled={isLoading}
                 className="w-full sm:w-fit px-8 py-3.5 rounded-2xl text-base group"
               >
                 {isLoading ? (
@@ -355,15 +380,16 @@ export const PatientPhoneLogin = ({
                   value={otp}
                   onChange={(e) => setOtp(e.target.value.replace(/\D/g, ""))}
                   className="block w-full pl-12 pr-4 py-4 text-center tracking-[0.75em] bg-white border-2 border-brand-light rounded-2xl text-brand-dark font-black text-3xl focus:border-brand-primary focus:ring-4 focus:ring-brand-primary/10 transition-all outline-none"
-                  placeholder="••••"
-                  maxLength={6} // <-- Revisa si tu Supabase manda 4 o 6 dígitos
+                  placeholder="••••••"
+                  maxLength={6} // Verifica si usas 6 o 4 en Supabase
                   autoFocus
                 />
               </div>
 
+              {/* FIX DE UX: El botón ya NO está disabled por longitud */}
               <Button
                 type="submit"
-                disabled={otp.length < 4 || isLoading}
+                disabled={isLoading}
                 className="w-full sm:w-fit px-10 py-3.5 rounded-2xl text-base group"
               >
                 {isLoading ? (

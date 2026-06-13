@@ -180,7 +180,7 @@ export const PatientDashboard = () => {
   const handleConfirmCancel = async () => {
     if (!appointmentToCancel) return;
     try {
-      await cancelAppointment(appointmentToCancel.id, "Cancelada por paciente");
+      await cancelAppointment(appointmentToCancel.id, "Cancelada por paciente", "patient");
       setCancelState("success");
       setAppointments((prev) =>
         prev.map((a) =>

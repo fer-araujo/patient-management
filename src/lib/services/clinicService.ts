@@ -101,7 +101,7 @@ export const updateAppointmentStatus = async (
 ) => {
   const { error } = await supabase
     .from("appointments")
-    .update({ status })
+    .update({ status, updated_by: "doctor" })
     .eq("id", id);
 
   if (error) {
@@ -133,6 +133,7 @@ export const createAppointment = async (
     service_id: srv.id,
     start_time: utcIsoDateTime,
     status: "confirmed",
+    updated_by: "doctor",
   });
 
   if (error) {
@@ -145,10 +146,15 @@ export const createAppointment = async (
 export const rescheduleAppointment = async (
   id: string,
   isoDateTime: string,
+  updaterRole: "patient" | "doctor" = "patient",
 ) => {
   const { error } = await supabase
     .from("appointments")
-    .update({ start_time: isoDateTime, status: "pending" }) // AHORA SE QUEDA PENDIENTE
+    .update({
+      start_time: isoDateTime,
+      status: "pending",
+      updated_by: updaterRole,
+    }) // AHORA SE QUEDA PENDIENTE
     .eq("id", id);
 
   if (error) {
@@ -157,10 +163,18 @@ export const rescheduleAppointment = async (
   }
 };
 
-export const cancelAppointment = async (id: string, reason: string) => {
+export const cancelAppointment = async (
+  id: string,
+  reason: string,
+  updaterRole: "patient" | "doctor" = "patient",
+) => {
   const { error } = await supabase
     .from("appointments")
-    .update({ status: "cancelled", cancel_reason: reason })
+    .update({
+      status: "cancelled",
+      cancel_reason: reason,
+      updated_by: updaterRole,
+    })
     .eq("id", id);
   if (error) throw new Error("No se pudo cancelar la cita.");
 };

@@ -6,6 +6,7 @@ import {
   Check,
   FileText,
   ShieldCheck,
+  Users, // <-- Añadimos este icono
 } from "lucide-react";
 import { motion } from "framer-motion";
 import { Button } from "../../../components/ui/Button";
@@ -21,6 +22,7 @@ interface Props {
     birthYear: string;
     email: string;
     reason: string;
+    referredBy: string;
     termsAccepted: boolean;
   }) => void;
 }
@@ -28,9 +30,10 @@ interface Props {
 export const PatientRegistration = ({ onBack, onSubmit }: Props) => {
   const [formData, setFormData] = useState({
     fullName: "",
-    birthYear: "", // <-- INICIALIZADO
+    birthYear: "",
     email: "",
     reason: "",
+    referredBy: "",
     termsAccepted: false,
   });
   const [fileName, setFileName] = useState<string | null>(null);
@@ -99,11 +102,10 @@ export const PatientRegistration = ({ onBack, onSubmit }: Props) => {
           />
 
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 xl:gap-5">
-            {/* NUEVO INPUT: AÑO DE NACIMIENTO */}
             <div className="relative">
               <Input
                 label="Año de Nacimiento"
-                type="text" // Usamos text para controlar mejor el max length de 4 dígitos
+                type="text"
                 placeholder="Ej. 1975"
                 value={formData.birthYear}
                 onChange={(e) =>
@@ -129,6 +131,35 @@ export const PatientRegistration = ({ onBack, onSubmit }: Props) => {
             />
           </div>
 
+          {/* ¿Quién te refirió? */}
+          <div className="space-y-2">
+            <label
+              htmlFor="referredBy"
+              className="block text-brand-dark font-medium text-base xl:text-lg text-left tracking-normal ml-1"
+            >
+              ¿Quién te refirió con nosotros?{" "}
+              <span className="text-brand-gray/50 font-normal text-sm">
+                (Opcional)
+              </span>
+            </label>
+            <div className="relative">
+              <div className="absolute inset-y-0 left-0 pl-4 flex items-center pointer-events-none">
+                <Users className="h-5 w-5 text-brand-gray/40" />
+              </div>
+              <input
+                type="text"
+                id="referredBy"
+                name="referredBy"
+                placeholder="El nombre de un amig@"
+                value={formData.referredBy}
+                onChange={(e) =>
+                  setFormData({ ...formData, referredBy: e.target.value })
+                }
+                className="w-full pl-11 pr-4 py-3 border-2 border-brand-light rounded-xl text-base xl:text-lg text-brand-dark bg-white focus:border-brand-primary focus:ring-2 focus:ring-brand-primary/20 outline-none transition-all"
+              />
+            </div>
+          </div>
+
           <div className="flex flex-col gap-1.5">
             <label className="text-brand-dark font-medium text-base xl:text-lg text-left tracking-normal ml-1">
               Motivo de la consulta
@@ -144,7 +175,6 @@ export const PatientRegistration = ({ onBack, onSubmit }: Props) => {
             />
           </div>
 
-          {/* Input mágico para archivos (Compactado) */}
           <div className="flex flex-col gap-2">
             <label className="text-brand-dark font-medium text-base xl:text-lg text-left tracking-normal ml-1">
               Estudios o Fotos (Opcional)
@@ -228,7 +258,7 @@ export const PatientRegistration = ({ onBack, onSubmit }: Props) => {
               type="submit"
               disabled={
                 !formData.fullName ||
-                formData.birthYear.length < 4 || // <-- Validación de 4 dígitos
+                formData.birthYear.length < 4 ||
                 !formData.reason ||
                 !formData.termsAccepted
               }

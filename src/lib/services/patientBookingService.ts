@@ -1,5 +1,4 @@
 import { supabase } from "../supabase";
-// Importamos tu utilidad existente
 import { combineIsoDateAndTime } from "../../features/doctor/utils/calendarUtils";
 
 export interface PublicBookingSubmission {
@@ -10,6 +9,7 @@ export interface PublicBookingSubmission {
   fullName: string;
   email: string;
   reason: string;
+  referredBy?: string;
 }
 
 export const createPublicPatientAndAppointment = async (
@@ -19,16 +19,16 @@ export const createPublicPatientAndAppointment = async (
   const firstName = nameParts[0] || "Paciente";
   const lastName = nameParts.slice(1).join(" ") || "Desconocido";
 
-  const { data: existingPatient, error: searchError } = await supabase
-    .from("patients")
-    .select("id")
-    .eq("phone", data.phone)
-    .maybeSingle();
+  // 🛡️ FIX VIP: Usamos la función RPC que ignora el bloqueo de seguridad (RLS)
+  const { data: existingId, error: searchError } = await supabase.rpc(
+    "get_patient_id_by_phone",
+    { p_phone: data.phone },
+  );
 
   if (searchError)
     throw new Error(`Error al verificar paciente: ${searchError.message}`);
 
-  let patientId = existingPatient?.id;
+  let patientId = existingId;
 
   if (!patientId) {
     const { data: newPatient, error: patientError } = await supabase
@@ -39,6 +39,7 @@ export const createPublicPatientAndAppointment = async (
         phone: data.phone,
         email: data.email || null,
         status: "active",
+        referred_by: data.referredBy || null,
         notes: data.reason ? `Motivo inicial: ${data.reason}` : null,
       })
       .select("id")
@@ -49,7 +50,6 @@ export const createPublicPatientAndAppointment = async (
     patientId = newPatient.id;
   }
 
-  // USO DE TU UTILIDAD EXISTENTE
   const utcIsoDateTime = combineIsoDateAndTime(data.date, data.time);
 
   const { error: apptError } = await supabase.from("appointments").insert({
@@ -74,20 +74,18 @@ export const createAuthenticatedAppointment = async (
   } = await supabase.auth.getUser();
   if (authError || !user) throw new Error("Sesión del paciente no encontrada.");
 
-  // FIX MAGISTRAL: Normalizamos el teléfono igual que en el Dashboard
   let phoneToSearch = user.phone || "";
   if (!phoneToSearch.startsWith("+")) {
     phoneToSearch = `+${phoneToSearch}`;
   }
 
-  // Buscamos por teléfono, NO por profile_id
-  const { data: patient, error: patientError } = await supabase
-    .from("patients")
-    .select("id")
-    .eq("phone", phoneToSearch)
-    .maybeSingle(); // Usamos maybeSingle para evitar el error 406
+  // 🛡️ FIX VIP: Buscamos por teléfono usando el RPC
+  const { data: existingId, error: patientError } = await supabase.rpc(
+    "get_patient_id_by_phone",
+    { p_phone: phoneToSearch },
+  );
 
-  if (patientError || !patient) {
+  if (patientError || !existingId) {
     console.error(
       "[BookingService] Error al buscar expediente autenticado:",
       patientError,
@@ -97,11 +95,10 @@ export const createAuthenticatedAppointment = async (
     );
   }
 
-  // Usamos tu utilidad existente
   const utcIsoDateTime = combineIsoDateAndTime(date, time);
 
   const { error: apptError } = await supabase.from("appointments").insert({
-    patient_id: patient.id, // Ahora sí tenemos el ID correcto
+    patient_id: existingId, // Aquí usamos directamente el UUID devuelto
     service_id: serviceId,
     start_time: utcIsoDateTime,
     status: "pending",
@@ -113,18 +110,21 @@ export const createAuthenticatedAppointment = async (
   }
 };
 
-// Revisa si el paciente ya tiene un expediente basado en su número
+// ============================================================================
+// 🛡️ EL FIX PRINCIPAL DEL LOGIN
+// ============================================================================
 export const checkPatientExists = async (phone: string): Promise<boolean> => {
-  const { data, error } = await supabase
-    .from("patients")
-    .select("id")
-    .eq("phone", phone)
-    .maybeSingle();
+  // Llamamos a la función segura que no se bloquea por ser anónimos
+  const { data: existingId, error } = await supabase.rpc(
+    "get_patient_id_by_phone",
+    { p_phone: phone },
+  );
 
   if (error) {
     console.error("Error al buscar paciente:", error);
     return false;
   }
 
-  return !!data; // Retorna true si encontró un registro
+  // Si nos devuelve un UUID (letras y números), el paciente SÍ existe.
+  return !!existingId;
 };

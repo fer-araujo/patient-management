@@ -29,7 +29,7 @@ export const RescheduleFlow = () => {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [bookingData, setBookingData] = useState({
     serviceName: serviceName || "Consulta Médica",
-    date: safeDate || "", // <--- USAMOS LA FECHA LIMPIA AQUÍ
+    date: safeDate || "",
     time: currentTime || "",
   });
 
@@ -61,7 +61,7 @@ export const RescheduleFlow = () => {
 
     try {
       const utcIsoDateTime = combineIsoDateAndTime(newDate, newTime);
-      await rescheduleAppointment(appointmentId, utcIsoDateTime);
+      await rescheduleAppointment(appointmentId, utcIsoDateTime, "patient");
 
       setBookingData((prev) => ({ ...prev, date: newDate, time: newTime }));
       toast.success("Cita reprogramada con éxito.", { id: loadingToast });
