@@ -1,10 +1,15 @@
-import { HeartPulse, LogOut } from "lucide-react";
-import { useNavigate } from "react-router-dom";
+import { HeartPulse, LogOut, Settings, LayoutDashboard } from "lucide-react";
+import { useNavigate, useLocation } from "react-router-dom";
 import toast from "react-hot-toast";
 import { supabase } from "../../lib/supabase";
 
 export const Header = () => {
   const navigate = useNavigate();
+  const location = useLocation();
+
+  // 1. BLINDAJE DE ROLES POR RUTA
+  const isDoctorArea = location.pathname.includes("/doctor");
+  const isAdminView = location.pathname.includes("/admin");
 
   const handleLogout = async () => {
     try {
@@ -30,20 +35,57 @@ export const Header = () => {
         </span>
       </div>
 
-      {/* BOTÓN DE CERRAR SESIÓN */}
-      <button
-        onClick={handleLogout}
-        className="flex items-center gap-2 p-2 sm:px-4 sm:py-2 text-brand-gray/50 hover:text-red-500 hover:bg-red-50 rounded-xl transition-all cursor-pointer group"
-        title="Cerrar sesión"
-      >
-        <span className="hidden sm:inline font-bold text-sm">
-          Cerrar sesión
-        </span>
-        <LogOut
-          className="w-5 h-5 group-hover:scale-110 transition-transform"
-          strokeWidth={2.5}
-        />
-      </button>
+      {/* CONTROLES DERECHOS */}
+      <div className="flex items-center gap-2 sm:gap-4">
+        {/* 2. LOS BOTONES DE ADMIN SOLO SE RENDERIZAN SI ES LA DOCTORA */}
+        {isDoctorArea && (
+          <>
+            {isAdminView ? (
+              <button
+                onClick={() => navigate("/doctor/dashboard")}
+                className="flex items-center gap-2 px-3 py-2 sm:px-4 bg-brand-primary/10 text-brand-primary hover:bg-brand-primary hover:text-white rounded-xl transition-all cursor-pointer font-bold text-sm group"
+                title="Volver a Consultas"
+              >
+                <LayoutDashboard
+                  className="w-5 h-5 group-hover:scale-105 transition-transform"
+                  strokeWidth={2.5}
+                />
+                <span className="hidden sm:inline">Centro Clínico</span>
+              </button>
+            ) : (
+              <button
+                onClick={() => navigate("/doctor/admin")}
+                className="flex items-center gap-2 px-3 py-2 sm:px-4 bg-slate-100 text-brand-dark hover:bg-slate-200 rounded-xl transition-all cursor-pointer font-bold text-sm group"
+                title="Administración del Negocio"
+              >
+                <Settings
+                  className="w-5 h-5 text-brand-gray group-hover:rotate-45 transition-transform"
+                  strokeWidth={2.5}
+                />
+                <span className="hidden sm:inline">Administración</span>
+              </button>
+            )}
+
+            {/* LÍNEA DIVISORIA SOLO PARA LA DOCTORA */}
+            <div className="w-px h-8 bg-slate-200 mx-1 hidden sm:block"></div>
+          </>
+        )}
+
+        {/* BOTÓN DE CERRAR SESIÓN (Este sí lo ven todos) */}
+        <button
+          onClick={handleLogout}
+          className="flex items-center gap-2 p-2 sm:px-4 sm:py-2 text-brand-gray/50 hover:text-red-500 hover:bg-red-50 rounded-xl transition-all cursor-pointer group"
+          title="Cerrar sesión"
+        >
+          <span className="hidden sm:inline font-bold text-sm">
+            Cerrar sesión
+          </span>
+          <LogOut
+            className="w-5 h-5 group-hover:scale-110 transition-transform"
+            strokeWidth={2.5}
+          />
+        </button>
+      </div>
     </header>
   );
 };

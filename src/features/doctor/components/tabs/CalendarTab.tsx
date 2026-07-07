@@ -172,6 +172,8 @@ export const CalendarTab = ({
   const [isStartPickerOpen, setIsStartPickerOpen] = useState(false);
   const [isEndPickerOpen, setIsEndPickerOpen] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [draftSchedule, setDraftSchedule] =
+    useState<WeeklySchedule>(workingSchedule);
 
   const rescheduleOptions = useMemo(() => {
     if (!rescheduleDate || !selectedAppointment) return [];
@@ -189,6 +191,13 @@ export const CalendarTab = ({
     workingSchedule,
     selectedAppointment,
   ]);
+
+  // Cuando abran el modal, copiamos el horario actual al borrador
+  useEffect(() => {
+    if (settingsModalOpen) {
+      setDraftSchedule(workingSchedule);
+    }
+  }, [settingsModalOpen, workingSchedule]);
 
   useEffect(() => {
     if (
@@ -266,7 +275,11 @@ export const CalendarTab = ({
         rescheduleDate,
         rescheduleTime,
       );
-      await rescheduleAppointment(selectedAppointment.id, utcIsoDateTime, "doctor");
+      await rescheduleAppointment(
+        selectedAppointment.id,
+        utcIsoDateTime,
+        "doctor",
+      );
       await onDataChange();
       setSelectedAppointment(null);
       setIsReschedulingAppt(false);
@@ -351,7 +364,8 @@ export const CalendarTab = ({
   const handleSaveSettings = async () => {
     try {
       setIsSubmitting(true);
-      await updateClinicSettings(workingSchedule);
+      await updateClinicSettings(draftSchedule);
+      setWorkingSchedule(draftSchedule);
       setSettingsModalOpen(false);
     } catch (err: unknown) {
       console.error(
@@ -980,7 +994,7 @@ export const CalendarTab = ({
                 6: "Sábado",
                 0: "Domingo",
               };
-              const day = workingSchedule[dayNum as keyof WeeklySchedule];
+              const day = draftSchedule[dayNum as keyof WeeklySchedule];
               if (!day) return null;
 
               return (
@@ -995,8 +1009,8 @@ export const CalendarTab = ({
                         className="sr-only peer"
                         checked={day.isOpen}
                         onChange={(e) =>
-                          setWorkingSchedule({
-                            ...workingSchedule,
+                          setDraftSchedule({
+                            ...draftSchedule,
                             [dayNum]: { ...day, isOpen: e.target.checked },
                           })
                         }
@@ -1017,8 +1031,8 @@ export const CalendarTab = ({
                           options={timeOptions}
                           value={day.start}
                           onChange={(val) =>
-                            setWorkingSchedule({
-                              ...workingSchedule,
+                            setDraftSchedule({
+                              ...draftSchedule,
                               [dayNum]: { ...day, start: val },
                             })
                           }
@@ -1032,8 +1046,8 @@ export const CalendarTab = ({
                           options={timeOptions}
                           value={day.end}
                           onChange={(val) =>
-                            setWorkingSchedule({
-                              ...workingSchedule,
+                            setDraftSchedule({
+                              ...draftSchedule,
                               [dayNum]: { ...day, end: val },
                             })
                           }

@@ -19,6 +19,7 @@ import { DoctorDashboard } from "./features/doctor/components/DoctorDashboard";
 import { AdminLogin } from "./features/auth/components/AdminLogin";
 import { Toast } from "./components/ui/Toast";
 import { Loader2 } from "lucide-react";
+import { DoctorAdminDashboard } from "./features/doctor/components/DoctorAdminDashboard";
 
 // =========================================
 // 0A. COMPONENTE GUARDIÁN (LA DOCTORA)
@@ -140,6 +141,17 @@ function AppRoutes() {
           <DoctorProtectedRoute>
             <DashboardLayout>
               <DoctorDashboard />
+            </DashboardLayout>
+          </DoctorProtectedRoute>
+        }
+      />
+
+      <Route
+        path="/doctor/admin"
+        element={
+          <DoctorProtectedRoute>
+            <DashboardLayout>
+              <DoctorAdminDashboard />
             </DashboardLayout>
           </DoctorProtectedRoute>
         }
