@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect } from "react";
 import {
   BrowserRouter,
   Routes,
@@ -6,8 +6,8 @@ import {
   useNavigate,
   Navigate,
 } from "react-router-dom";
-import type { Session } from "@supabase/supabase-js";
-import { supabase } from "./lib/supabase";
+import toast from "react-hot-toast";
+import { useAuthRole, isStaffRole } from "./features/auth/useAuthRole";
 
 import { BookingFlow } from "./features/appointments/components/BookingFlow";
 import { PatientDashboard } from "./features/patients/components/PatientDashboard";
@@ -22,26 +22,21 @@ import { Loader2 } from "lucide-react";
 import { DoctorAdminDashboard } from "./features/doctor/components/DoctorAdminDashboard";
 
 // =========================================
-// 0A. COMPONENTE GUARDIÁN (LA DOCTORA)
+// 0A. GUARDIÁN DEL ÁREA MÉDICA
 // =========================================
+// Access is decided by the profiles.role of the current session, never by the
+// URL. A phone-OTP patient session is authenticated but is NOT staff, so it is
+// bounced out of /doctor/* instead of rendering the clinical dashboards.
 function DoctorProtectedRoute({ children }: { children: React.ReactNode }) {
-  const [session, setSession] = useState<Session | null>(null);
-  const [loading, setLoading] = useState(true);
+  const { session, role, loading } = useAuthRole();
+  const isStaff = isStaffRole(role);
+  const isDeniedStaffArea = !loading && !!session && !isStaff;
 
   useEffect(() => {
-    supabase.auth.getSession().then(({ data: { session } }) => {
-      setSession(session);
-      setLoading(false);
-    });
-
-    const {
-      data: { subscription },
-    } = supabase.auth.onAuthStateChange((_event, session) => {
-      setSession(session);
-    });
-
-    return () => subscription.unsubscribe();
-  }, []);
+    if (isDeniedStaffArea) {
+      toast.error("Tu cuenta no tiene acceso al área médica.");
+    }
+  }, [isDeniedStaffArea]);
 
   if (loading)
     return (
@@ -49,27 +44,21 @@ function DoctorProtectedRoute({ children }: { children: React.ReactNode }) {
         Verificando acceso médico...
       </div>
     );
+
+  // No session at all: show the staff login, same as before.
   if (!session) return <AdminLogin onLoginSuccess={() => {}} />;
+
+  // Signed in, but not staff.
+  if (!isStaff) return <Navigate to="/dashboard" replace />;
 
   return <>{children}</>;
 }
 
 // =========================================
-// 0B. 🛡️ NUEVO COMPONENTE GUARDIÁN (PACIENTES) 🛡️
+// 0B. GUARDIÁN DEL PORTAL DEL PACIENTE
 // =========================================
 function PatientProtectedRoute({ children }: { children: React.ReactNode }) {
-  const [session, setSession] = useState<Session | null>(null);
-  const [loading, setLoading] = useState(true);
-
-  useEffect(() => {
-    supabase.auth.getSession().then(({ data: { session } }) => {
-      setSession(session);
-      setLoading(false);
-    });
-
-    // No necesitamos suscripción reactiva aquí porque si cierran sesión los pateamos manualmente,
-    // pero verificamos al instante de montar el componente.
-  }, []);
+  const { session, loading } = useAuthRole();
 
   if (loading) {
     return (

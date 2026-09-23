@@ -2,13 +2,19 @@ import { HeartPulse, LogOut, Settings, LayoutDashboard } from "lucide-react";
 import { useNavigate, useLocation } from "react-router-dom";
 import toast from "react-hot-toast";
 import { supabase } from "../../lib/supabase";
+import { useAuthRole, isStaffRole } from "../../features/auth/useAuthRole";
 
 export const Header = () => {
   const navigate = useNavigate();
   const location = useLocation();
+  const { role } = useAuthRole();
 
-  // 1. BLINDAJE DE ROLES POR RUTA
-  const isDoctorArea = location.pathname.includes("/doctor");
+  // Staff controls are gated by the session role, never by the URL: a patient
+  // who navigates to a /doctor path must not see clinic administration links.
+  const isStaff = isStaffRole(role);
+
+  // Which of the two staff views is active is a presentation concern, so it is
+  // still derived from the current path.
   const isAdminView = location.pathname.includes("/admin");
 
   const handleLogout = async () => {
@@ -37,8 +43,8 @@ export const Header = () => {
 
       {/* CONTROLES DERECHOS */}
       <div className="flex items-center gap-2 sm:gap-4">
-        {/* 2. LOS BOTONES DE ADMIN SOLO SE RENDERIZAN SI ES LA DOCTORA */}
-        {isDoctorArea && (
+        {/* 2. LOS BOTONES DE ADMIN SOLO SE RENDERIZAN SI LA CUENTA ES DEL EQUIPO MÉDICO */}
+        {isStaff && (
           <>
             {isAdminView ? (
               <button
