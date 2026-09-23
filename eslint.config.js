@@ -6,7 +6,8 @@ import tseslint from 'typescript-eslint'
 import { defineConfig, globalIgnores } from 'eslint/config'
 
 export default defineConfig([
-  globalIgnores(['dist']),
+  // .vite holds Vite's dependency pre-bundle cache (generated, not source).
+  globalIgnores(['dist', '.vite']),
   {
     files: ['**/*.{ts,tsx}'],
     extends: [
