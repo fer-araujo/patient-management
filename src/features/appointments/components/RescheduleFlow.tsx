@@ -6,7 +6,7 @@ import { Loader2 } from "lucide-react";
 
 import { DateTimeSelector } from "./DateTimeSelector";
 import { BookingSuccess } from "./BookingSuccess";
-import { rescheduleAppointment } from "../../../lib/services/clinicService";
+import { rescheduleMyAppointment } from "../../../lib/services/patientBookingService";
 import { combineIsoDateAndTime } from "../../doctor/utils/calendarUtils";
 
 export const RescheduleFlow = () => {
@@ -61,14 +61,19 @@ export const RescheduleFlow = () => {
 
     try {
       const utcIsoDateTime = combineIsoDateAndTime(newDate, newTime);
-      await rescheduleAppointment(appointmentId, utcIsoDateTime, "patient");
+      await rescheduleMyAppointment(appointmentId, utcIsoDateTime);
 
       setBookingData((prev) => ({ ...prev, date: newDate, time: newTime }));
       toast.success("Cita reprogramada con éxito.", { id: loadingToast });
       setStep(2);
     } catch (error: unknown) {
       console.error("[RescheduleFlow] Error al reprogramar la cita:", error);
-      toast.error("Error al reprogramar la cita.", { id: loadingToast });
+      // rescheduleMyAppointment already normalizes this into a message that is
+      // safe and understandable for the patient.
+      toast.error(
+        (error as Error).message || "Error al reprogramar la cita.",
+        { id: loadingToast },
+      );
     } finally {
       setIsSubmitting(false);
     }

@@ -13,25 +13,23 @@ import {
 import { Button } from "../../../components/ui/Button";
 import { DatePicker } from "../../../components/ui/DatePicker";
 import { fetchActiveServices } from "../../../lib/services/catalogService";
+// Patient-facing screens only ever see opaque busy ranges and the opening
+// hours; they never read the appointment, block or settings tables.
 import {
-  fetchDoctorAppointments,
-  type DashboardAppointment,
-} from "../../../lib/services/clinicService";
+  fetchPublicAvailability,
+  fetchPublicSchedule,
+  type BusyRange,
+} from "../../../lib/services/availabilityService";
+import { type WeeklySchedule } from "../../../lib/services/settingsService";
 import {
-  fetchBlockedSlots,
-  type DashboardBlockedSlot,
-} from "../../../lib/services/blockedSlotsService";
-// 👇 IMPORTANTE: Importar la función que trae la configuración de la BD
-import {
-  fetchClinicSettings,
-  type WeeklySchedule,
-} from "../../../lib/services/settingsService";
-import {
-  getAvailableTimeOptions,
+  getAvailableTimeOptionsFromBusy,
   filterFutureTimesOnly,
 } from "../../doctor/utils/calendarUtils";
 
 const SHORT_DAY_NAMES = ["Dom", "Lun", "Mar", "Mié", "Jue", "Vie", "Sáb"];
+
+/** How far ahead the booking calendar may be browsed. */
+const AVAILABILITY_WINDOW_DAYS = 120;
 
 interface Props {
   serviceId: string;
@@ -72,8 +70,7 @@ export const DateTimeSelector = ({
 }: Props) => {
   const [isLoading, setIsLoading] = useState(true);
   const [serviceDuration, setServiceDuration] = useState<number>(60);
-  const [appointments, setAppointments] = useState<DashboardAppointment[]>([]);
-  const [blockedSlots, setBlockedSlots] = useState<DashboardBlockedSlot[]>([]);
+  const [busyRanges, setBusyRanges] = useState<BusyRange[]>([]);
 
   // Dejamos este estado como "Fallback" por si falla la red, pero se sobreescribirá
   const [workingSchedule, setWorkingSchedule] = useState<WeeklySchedule>({
@@ -97,22 +94,23 @@ export const DateTimeSelector = ({
   useEffect(() => {
     const loadAgendaData = async () => {
       try {
-        // FIX: Traemos el horario REAL de la base de datos
-        const [servicesData, apptsData, blocksData, scheduleData] =
-          await Promise.all([
-            fetchActiveServices(),
-            fetchDoctorAppointments(),
-            fetchBlockedSlots(),
-            fetchClinicSettings(), // <--- MAGIA AQUÍ
-          ]);
+        const rangeStart = new Date();
+        rangeStart.setHours(0, 0, 0, 0);
+        const rangeEnd = new Date(rangeStart);
+        rangeEnd.setDate(rangeEnd.getDate() + AVAILABILITY_WINDOW_DAYS);
+
+        const [servicesData, busyData, scheduleData] = await Promise.all([
+          fetchActiveServices(),
+          fetchPublicAvailability(rangeStart, rangeEnd),
+          fetchPublicSchedule(),
+        ]);
 
         const selectedService = servicesData.find((s) => s.id === serviceId);
         if (selectedService) {
           setServiceDuration(selectedService.durationMins);
         }
 
-        setAppointments(apptsData);
-        setBlockedSlots(blocksData);
+        setBusyRanges(busyData);
 
         // FIX: Si la BD nos regresa datos, sobreescribimos la mentira hardcodeada
         const finalSchedule = scheduleData || workingSchedule;
@@ -160,10 +158,9 @@ export const DateTimeSelector = ({
   const availableTimesForSelectedDay = useMemo(() => {
     if (!selectedDay || isLoading || !workingSchedule) return [];
 
-    const options = getAvailableTimeOptions(
+    const options = getAvailableTimeOptionsFromBusy(
       selectedDay,
-      appointments,
-      blockedSlots,
+      busyRanges,
       workingSchedule,
       serviceDuration,
     );
@@ -173,8 +170,7 @@ export const DateTimeSelector = ({
   }, [
     selectedDay,
     isLoading,
-    appointments,
-    blockedSlots,
+    busyRanges,
     workingSchedule,
     serviceDuration,
   ]);

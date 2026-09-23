@@ -99,9 +99,12 @@ export const updateAppointmentStatus = async (
   id: string,
   status: "pending" | "confirmed" | "completed" | "cancelled" | "rejected",
 ) => {
+  // updated_by is never sent from the client: the appointments_set_updated_by
+  // trigger derives it from the caller's role, so a patient session cannot make
+  // a change look like it came from the doctor.
   const { error } = await supabase
     .from("appointments")
-    .update({ status, updated_by: "doctor" })
+    .update({ status })
     .eq("id", id);
 
   if (error) {
@@ -133,7 +136,6 @@ export const createAppointment = async (
     service_id: srv.id,
     start_time: utcIsoDateTime,
     status: "confirmed",
-    updated_by: "doctor",
   });
 
   if (error) {
@@ -142,18 +144,18 @@ export const createAppointment = async (
   }
 };
 
-// 4. REPROGRAMAR CITA
+// 4. REPROGRAMAR CITA (staff)
+// Patients use rescheduleMyAppointment in patientBookingService instead: RLS
+// gives them no UPDATE privilege on appointments.
 export const rescheduleAppointment = async (
   id: string,
   isoDateTime: string,
-  updaterRole: "patient" | "doctor" = "patient",
 ) => {
   const { error } = await supabase
     .from("appointments")
     .update({
       start_time: isoDateTime,
       status: "pending",
-      updated_by: updaterRole,
     }) // AHORA SE QUEDA PENDIENTE
     .eq("id", id);
 
@@ -163,17 +165,13 @@ export const rescheduleAppointment = async (
   }
 };
 
-export const cancelAppointment = async (
-  id: string,
-  reason: string,
-  updaterRole: "patient" | "doctor" = "patient",
-) => {
+// 5. CANCELAR CITA (staff) - ver cancelMyAppointment para el portal del paciente
+export const cancelAppointment = async (id: string, reason: string) => {
   const { error } = await supabase
     .from("appointments")
     .update({
       status: "cancelled",
       cancel_reason: reason,
-      updated_by: updaterRole,
     })
     .eq("id", id);
   if (error) throw new Error("No se pudo cancelar la cita.");

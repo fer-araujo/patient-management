@@ -1,3 +1,4 @@
+import type { PostgrestError } from "@supabase/supabase-js";
 import { supabase } from "../supabase";
 import { combineIsoDateAndTime } from "../../features/doctor/utils/calendarUtils";
 
@@ -12,119 +13,106 @@ export interface PublicBookingSubmission {
   referredBy?: string;
 }
 
-export const createPublicPatientAndAppointment = async (
-  data: PublicBookingSubmission,
-): Promise<void> => {
-  const nameParts = data.fullName.trim().split(" ");
-  const firstName = nameParts[0] || "Paciente";
-  const lastName = nameParts.slice(1).join(" ") || "Desconocido";
+/**
+ * Booking failures raised on purpose by the RPCs carry the Postgres code P0001
+ * and a message already written in Spanish for the patient. Anything else is an
+ * internal fault whose text must not reach the UI.
+ */
+const toUserFacingError = (error: PostgrestError, fallback: string): Error =>
+  new Error(error.code === "P0001" ? error.message : fallback);
 
-  // 🛡️ FIX VIP: Usamos la función RPC que ignora el bloqueo de seguridad (RLS)
-  const { data: existingId, error: searchError } = await supabase.rpc(
-    "get_patient_id_by_phone",
-    { p_phone: data.phone },
-  );
-
-  if (searchError)
-    throw new Error(`Error al verificar paciente: ${searchError.message}`);
-
-  let patientId = existingId;
-
-  if (!patientId) {
-    const { data: newPatient, error: patientError } = await supabase
-      .from("patients")
-      .insert({
-        first_name: firstName,
-        last_name: lastName,
-        phone: data.phone,
-        email: data.email || null,
-        status: "active",
-        referred_by: data.referredBy || null,
-        notes: data.reason ? `Motivo inicial: ${data.reason}` : null,
-      })
-      .select("id")
-      .single();
-
-    if (patientError)
-      throw new Error(`Error al crear expediente: ${patientError.message}`);
-    patientId = newPatient.id;
-  }
-
-  const utcIsoDateTime = combineIsoDateAndTime(data.date, data.time);
-
-  const { error: apptError } = await supabase.from("appointments").insert({
-    patient_id: patientId,
-    service_id: data.serviceId,
-    start_time: utcIsoDateTime,
-    status: "pending",
-  });
-
-  if (apptError)
-    throw new Error(`Error al agendar la cita: ${apptError.message}`);
+const splitFullName = (fullName: string): [string, string] => {
+  const parts = fullName.trim().split(/\s+/).filter(Boolean);
+  const firstName = parts[0] || "Paciente";
+  const lastName = parts.slice(1).join(" ") || "Sin apellido";
+  return [firstName, lastName];
 };
 
+/**
+ * Anonymous booking.
+ *
+ * The whole find-or-create-then-insert sequence happens inside the
+ * request_appointment RPC. The browser no longer looks a patient up by phone
+ * first, so the public booking screen cannot be used to discover whether a
+ * given number belongs to a patient of the clinic.
+ */
+export const createPublicPatientAndAppointment = async (
+  data: PublicBookingSubmission,
+): Promise<string> => {
+  const [firstName, lastName] = splitFullName(data.fullName);
+
+  const { data: appointmentId, error } = await supabase.rpc(
+    "request_appointment",
+    {
+      p_phone: data.phone,
+      p_first_name: firstName,
+      p_last_name: lastName,
+      p_email: data.email || null,
+      p_service_id: data.serviceId,
+      p_start_time: combineIsoDateAndTime(data.date, data.time),
+      p_reason: data.reason || null,
+      p_referred_by: data.referredBy || null,
+    },
+  );
+
+  if (error) {
+    console.error("[BookingService] request_appointment failed:", error);
+    throw toUserFacingError(error, "No se pudo registrar tu solicitud de cita.");
+  }
+
+  return appointmentId as string;
+};
+
+/** Booking from the logged-in patient portal. */
 export const createAuthenticatedAppointment = async (
   serviceId: string,
   date: string,
   time: string,
-): Promise<void> => {
-  const {
-    data: { user },
-    error: authError,
-  } = await supabase.auth.getUser();
-  if (authError || !user) throw new Error("Sesión del paciente no encontrada.");
-
-  let phoneToSearch = user.phone || "";
-  if (!phoneToSearch.startsWith("+")) {
-    phoneToSearch = `+${phoneToSearch}`;
-  }
-
-  // 🛡️ FIX VIP: Buscamos por teléfono usando el RPC
-  const { data: existingId, error: patientError } = await supabase.rpc(
-    "get_patient_id_by_phone",
-    { p_phone: phoneToSearch },
-  );
-
-  if (patientError || !existingId) {
-    console.error(
-      "[BookingService] Error al buscar expediente autenticado:",
-      patientError,
-    );
-    throw new Error(
-      "No se encontró un expediente clínico vinculado a tu cuenta.",
-    );
-  }
-
-  const utcIsoDateTime = combineIsoDateAndTime(date, time);
-
-  const { error: apptError } = await supabase.from("appointments").insert({
-    patient_id: existingId, // Aquí usamos directamente el UUID devuelto
-    service_id: serviceId,
-    start_time: utcIsoDateTime,
-    status: "pending",
-  });
-
-  if (apptError) {
-    console.error("[BookingService] Error al insertar nueva cita:", apptError);
-    throw new Error(`Error al registrar cita: ${apptError.message}`);
-  }
-};
-
-// ============================================================================
-// 🛡️ EL FIX PRINCIPAL DEL LOGIN
-// ============================================================================
-export const checkPatientExists = async (phone: string): Promise<boolean> => {
-  // Llamamos a la función segura que no se bloquea por ser anónimos
-  const { data: existingId, error } = await supabase.rpc(
-    "get_patient_id_by_phone",
-    { p_phone: phone },
+): Promise<string> => {
+  const { data: appointmentId, error } = await supabase.rpc(
+    "request_my_appointment",
+    {
+      p_service_id: serviceId,
+      p_start_time: combineIsoDateAndTime(date, time),
+    },
   );
 
   if (error) {
-    console.error("Error al buscar paciente:", error);
-    return false;
+    console.error("[BookingService] request_my_appointment failed:", error);
+    throw toUserFacingError(error, "No se pudo registrar tu cita.");
   }
 
-  // Si nos devuelve un UUID (letras y números), el paciente SÍ existe.
-  return !!existingId;
+  return appointmentId as string;
+};
+
+/** Cancellation performed by the patient on their own appointment. */
+export const cancelMyAppointment = async (
+  appointmentId: string,
+  reason: string,
+): Promise<void> => {
+  const { error } = await supabase.rpc("cancel_my_appointment", {
+    p_appointment_id: appointmentId,
+    p_reason: reason,
+  });
+
+  if (error) {
+    console.error("[BookingService] cancel_my_appointment failed:", error);
+    throw toUserFacingError(error, "No se pudo cancelar la cita.");
+  }
+};
+
+/** Reschedule performed by the patient on their own appointment. */
+export const rescheduleMyAppointment = async (
+  appointmentId: string,
+  isoDateTime: string,
+): Promise<void> => {
+  const { error } = await supabase.rpc("reschedule_my_appointment", {
+    p_appointment_id: appointmentId,
+    p_start_time: isoDateTime,
+  });
+
+  if (error) {
+    console.error("[BookingService] reschedule_my_appointment failed:", error);
+    throw toUserFacingError(error, "No se pudo reprogramar la cita.");
+  }
 };

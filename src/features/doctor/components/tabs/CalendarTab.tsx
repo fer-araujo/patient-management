@@ -251,7 +251,7 @@ export const CalendarTab = ({
     if (!selectedAppointment || !cancelReason.trim()) return;
     try {
       setIsSubmitting(true);
-      await cancelAppointment(selectedAppointment.id, cancelReason, "doctor");
+      await cancelAppointment(selectedAppointment.id, cancelReason);
       await onDataChange();
       setSelectedAppointment(null);
       setIsCancelingAppt(false);
@@ -275,11 +275,7 @@ export const CalendarTab = ({
         rescheduleDate,
         rescheduleTime,
       );
-      await rescheduleAppointment(
-        selectedAppointment.id,
-        utcIsoDateTime,
-        "doctor",
-      );
+      await rescheduleAppointment(selectedAppointment.id, utcIsoDateTime);
       await onDataChange();
       setSelectedAppointment(null);
       setIsReschedulingAppt(false);

@@ -155,7 +155,7 @@ export const InboxTab = ({
     if (!cancelModalData || !cancelReason.trim()) return;
     try {
       setIsSubmitting(true);
-      await cancelAppointment(cancelModalData.id, cancelReason, "doctor");
+      await cancelAppointment(cancelModalData.id, cancelReason);
       await onDataChange();
       setCancelModalData(null);
       setCancelReason("");
@@ -175,7 +175,7 @@ export const InboxTab = ({
     try {
       setIsSubmitting(true);
       const utcIsoDateTime = combineIsoDateAndTime(newDateISO, newTime);
-      await rescheduleAppointment(rescheduleData.id, utcIsoDateTime, "doctor");
+      await rescheduleAppointment(rescheduleData.id, utcIsoDateTime);
       await onDataChange();
       setRescheduleData(null);
     } catch (err: unknown) {

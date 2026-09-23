@@ -17,7 +17,11 @@ import { Button } from "../../../components/ui/Button";
 import { Input } from "../../../components/ui/Input";
 
 import { supabase } from "../../../lib/supabase";
-import { checkPatientExists } from "../../../lib/services/patientBookingService";
+
+// The portal never tells the visitor whether a number is registered, so both
+// outcomes of a login attempt show exactly this text.
+const NEUTRAL_OTP_MESSAGE =
+  "Si el número está registrado, recibirás un código de acceso.";
 
 interface Props {
   onSubmitNewPatient: (countryCode: string, number: string) => void;
@@ -39,7 +43,11 @@ export const PatientPhoneLogin = ({
   // =========================================================
   // FLUJO 1: "Agendar Cita" (Botón público principal)
   // =========================================================
-  const handleNewPatientSubmit = async (e: React.FormEvent) => {
+  // The booking CTA goes straight to registration without probing the database
+  // for the number. request_appointment resolves an existing record by phone
+  // server-side, so a returning patient is matched to their file without the
+  // browser ever being told that the file exists.
+  const handleNewPatientSubmit = (e: React.FormEvent) => {
     e.preventDefault();
 
     // FIX DE UX: Validamos explícitamente y avisamos al paciente
@@ -51,32 +59,7 @@ export const PatientPhoneLogin = ({
       return;
     }
 
-    setIsLoading(true);
-    const fullPhone = countryCode + phoneNumber;
-
-    try {
-      const exists = await checkPatientExists(fullPhone);
-
-      if (exists) {
-        toast.success(
-          "Encontramos tu expediente. Te enviaremos un código de acceso.",
-        );
-
-        const { error } = await supabase.auth.signInWithOtp({
-          phone: fullPhone,
-        });
-        if (error) throw error;
-
-        setMode("login_otp");
-      } else {
-        onSubmitNewPatient(countryCode, phoneNumber);
-      }
-    } catch (error) {
-      console.error(error);
-      toast.error("Ocurrió un error al verificar tu número.");
-    } finally {
-      setIsLoading(false);
-    }
+    onSubmitNewPatient(countryCode, phoneNumber);
   };
 
   // =========================================================
@@ -97,27 +80,17 @@ export const PatientPhoneLogin = ({
     setIsLoading(true);
     const fullPhone = countryCode + phoneNumber;
 
-    try {
-      const exists = await checkPatientExists(fullPhone);
-      if (!exists) {
-        toast.error(
-          "No encontramos un expediente con este número. Por favor agenda una nueva cita.",
-        );
-        setIsLoading(false);
-        return;
-      }
-
-      const { error } = await supabase.auth.signInWithOtp({ phone: fullPhone });
-      if (error) throw error;
-
-      setMode("login_otp");
-      toast.success("Código enviado por SMS/WhatsApp");
-    } catch (error) {
-      console.error(error);
-      toast.error("Error al enviar el código de acceso.");
-    } finally {
-      setIsLoading(false);
+    // Always request the code and always report the same outcome. Branching on
+    // whether the number is known - or surfacing the provider's error - would
+    // turn this form into a patient-list oracle.
+    const { error } = await supabase.auth.signInWithOtp({ phone: fullPhone });
+    if (error) {
+      console.error("[PatientPhoneLogin] OTP request failed:", error);
     }
+
+    setMode("login_otp");
+    toast.success(NEUTRAL_OTP_MESSAGE);
+    setIsLoading(false);
   };
 
   // =========================================================
@@ -364,7 +337,7 @@ export const PatientPhoneLogin = ({
               Ingresa tu código
             </h1>
             <p className="text-lg text-brand-gray/80 font-medium mb-10 max-w-sm">
-              Te enviamos un código por WhatsApp al{" "}
+              Si el número está registrado, enviamos un código por WhatsApp al{" "}
               <span className="font-bold text-brand-dark">
                 {countryCode} {phoneNumber}
               </span>
