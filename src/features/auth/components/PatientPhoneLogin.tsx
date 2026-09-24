@@ -23,43 +23,78 @@ import { supabase } from "../../../lib/supabase";
 const NEUTRAL_OTP_MESSAGE =
   "Si el número está registrado, recibirás un código de acceso.";
 
+// Booking sends the code to every number, registered or not, so the booking
+// message says so plainly. It is equally neutral: the same text for every
+// number, and nothing about whether the number has a clinical record.
+const BOOKING_OTP_MESSAGE = "Te enviamos un código de verificación.";
+
+type OtpPurpose = "booking" | "login";
+
 interface Props {
-  onSubmitNewPatient: (countryCode: string, number: string) => void;
-  onLoginSuccess: (countryCode: string, number: string) => void;
+  /** The visitor proved ownership of the phone from the "Agendar Cita" path. */
+  onBookingVerified: () => void;
+  /** The visitor signed in from the "Entrar a mi Portal" path. */
+  onLoginSuccess: () => void;
 }
 
 export const PatientPhoneLogin = ({
-  onSubmitNewPatient,
+  onBookingVerified,
   onLoginSuccess,
 }: Props) => {
   const [countryCode, setCountryCode] = useState("+52");
   const [phoneNumber, setPhoneNumber] = useState("");
   const [otp, setOtp] = useState("");
   const [isLoading, setIsLoading] = useState(false);
+  const [otpPurpose, setOtpPurpose] = useState<OtpPurpose>("booking");
 
-  const [mode, setMode] = useState<"new" | "login_phone" | "login_otp">("new");
+  const [mode, setMode] = useState<"new" | "login_phone" | "login_otp">(
+    "new",
+  );
   const navigate = useNavigate();
 
-  // =========================================================
-  // FLUJO 1: "Agendar Cita" (Botón público principal)
-  // =========================================================
-  // The booking CTA goes straight to registration without probing the database
-  // for the number. request_appointment resolves an existing record by phone
-  // server-side, so a returning patient is matched to their file without the
-  // browser ever being told that the file exists.
-  const handleNewPatientSubmit = (e: React.FormEvent) => {
-    e.preventDefault();
-
+  const isPhoneComplete = (): boolean => {
     // FIX DE UX: Validamos explícitamente y avisamos al paciente
     if (phoneNumber.length < 10) {
       const faltan = 10 - phoneNumber.length;
       toast.error(
         `Ingresa un número a 10 dígitos (te falta${faltan > 1 ? "n" : ""} ${faltan}).`,
       );
-      return;
+      return false;
+    }
+    return true;
+  };
+
+  // Always request the code and always report the same outcome. Branching on
+  // whether the number is known - or surfacing the provider's error - would
+  // turn this form into a patient-list oracle.
+  const sendOtp = async (purpose: OtpPurpose) => {
+    setIsLoading(true);
+    const fullPhone = countryCode + phoneNumber;
+
+    const { error } = await supabase.auth.signInWithOtp({ phone: fullPhone });
+    if (error) {
+      console.error("[PatientPhoneLogin] OTP request failed:", error);
     }
 
-    onSubmitNewPatient(countryCode, phoneNumber);
+    setOtp("");
+    setOtpPurpose(purpose);
+    setMode("login_otp");
+    toast.success(
+      purpose === "booking" ? BOOKING_OTP_MESSAGE : NEUTRAL_OTP_MESSAGE,
+    );
+    setIsLoading(false);
+  };
+
+  // =========================================================
+  // FLUJO 1: "Agendar Cita" (Botón público principal)
+  // =========================================================
+  // Booking starts by verifying the phone. Only after the OTP proves the
+  // visitor owns the number does the app ask the server whether it already has
+  // a clinical record, so the booking page is never a patient-list oracle.
+  const handleNewPatientSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!isPhoneComplete()) return;
+    await sendOtp("booking");
   };
 
   // =========================================================
@@ -67,30 +102,8 @@ export const PatientPhoneLogin = ({
   // =========================================================
   const handleRequestOtp = async (e: React.FormEvent) => {
     e.preventDefault();
-
-    // FIX DE UX: Validamos explícitamente y avisamos al paciente
-    if (phoneNumber.length < 10) {
-      const faltan = 10 - phoneNumber.length;
-      toast.error(
-        `Ingresa un número a 10 dígitos (te falta${faltan > 1 ? "n" : ""} ${faltan}).`,
-      );
-      return;
-    }
-
-    setIsLoading(true);
-    const fullPhone = countryCode + phoneNumber;
-
-    // Always request the code and always report the same outcome. Branching on
-    // whether the number is known - or surfacing the provider's error - would
-    // turn this form into a patient-list oracle.
-    const { error } = await supabase.auth.signInWithOtp({ phone: fullPhone });
-    if (error) {
-      console.error("[PatientPhoneLogin] OTP request failed:", error);
-    }
-
-    setMode("login_otp");
-    toast.success(NEUTRAL_OTP_MESSAGE);
-    setIsLoading(false);
+    if (!isPhoneComplete()) return;
+    await sendOtp("login");
   };
 
   // =========================================================
@@ -119,7 +132,11 @@ export const PatientPhoneLogin = ({
       if (error) throw error;
 
       if (data.session) {
-        onLoginSuccess(countryCode, phoneNumber);
+        if (otpPurpose === "booking") {
+          onBookingVerified();
+        } else {
+          onLoginSuccess();
+        }
       }
     } catch (error) {
       console.error(error);
@@ -328,7 +345,9 @@ export const PatientPhoneLogin = ({
             transition={{ duration: 0.3 }}
           >
             <button
-              onClick={() => setMode("login_phone")}
+              onClick={() =>
+                setMode(otpPurpose === "booking" ? "new" : "login_phone")
+              }
               className="flex items-center gap-2 text-brand-gray hover:text-brand-dark font-bold text-sm mb-6 transition-colors cursor-pointer"
             >
               <ArrowLeft className="w-4 h-4" /> Cambiar número
@@ -337,7 +356,9 @@ export const PatientPhoneLogin = ({
               Ingresa tu código
             </h1>
             <p className="text-lg text-brand-gray/80 font-medium mb-10 max-w-sm">
-              Si el número está registrado, enviamos un código por WhatsApp al{" "}
+              {otpPurpose === "booking"
+                ? "Para proteger tus datos, enviamos un código por WhatsApp al"
+                : "Si el número está registrado, enviamos un código por WhatsApp al"}{" "}
               <span className="font-bold text-brand-dark">
                 {countryCode} {phoneNumber}
               </span>
@@ -369,7 +390,9 @@ export const PatientPhoneLogin = ({
                   <Loader2 className="w-5 h-5 animate-spin mx-auto" />
                 ) : (
                   <>
-                    Verificar y Entrar
+                    {otpPurpose === "booking"
+                      ? "Verificar y Continuar"
+                      : "Verificar y Entrar"}
                     <ArrowRight className="w-4 h-4 ml-2 group-hover:translate-x-1 transition-transform" />
                   </>
                 )}

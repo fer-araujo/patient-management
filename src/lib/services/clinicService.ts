@@ -12,6 +12,8 @@ export interface DashboardAppointment {
   isNewPatient: boolean;
   status: "pending" | "confirmed" | "completed" | "cancelled" | "rejected";
   durationMins: number;
+  /** "Motivo de la consulta" typed by the patient when booking. */
+  reason: string | null;
 }
 
 // INTERFAZ ESTRICTA PARA SUPABASE (CERO 'any')
@@ -20,6 +22,7 @@ interface RawAppointmentData {
   start_time: string;
   status: "pending" | "confirmed" | "completed" | "cancelled" | "rejected";
   patient_id: string;
+  reason: string | null;
   patients: { first_name: string; last_name: string; phone: string } | null;
   services: { name: string; duration_mins: number } | null;
 }
@@ -35,6 +38,7 @@ export const fetchDoctorAppointments = async (): Promise<
       start_time,
       status,
       patient_id,
+      reason,
       patients (
         first_name,
         last_name,
@@ -90,6 +94,7 @@ export const fetchDoctorAppointments = async (): Promise<
       isNewPatient: true,
       status: apt.status,
       durationMins: duration,
+      reason: apt.reason?.trim() || null,
     };
   });
 };

@@ -36,9 +36,14 @@ interface Props {
   initialDate?: string;
   initialTime?: string;
   isDirectMode?: boolean;
+  /** Ask the optional "Motivo de la consulta" above the confirm button. */
+  showReasonField?: boolean;
   onBack: () => void;
-  onSubmit: (date: string, time: string) => void;
+  onSubmit: (date: string, time: string, reason: string) => void;
 }
+
+/** Must match the appointments_reason_length check in the database. */
+const REASON_MAX_LENGTH = 1000;
 
 // FIX: Sacamos la función del componente para que no se re-cree y sea más pura
 const getSmartStartDate = (schedule: WeeklySchedule) => {
@@ -65,9 +70,11 @@ export const DateTimeSelector = ({
   initialDate,
   initialTime,
   isDirectMode = false,
+  showReasonField = false,
   onBack,
   onSubmit,
 }: Props) => {
+  const [reason, setReason] = useState("");
   const [isLoading, setIsLoading] = useState(true);
   const [serviceDuration, setServiceDuration] = useState<number>(60);
   const [busyRanges, setBusyRanges] = useState<BusyRange[]>([]);
@@ -196,7 +203,8 @@ export const DateTimeSelector = ({
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    if (selectedDay && selectedTime) onSubmit(selectedDay, selectedTime);
+    if (selectedDay && selectedTime)
+      onSubmit(selectedDay, selectedTime, showReasonField ? reason : "");
   };
 
   const handleModalDateSelect = (date: string) => {
@@ -421,6 +429,28 @@ export const DateTimeSelector = ({
               </div>
             )}
           </motion.div>
+
+          {showReasonField && (
+            <div className="flex flex-col gap-1.5">
+              <label
+                htmlFor="bookingReason"
+                className="text-brand-dark font-medium text-base xl:text-lg text-left tracking-normal ml-1"
+              >
+                Motivo de la consulta{" "}
+                <span className="text-brand-gray/50 font-normal text-sm">
+                  (Opcional)
+                </span>
+              </label>
+              <textarea
+                id="bookingReason"
+                placeholder="Describa brevemente su malestar o tratamiento..."
+                value={reason}
+                onChange={(e) => setReason(e.target.value)}
+                maxLength={REASON_MAX_LENGTH}
+                className="w-full px-4 py-3 border-2 border-brand-light rounded-xl text-base xl:text-lg text-brand-dark bg-white focus:border-brand-primary focus:ring-2 focus:ring-brand-primary/20 outline-none transition-all resize-none h-20"
+              />
+            </div>
+          )}
 
           <motion.div variants={item} className="pt-4">
             <Button

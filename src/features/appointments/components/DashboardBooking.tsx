@@ -6,7 +6,7 @@ import { ServiceSelector } from "./ServiceSelector";
 import { DateTimeSelector } from "./DateTimeSelector";
 import { BookingSuccess } from "./BookingSuccess";
 
-import { createAuthenticatedAppointment } from "../../../lib/services/patientBookingService";
+import { createMyAppointment } from "../../../lib/services/patientBookingService";
 import toast from "react-hot-toast";
 
 export const DashboardBooking = () => {
@@ -37,14 +37,18 @@ export const DashboardBooking = () => {
     setStep(2);
   };
 
-  const handleDateTimeSubmit = async (date: string, time: string) => {
+  const handleDateTimeSubmit = async (
+    date: string,
+    time: string,
+    reason: string,
+  ) => {
     if (isSubmitting) return;
 
     setIsSubmitting(true);
     const loadingToast = toast.loading("Registrando tu cita...");
 
     try {
-      await createAuthenticatedAppointment(bookingData.serviceId, date, time);
+      await createMyAppointment(bookingData.serviceId, date, time, reason);
 
       setBookingData((prev) => ({ ...prev, date, time }));
       toast.success("Cita solicitada con éxito.", { id: loadingToast });
@@ -103,6 +107,7 @@ export const DashboardBooking = () => {
               >
                 <DateTimeSelector
                   isDirectMode={initialStep === 2}
+                  showReasonField={true}
                   serviceId={bookingData.serviceId}
                   onBack={() => {
                     if (initialStep === 2) {
