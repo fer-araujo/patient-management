@@ -34,6 +34,8 @@ import {
   getPatientFiles,
 } from "../../../lib/services/storageService";
 import { fetchActiveServices } from "../../../lib/services/catalogService";
+import { validateClinicalFile } from "../../../lib/files/clinicalUploadRules";
+import { PrescriptionDisclaimer } from "../../../components/legal/PrescriptionDisclaimer";
 
 export const PatientDashboard = () => {
   const navigate = useNavigate();
@@ -108,8 +110,10 @@ export const PatientDashboard = () => {
     const file = e.target.files?.[0];
     if (!file || !profile) return;
 
-    if (file.size > 10 * 1024 * 1024) {
-      toast.error("El archivo pesa más de 10MB.");
+    const invalidMessage = validateClinicalFile(file);
+    if (invalidMessage) {
+      toast.error(invalidMessage, { duration: 8000 });
+      e.target.value = "";
       return;
     }
 
@@ -117,7 +121,7 @@ export const PatientDashboard = () => {
     const loadingToast = toast.loading(`Subiendo ${file.name}...`);
 
     try {
-      await uploadPatientFile(profile.id, file);
+      await uploadPatientFile(profile.id, file, "patient");
       const updatedFiles = await getPatientFiles(profile.id);
 
       setProfile((prev) =>
@@ -129,7 +133,7 @@ export const PatientDashboard = () => {
         "[PatientDashboard] Error crítico al subir archivo a Storage:",
         error,
       );
-      toast.error("Error al subir archivo. Intente de nuevo.", {
+      toast.error("No se pudo subir el archivo. Inténtalo de nuevo.", {
         id: loadingToast,
       });
     } finally {
@@ -231,6 +235,32 @@ export const PatientDashboard = () => {
         </div>
       )}
 
+      {/* The greeting sits above the grid so both columns start on the same
+          line, whatever the greeting's height. */}
+      <motion.div
+        initial={{ opacity: 0, y: 10 }}
+        animate={{ opacity: 1, y: 0 }}
+        className="mb-6"
+      >
+        <h1 className="text-3xl xl:text-4xl font-extrabold text-brand-dark tracking-tight mb-1">
+          Hola, {profile.firstName}.
+        </h1>
+        <p className="text-lg text-brand-gray font-medium">
+          {futureAppointments.length > 0 ? (
+            <>
+              Tienes{" "}
+              <span className="text-brand-primary font-bold">
+                {futureAppointments.length}{" "}
+                {futureAppointments.length === 1 ? "cita" : "citas"}
+              </span>{" "}
+              próxima{futureAppointments.length === 1 ? "" : "s"}.
+            </>
+          ) : (
+            "No tienes citas próximas agendadas."
+          )}
+        </p>
+      </motion.div>
+
       <motion.div
         variants={container}
         initial="hidden"
@@ -238,29 +268,10 @@ export const PatientDashboard = () => {
         className="grid grid-cols-1 lg:grid-cols-12 gap-8 lg:gap-10"
       >
         {/* COLUMNA IZQUIERDA */}
-        <div className="lg:col-span-8 space-y-6">
-          <motion.div variants={item}>
-            <h1 className="text-3xl xl:text-4xl font-extrabold text-brand-dark tracking-tight mb-1">
-              Hola, {profile.firstName}.
-            </h1>
-            <p className="text-lg text-brand-gray font-medium">
-              {futureAppointments.length > 0 ? (
-                <>
-                  Tienes{" "}
-                  <span className="text-brand-primary font-bold">
-                    {futureAppointments.length}{" "}
-                    {futureAppointments.length === 1 ? "cita" : "citas"}
-                  </span>{" "}
-                  próxima{futureAppointments.length === 1 ? "" : "s"}.
-                </>
-              ) : (
-                "No tienes citas próximas agendadas."
-              )}
-            </p>
-          </motion.div>
-
+        <div className="lg:col-span-8 flex flex-col gap-6">
           <motion.div variants={item}>
             <QuickActionsWidget
+              patientId={profile.id}
               onFileUpload={handleFileUpload}
               onOpenCareGuide={handleOpenCareGuide}
               onOpenRecipe={() => setIsRecipeOpen(true)}
@@ -337,7 +348,7 @@ export const PatientDashboard = () => {
         </div>
 
         {/* COLUMNA DERECHA */}
-        <div className="lg:col-span-4 space-y-9">
+        <div className="lg:col-span-4 flex flex-col gap-6">
           <motion.div
             variants={item}
             className="bg-white border border-slate-200 rounded-4xl p-6 text-center shadow-[0_8px_30px_rgb(0,0,0,0.04)]"
@@ -512,10 +523,11 @@ export const PatientDashboard = () => {
       <Modal
         isOpen={isRecipeOpen}
         onClose={() => setIsRecipeOpen(false)}
-        title="Mi Receta Médica"
+        title="Mis medicamentos"
         icon={<FileText className="w-5 h-5 text-brand-primary" />}
       >
         <div className="px-2 pb-4">
+          <PrescriptionDisclaimer className="mb-5" />
           {carePlan.length > 0 ? (
             <>
               <p className="text-brand-gray font-medium mb-6 text-center">
@@ -530,11 +542,11 @@ export const PatientDashboard = () => {
                 <FileText className="w-8 h-8" />
               </div>
               <h3 className="text-brand-dark font-bold text-lg mb-2">
-                No tienes recetas activas
+                No tienes medicamentos registrados
               </h3>
               <p className="text-brand-gray text-sm px-4 leading-relaxed">
-                Tus indicaciones médicas y medicamentos aparecerán aquí después
-                de tu consulta con la Dra. Carmen.
+                Los medicamentos que te indique la Dra. Carmen aparecerán aquí
+                después de tu consulta.
               </p>
             </div>
           )}
