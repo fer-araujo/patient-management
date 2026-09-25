@@ -12,6 +12,7 @@ import {
 } from "../../../lib/services/soapService";
 import { getPatientFiles } from "../../../lib/services/storageService";
 import { updatePatientNotes } from "../../../lib/services/patientService";
+import { recordPayment, type Payment } from "../../../lib/services/financeService";
 import { ConsultationWorkspace } from "./ConsultationWorkspace";
 
 vi.mock("../../../lib/services/soapService", () => ({
@@ -29,6 +30,10 @@ vi.mock("../../../lib/services/storageService", () => ({
 vi.mock("../../../lib/services/patientService", () => ({
   updatePatientNotes: vi.fn(),
 }));
+vi.mock("../../../lib/services/financeService", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../../../lib/services/financeService")>()),
+  recordPayment: vi.fn(),
+}));
 
 const appointment: DashboardAppointment = {
   id: "appt-1",
@@ -42,6 +47,21 @@ const appointment: DashboardAppointment = {
   status: "confirmed",
   durationMins: 30,
   reason: null,
+  servicePrice: 800,
+};
+
+const storedPayment: Payment = {
+  id: "pay-1",
+  appointmentId: "appt-1",
+  patientId: "patient-1",
+  serviceId: "svc-1",
+  listPrice: 800,
+  amountCharged: 800,
+  status: "paid",
+  method: "cash",
+  note: null,
+  createdAt: "2026-10-15T16:30:00Z",
+  updatedAt: "2026-10-15T16:30:00Z",
 };
 
 const renderWorkspace = (props: Partial<Parameters<typeof ConsultationWorkspace>[0]> = {}) => {
@@ -61,6 +81,23 @@ const renderWorkspace = (props: Partial<Parameters<typeof ConsultationWorkspace>
 const waitForHistory = () =>
   waitFor(() => expect(fetchPatientHistory).toHaveBeenCalledWith("patient-1"));
 
+const chargeDialogTitle = () => screen.queryByText("Cobro de la consulta");
+
+/** "Finalizar Consulta" -> charge step -> "Guardar y finalizar". */
+const finishWithCharge = async (
+  user: ReturnType<typeof userEvent.setup>,
+  choice: "Efectivo" | "cortesia" = "Efectivo",
+) => {
+  await user.click(screen.getByRole("button", { name: /Finalizar Consulta/ }));
+  await screen.findByText("Cobro de la consulta");
+  await user.click(
+    screen.getByRole("radio", {
+      name: choice === "cortesia" ? "No cobré (cortesía)" : choice,
+    }),
+  );
+  await user.click(screen.getByRole("button", { name: /Guardar y finalizar/ }));
+};
+
 beforeEach(() => {
   vi.mocked(fetchPatientHistory).mockResolvedValue({ notes: [], prescriptions: [] });
   vi.mocked(getPatientFiles).mockResolvedValue([]);
@@ -68,6 +105,7 @@ beforeEach(() => {
   vi.mocked(savePrescription).mockResolvedValue();
   vi.mocked(updatePatientNotes).mockResolvedValue();
   vi.mocked(finalizeConsultation).mockResolvedValue();
+  vi.mocked(recordPayment).mockResolvedValue(storedPayment);
 });
 
 describe("ConsultationWorkspace", () => {
@@ -84,26 +122,79 @@ describe("ConsultationWorkspace", () => {
     expect(onFinishConsultation).not.toHaveBeenCalled();
   });
 
-  it('"Finalizar Consulta" saves and THEN finalizes the consultation', async () => {
-    const { onClose, onFinishConsultation, user } = renderWorkspace();
+  it("back arrow never asks for a charge and never records one", async () => {
+    const { onClose, user } = renderWorkspace();
+    await waitForHistory();
+
+    await user.click(screen.getByRole("button", { name: "Guardar borrador y volver" }));
+
+    await waitFor(() => expect(onClose).toHaveBeenCalledTimes(1));
+    expect(chargeDialogTitle()).toBeNull();
+    expect(recordPayment).not.toHaveBeenCalled();
+    expect(finalizeConsultation).not.toHaveBeenCalled();
+  });
+
+  it('"Finalizar Consulta" first opens the charge step and finalizes nothing yet', async () => {
+    const { onFinishConsultation, user } = renderWorkspace();
     await waitForHistory();
 
     await user.click(screen.getByRole("button", { name: /Finalizar Consulta/ }));
 
+    expect(await screen.findByText("Cobro de la consulta")).toBeInTheDocument();
+    // Pre-filled with the service price.
+    expect(screen.getByLabelText("¿Cuánto cobraste? (MXN)")).toHaveValue(800);
+    expect(recordPayment).not.toHaveBeenCalled();
+    expect(saveSoapNote).not.toHaveBeenCalled();
+    expect(finalizeConsultation).not.toHaveBeenCalled();
+    expect(onFinishConsultation).not.toHaveBeenCalled();
+  });
+
+  it('"Finalizar Consulta" records the payment, saves, and THEN finalizes', async () => {
+    const { onClose, onFinishConsultation, user } = renderWorkspace();
+    await waitForHistory();
+
+    await finishWithCharge(user);
+
     await waitFor(() => expect(onFinishConsultation).toHaveBeenCalledWith("appt-1"));
+    expect(recordPayment).toHaveBeenCalledWith({
+      appointmentId: "appt-1",
+      status: "paid",
+      amount: 800,
+      method: "cash",
+      note: "",
+    });
     expect(finalizeConsultation).toHaveBeenCalledTimes(1);
     expect(finalizeConsultation).toHaveBeenCalledWith("appt-1");
-    expect(vi.mocked(saveSoapNote).mock.invocationCallOrder[0]).toBeLessThan(
-      vi.mocked(finalizeConsultation).mock.invocationCallOrder[0],
-    );
+    const paid = vi.mocked(recordPayment).mock.invocationCallOrder[0];
+    const saved = vi.mocked(saveSoapNote).mock.invocationCallOrder[0];
+    const finalized = vi.mocked(finalizeConsultation).mock.invocationCallOrder[0];
+    expect(paid).toBeLessThan(saved);
+    expect(saved).toBeLessThan(finalized);
     expect(onClose).not.toHaveBeenCalled();
+  });
+
+  it("a failed payment does not save or finalize, and keeps the charge step open", async () => {
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    const toastError = vi.spyOn(toast, "error");
+    vi.mocked(recordPayment).mockRejectedValue(new Error("No se pudo guardar el cobro."));
+    const { onClose, onFinishConsultation, user } = renderWorkspace();
+    await waitForHistory();
+
+    await finishWithCharge(user);
+
+    await waitFor(() => expect(toastError).toHaveBeenCalledWith("No se pudo guardar el cobro."));
+    expect(saveSoapNote).not.toHaveBeenCalled();
+    expect(finalizeConsultation).not.toHaveBeenCalled();
+    expect(onFinishConsultation).not.toHaveBeenCalled();
+    expect(onClose).not.toHaveBeenCalled();
+    expect(chargeDialogTitle()).toBeInTheDocument();
   });
 
   it("closes after finalizing when no finish handler is given", async () => {
     const { onClose, user } = renderWorkspace({ onFinishConsultation: undefined });
     await waitForHistory();
 
-    await user.click(screen.getByRole("button", { name: /Finalizar Consulta/ }));
+    await finishWithCharge(user, "cortesia");
 
     await waitFor(() => expect(onClose).toHaveBeenCalledTimes(1));
     expect(finalizeConsultation).toHaveBeenCalledTimes(1);
@@ -116,7 +207,7 @@ describe("ConsultationWorkspace", () => {
     const { onClose, onFinishConsultation, user } = renderWorkspace();
     await waitForHistory();
 
-    await user.click(screen.getByRole("button", { name: /Finalizar Consulta/ }));
+    await finishWithCharge(user);
 
     await waitFor(() =>
       expect(toastError).toHaveBeenCalledWith("Esta consulta ya fue finalizada."),
@@ -146,5 +237,7 @@ describe("ConsultationWorkspace", () => {
     await waitFor(() => expect(onClose).toHaveBeenCalledTimes(1));
     expect(saveSoapNote).not.toHaveBeenCalled();
     expect(finalizeConsultation).not.toHaveBeenCalled();
+    expect(recordPayment).not.toHaveBeenCalled();
+    expect(chargeDialogTitle()).toBeNull();
   });
 });

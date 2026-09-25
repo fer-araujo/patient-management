@@ -14,6 +14,8 @@ export interface DashboardAppointment {
   durationMins: number;
   /** "Motivo de la consulta" typed by the patient when booking. */
   reason: string | null;
+  /** Catalog price of the service, used to pre-fill the charge. */
+  servicePrice?: number | null;
 }
 
 // INTERFAZ ESTRICTA PARA SUPABASE (CERO 'any')
@@ -24,7 +26,11 @@ interface RawAppointmentData {
   patient_id: string;
   reason: string | null;
   patients: { first_name: string; last_name: string; phone: string } | null;
-  services: { name: string; duration_mins: number } | null;
+  services: {
+    name: string;
+    duration_mins: number;
+    price: number | string | null;
+  } | null;
 }
 
 export const fetchDoctorAppointments = async (): Promise<
@@ -46,7 +52,8 @@ export const fetchDoctorAppointments = async (): Promise<
       ),
       services (
         name,
-        duration_mins
+        duration_mins,
+        price
       )
     `,
     )
@@ -95,6 +102,10 @@ export const fetchDoctorAppointments = async (): Promise<
       status: apt.status,
       durationMins: duration,
       reason: apt.reason?.trim() || null,
+      servicePrice:
+        apt.services?.price === null || apt.services?.price === undefined
+          ? null
+          : Number(apt.services.price),
     };
   });
 };
