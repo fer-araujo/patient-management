@@ -94,9 +94,12 @@ export const ExploreTreatmentsWidget = () => {
         </div>
       </div>
 
+      {/* The first card snaps to the start (not the center), and the snap area
+          honors the mobile side padding, so at rest the first card is always
+          fully visible and never pulled past the left edge. */}
       <div
         ref={carouselRef}
-        className="flex gap-4 overflow-x-auto pb-4 snap-x hide-scrollbar -mx-4 px-4 sm:mx-0 sm:px-0 scroll-smooth"
+        className="flex gap-4 overflow-x-auto pb-4 snap-x hide-scrollbar -mx-4 px-4 scroll-px-4 sm:mx-0 sm:px-0 sm:scroll-px-0 scroll-smooth [&>*:first-child]:snap-start"
       >
         {treatments.map((treatment) => (
           <div
