@@ -10,6 +10,7 @@ import { CatalogTab } from "./tabs/CatalogTab";
 import { InventoryTab } from "./tabs/InventoryTab";
 import { ArcoRequestsTab } from "./tabs/ArcoRequestsTab";
 import { AuditLogTab } from "./tabs/AuditLogTab";
+import { FinanceTab } from "./tabs/FinanceTab";
 import {
   countItemsNeedingRestock,
   fetchInventory,
@@ -118,14 +119,7 @@ export const DoctorAdminDashboard = () => {
 
         {activeTab === "audit" && <AuditLogTab />}
 
-        {activeTab === "finances" && (
-          <div className="bg-white rounded-2xl border border-slate-200 p-8 text-center text-brand-gray">
-            <h2 className="text-xl font-bold text-brand-dark mb-2">
-              Métricas Financieras
-            </h2>
-            <p>Próximamente...</p>
-          </div>
-        )}
+        {activeTab === "finances" && <FinanceTab />}
       </div>
     </main>
   );
