@@ -1160,3 +1160,82 @@ What it changes:
 
 No patient screen read those tables, so nothing in the portal breaks.
 Prescriptions stay visible to the patient in "Mis Medicamentos".
+
+---
+
+## Migration 15 — One patient record per phone
+
+**Why:** `current_patient_id()` matches the verified phone and, when two records
+share a number, silently returns the OLDEST. The other record becomes
+unreachable from the portal (its appointments, prescriptions and files never
+appear). Duplicates exist today (two test patients share `+525512345678`).
+
+**Run:** paste `supabase/migrations/20260922181400_unique_patient_phone.sql`.
+
+- If duplicates exist it stops with `Migration 15 ABORTED`, lists every record
+  (id, name, phone, created_at) grouped by phone, and changes NOTHING. For each
+  group, pick the record to keep, move the others' appointments, notes,
+  prescriptions, files and consents to it (or correct the phone if they are
+  different people), then run the file again. The migration never deletes or
+  edits data.
+- Otherwise it must print:
+  `Migration 15 PASSED: public.patients now allows only one record per canonical phone number.`
+
+**What it changes:**
+
+- A unique index on `public.normalize_phone(phone)`. `+52 1 55…`, `52155…` and
+  `+5255…` count as the same number. Patients without a phone (anonymized) are
+  not affected.
+- `authenticated` gets `EXECUTE` on `normalize_phone(text)`. Postgres runs an
+  index expression with the privileges of the role writing the row, and staff
+  write `patients` directly; without the grant every staff insert/edit would
+  fail with "permission denied for function normalize_phone".
+
+**Behavior change:** creating a patient from the admin panel with a phone that
+already belongs to another patient now fails ("Error al crear el paciente.")
+instead of creating an unreachable duplicate.
+
+**Rollback:** `drop index public.patients_phone_normalized_key;` (the grant can
+stay; it is harmless).
+
+---
+
+## RLS check — `supabase/tests/rls_check.sql`
+
+A single script that proves the access rules against the real policies. There
+is no local Docker, so `supabase test db` / pgTAP cannot run; this replaces it.
+
+**Run:** open the Supabase SQL editor, paste the whole file, run it once.
+
+- Expected: one notice starting with `RLS CHECK PASSED`.
+- A failure raises `RLS CHECK FAILED: …` naming the broken rule.
+- `RLS CHECK ABORTED: …` means a safety pre-check stopped it before any change.
+
+**What it does:**
+
+1. `begin;` … `rollback;` around everything: the throwaway auth users, two test
+   patients (phones `+529990000101` / `+529990000102`), their appointments,
+   clinical notes, an addendum, prescriptions and the audit rows they generate
+   are never committed, pass or fail.
+2. Disables the `whatsapp_notifications` trigger INSIDE the transaction (DDL is
+   transactional, so the rollback re-enables it) and aborts if any other
+   enabled trigger on the touched tables makes HTTP calls. No WhatsApp message
+   can be sent.
+3. Impersonates each caller with `set local role authenticated|anon` and
+   `request.jwt.claims` (`sub`, `phone`), exactly like PostgREST does, and
+   asserts:
+   - patient A reads only their own `patients`, `appointments` and
+     `prescriptions` rows and none of patient B's (and vice versa);
+   - patient A reads ZERO `clinical_notes` and `clinical_note_addenda` rows,
+     including their own (staff-only since migration 14);
+   - patient A cannot update patient B or change their own `profiles.role`;
+   - `export_my_data()` for patient A has no `clinical_notes` key, no
+     `profile.notes`, and nothing of patient B;
+   - a doctor account still sees both patients, both notes and the addendum;
+   - `anon` reads zero rows from patients, appointments, clinical notes,
+     addenda, prescriptions and profiles, and cannot execute `export_my_data()`.
+
+**When to run it:** after applying any migration that touches policies,
+`current_patient_id()`, `is_staff()` or `export_my_data()`, and before each
+release. It holds a lock on `appointments` for the duration of the transaction
+(well under a second); run it off-hours.
