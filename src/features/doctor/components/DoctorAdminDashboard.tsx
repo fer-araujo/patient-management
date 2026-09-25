@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import {
   Stethoscope,
   Package,
@@ -10,11 +10,27 @@ import { CatalogTab } from "./tabs/CatalogTab";
 import { InventoryTab } from "./tabs/InventoryTab";
 import { ArcoRequestsTab } from "./tabs/ArcoRequestsTab";
 import { AuditLogTab } from "./tabs/AuditLogTab";
+import {
+  countItemsNeedingRestock,
+  fetchInventory,
+  type InventoryItem,
+} from "../../../lib/services/inventoryService";
 
 export const DoctorAdminDashboard = () => {
   const [activeTab, setActiveTab] = useState<
     "catalog" | "inventory" | "finances" | "arco" | "audit"
   >("catalog");
+  const [inventoryItems, setInventoryItems] = useState<InventoryItem[]>([]);
+  const restockCount = countItemsNeedingRestock(inventoryItems);
+
+  // Loads once for the badge; InventoryTab keeps it current while open.
+  useEffect(() => {
+    fetchInventory()
+      .then(setInventoryItems)
+      .catch((error: unknown) =>
+        console.error("[DoctorAdminDashboard] Error al cargar el inventario:", error),
+      );
+  }, []);
 
   return (
     <main className="max-w-360 mx-auto px-4 sm:px-6 lg:px-8 pt-8 xl:pt-10 pb-20">
@@ -45,6 +61,14 @@ export const DoctorAdminDashboard = () => {
             }`}
           >
             <Package className="w-4 h-4" /> Inventario Clínico
+            {restockCount > 0 && (
+              <span
+                className="text-[10px] font-bold text-amber-600 bg-amber-50 px-2 py-0.5 rounded-md"
+                title="Artículos agotados o con stock bajo"
+              >
+                {restockCount}
+              </span>
+            )}
           </button>
 
           <button
@@ -60,24 +84,24 @@ export const DoctorAdminDashboard = () => {
 
           <button
             onClick={() => setActiveTab("arco")}
-            className={`flex items-center gap-2 px-6 py-3 min-h-12 rounded-full text-base font-bold transition-all cursor-pointer whitespace-nowrap ${
+            className={`flex items-center gap-2 px-6 py-3 rounded-full text-sm font-bold transition-all cursor-pointer whitespace-nowrap ${
               activeTab === "arco"
                 ? "bg-brand-dark text-white shadow-md"
-                : "bg-slate-100 text-slate-800 hover:bg-slate-200"
+                : "bg-slate-100 text-brand-gray hover:bg-slate-200 hover:text-brand-dark"
             }`}
           >
-            <ShieldCheck className="w-5 h-5" /> Solicitudes ARCO
+            <ShieldCheck className="w-4 h-4" /> Solicitudes ARCO
           </button>
 
           <button
             onClick={() => setActiveTab("audit")}
-            className={`flex items-center gap-2 px-6 py-3 min-h-12 rounded-full text-base font-bold transition-all cursor-pointer whitespace-nowrap ${
+            className={`flex items-center gap-2 px-6 py-3 rounded-full text-sm font-bold transition-all cursor-pointer whitespace-nowrap ${
               activeTab === "audit"
                 ? "bg-brand-dark text-white shadow-md"
-                : "bg-slate-100 text-slate-800 hover:bg-slate-200"
+                : "bg-slate-100 text-brand-gray hover:bg-slate-200 hover:text-brand-dark"
             }`}
           >
-            <History className="w-5 h-5" /> Bitácora
+            <History className="w-4 h-4" /> Bitácora
           </button>
         </div>
       </div>
@@ -86,7 +110,9 @@ export const DoctorAdminDashboard = () => {
       <div className="mt-6">
         {activeTab === "catalog" && <CatalogTab />}
 
-        {activeTab === "inventory" && <InventoryTab />}
+        {activeTab === "inventory" && (
+          <InventoryTab onItemsChange={setInventoryItems} />
+        )}
 
         {activeTab === "arco" && <ArcoRequestsTab />}
 

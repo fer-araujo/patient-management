@@ -6,7 +6,9 @@ import { Input } from "../../../../components/ui/Input";
 import { Dropdown } from "../../../../components/ui/Dropdown";
 import { Button } from "../../../../components/ui/Button";
 import {
+  adjustStock,
   createInventoryItem,
+  registerPurchase,
   updateInventoryItem,
   type InventoryItem,
   type InventoryFormData,
@@ -49,8 +51,12 @@ export const InventoryModal = ({
     min_alert_level: 5,
     unit_measure: "piezas",
   });
+  // Optional: what the doctor paid for the starting stock of a NEW item, so
+  // that first investment also reaches Finanzas.
+  const [initialCost, setInitialCost] = useState("");
 
   useEffect(() => {
+    setInitialCost("");
     if (itemToEdit) {
       setFormData({
         name: itemToEdit.name,
@@ -76,17 +82,52 @@ export const InventoryModal = ({
 
     try {
       if (itemToEdit) {
-        await updateInventoryItem(itemToEdit.id, formData);
+        // Stock is never written directly: a changed count goes through the
+        // ledger as the difference from what was shown when the modal opened.
+        const { stock_quantity, ...details } = formData;
+        await updateInventoryItem(itemToEdit.id, details);
+        const delta = stock_quantity - itemToEdit.stock_quantity;
+        if (delta !== 0) {
+          await adjustStock(
+            itemToEdit.id,
+            delta,
+            "adjustment",
+            undefined,
+            "Ajuste manual",
+          );
+        }
         toast.success("Artículo actualizado");
       } else {
-        await createInventoryItem(formData);
+        const cost = initialCost.trim() === "" ? null : Number(initialCost);
+        if (cost !== null && formData.stock_quantity > 0) {
+          // Create empty, then record the starting stock as a purchase so its
+          // cost lands in the ledger (the insert trigger would log it free).
+          const newId = await createInventoryItem({
+            ...formData,
+            stock_quantity: 0,
+          });
+          if (newId) {
+            await registerPurchase(
+              newId,
+              formData.stock_quantity,
+              cost,
+              "Compra inicial",
+            );
+          }
+        } else {
+          await createInventoryItem(formData);
+        }
         toast.success("Artículo agregado al inventario");
       }
       onSaved();
       onClose();
     } catch (error: unknown) {
       console.error("[InventoryModal] Error al guardar el artículo:", error);
-      toast.error("Ocurrió un error al guardar los datos");
+      toast.error(
+        error instanceof Error
+          ? error.message
+          : "Ocurrió un error al guardar los datos",
+      );
     } finally {
       setIsLoading(false);
     }
@@ -181,9 +222,22 @@ export const InventoryModal = ({
             className={compactInputClasses}
           />
         </div>
+        {!itemToEdit && formData.stock_quantity > 0 && (
+          <Input
+            label="¿Cuánto pagaste por este stock? (opcional, MXN)"
+            type="number"
+            min={0}
+            step={0.01}
+            placeholder="Déjalo vacío si no lo compraste"
+            value={initialCost}
+            onChange={(e) => setInitialCost(e.target.value)}
+            containerClassName={`w-full ${compactLabelClasses}`}
+            className={compactInputClasses}
+          />
+        )}
         <p className="text-xs text-brand-gray mt-1 flex items-center">
-          * El sistema te alertará en color rojo cuando el stock sea menor o
-          igual a tu "Alerta de Stock Bajo".
+          * Verás "Stock bajo" en ámbar cuando queden de 1 a tu "Alerta de
+          Stock Bajo", y "Agotado" en rojo cuando llegue a 0.
         </p>
 
         <div className="pt-4 mt-2 border-t border-brand-light flex gap-3 justify-end">
