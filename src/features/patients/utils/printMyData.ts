@@ -14,9 +14,18 @@ const escapeHtml = (value: unknown): string =>
     .replace(/"/g, "&quot;")
     .replace(/'/g, "&#39;");
 
+// A date-only value ("1975-01-01") is parsed by `new Date` as UTC midnight,
+// which is still the previous day in Monterrey. Build it as a local date.
+const DATE_ONLY = /^(\d{4})-(\d{2})-(\d{2})$/;
+
+const toDate = (value: string): Date => {
+  const m = DATE_ONLY.exec(value);
+  return m ? new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3])) : new Date(value);
+};
+
 const formatDate = (iso: string | null | undefined, withTime = false): string => {
   if (!iso) return "—";
-  return new Date(iso).toLocaleString("es-MX", {
+  return toDate(iso).toLocaleString("es-MX", {
     day: "numeric",
     month: "long",
     year: "numeric",
