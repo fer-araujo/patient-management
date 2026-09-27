@@ -8,9 +8,11 @@ import {
   timeToPixels,
   getServiceColors,
   isTimeSlotInPast,
+  isTimeStrInPast,
   HOUR_HEIGHT,
   getGridHoursRange,
 } from "../../../utils/calendarUtils";
+import { PendingBadge } from "./PendingBadge";
 
 interface WeeklyViewProps {
   appointments: DashboardAppointment[];
@@ -164,8 +166,7 @@ export const WeeklyView = ({
 
                   {/* BLOQUEOS */}
                   {daysBlocks.map((block) => {
-                    const blockHour = parseHour24(block.startTime);
-                    const isPast = isTimeSlotInPast(day.dateObj, blockHour);
+                    const isPast = isTimeStrInPast(day.dateObj, block.startTime);
                     const topPosition = timeToPixels(
                       block.startTime,
                       startHour,
@@ -202,8 +203,7 @@ export const WeeklyView = ({
 
                   {/* CITAS MÉDICAS */}
                   {daysAppointments.map((app) => {
-                    const appHour = parseHour24(app.time);
-                    const isPast = isTimeSlotInPast(day.dateObj, appHour);
+                    const isPast = isTimeStrInPast(day.dateObj, app.time);
                     const topPosition = timeToPixels(app.time, startHour);
                     const heightPixels = (app.durationMins / 60) * HOUR_HEIGHT;
                     const isSmall = app.durationMins <= 45;
@@ -224,6 +224,7 @@ export const WeeklyView = ({
                             >
                               {app.patientName}
                             </h4>
+                            {app.status === "pending" && <PendingBadge />}
                             {!isSmall && (
                               <div className="flex items-center gap-1 text-[10px] font-bold opacity-90 bg-white/60 px-1.5 py-0.5 rounded-md shrink-0">
                                 <Clock className="w-3 h-3" /> {app.time}

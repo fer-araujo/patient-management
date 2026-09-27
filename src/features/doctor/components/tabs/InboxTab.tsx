@@ -40,6 +40,19 @@ const getISODate = () => {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
 };
 
+/**
+ * The Agenda shows appointments from 30 days ago onward (past ones for
+ * context, plus everything upcoming). Shared by the table and the cards so
+ * both always count the same set.
+ */
+const isWithinInboxWindow = (app: DashboardAppointment): boolean => {
+  const windowStart = new Date();
+  windowStart.setDate(windowStart.getDate() - 30);
+  windowStart.setHours(0, 0, 0, 0);
+  const isoDate = parseVisualDateToISO(app.date);
+  return new Date(`${isoDate}T00:00:00`) >= windowStart;
+};
+
 interface InboxTabProps {
   appointments: DashboardAppointment[];
   blockedSlots: DashboardBlockedSlot[];
@@ -99,8 +112,17 @@ export const InboxTab = ({
       blockedSlots,
       workingSchedule,
       durationMins,
+      // The request being moved must not block its own current slot.
+      rescheduleData?.id,
     );
-  }, [newDateISO, appointments, blockedSlots, workingSchedule, durationMins]);
+  }, [
+    newDateISO,
+    appointments,
+    blockedSlots,
+    workingSchedule,
+    durationMins,
+    rescheduleData,
+  ]);
 
   useEffect(() => {
     if (
@@ -192,28 +214,31 @@ export const InboxTab = ({
   // =========================================================================
   // DATOS DERIVADOS Y REGLAS DE NEGOCIO (INBOX FILTERING)
   // =========================================================================
-  const stats = useMemo(
-    () => ({
-      pending: appointments.filter((a) => a.status === "pending").length,
-      confirmed: appointments.filter((a) => a.status === "confirmed").length,
-      newPatients: appointments.filter((a) => a.isNewPatient).length,
-      total: appointments.length,
-    }),
-    [appointments],
-  );
+  // The cards count exactly what the table shows (same 30-day window), and
+  // "Por revisar" / "Confirmadas" only count what is still ahead: a pending
+  // request or a confirmed visit whose time already passed needs no action.
+  const stats = useMemo(() => {
+    const now = Date.now();
+    const upcoming = (a: DashboardAppointment) =>
+      new Date(
+        combineIsoDateAndTime(parseVisualDateToISO(a.date), a.time),
+      ).getTime() >= now;
+    const inWindow = appointments.filter(isWithinInboxWindow);
+    return {
+      pending: appointments.filter((a) => a.status === "pending" && upcoming(a))
+        .length,
+      confirmed: appointments.filter(
+        (a) => a.status === "confirmed" && upcoming(a),
+      ).length,
+      newPatients: inWindow.filter((a) => a.isNewPatient).length,
+      total: inWindow.length,
+    };
+  }, [appointments]);
 
   const filteredData = useMemo(() => {
-    // 1. Calcular la fecha de hace 30 días exactos
-    const thirtyDaysAgo = new Date();
-    thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
-    thirtyDaysAgo.setHours(0, 0, 0, 0);
-
     const filtered = appointments.filter((app) => {
-      // 2. REGLA DE NEGOCIO: Excluir citas con más de 30 días de antigüedad
-      const isoDate = parseVisualDateToISO(app.date);
-      const appDateObj = new Date(`${isoDate}T00:00:00`);
-
-      const isWithin30Days = appDateObj >= thirtyDaysAgo;
+      // REGLA DE NEGOCIO: Excluir citas con más de 30 días de antigüedad
+      const isWithin30Days = isWithinInboxWindow(app);
       const matchesSearch =
         app.patientName.toLowerCase().includes(searchTerm.toLowerCase()) ||
         app.service.toLowerCase().includes(searchTerm.toLowerCase());

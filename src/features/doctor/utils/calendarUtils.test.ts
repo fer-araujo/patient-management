@@ -6,9 +6,11 @@ import {
   filterFutureTimesOnly,
   getAvailableTimeOptions,
   getAvailableTimeOptionsFromBusy,
+  getBookableTimeOptions,
   getGridHoursRange,
   getServiceColors,
   isTimeSlotInPast,
+  isTimeStrInPast,
   parseHour24,
   parseVisualDateToISO,
   timeToDecimal,
@@ -232,13 +234,46 @@ describe("getAvailableTimeOptions (staff calendar)", () => {
     expect(options).toContain("02:30 PM");
   });
 
-  it("ignores pending appointments and appointments on other days", () => {
+  // A reschedule sets the appointment back to "pending", and the database
+  // (assert_slot_free / get_availability) treats every status except
+  // cancelled and rejected as busy. The staff calendar must agree, or it would
+  // offer a slot the patient's pending request already holds.
+  it("treats pending appointments as busy, like the booking RPCs do", () => {
     const options = getAvailableTimeOptions(
       THURSDAY,
-      [appointment({ status: "pending" }), appointment({ date: "16 oct 2026" })],
+      [appointment({ status: "pending" })],
       [],
       DEFAULT_SCHEDULE,
       30,
+    ).map((o) => o.value);
+    expect(options).not.toContain("10:00 AM");
+    expect(options).not.toContain("10:30 AM");
+    expect(options).toContain("11:00 AM");
+  });
+
+  it("ignores cancelled, rejected and other-day appointments", () => {
+    const options = getAvailableTimeOptions(
+      THURSDAY,
+      [
+        appointment({ id: "c", status: "cancelled" }),
+        appointment({ id: "r", status: "rejected" }),
+        appointment({ id: "o", date: "16 oct 2026" }),
+      ],
+      [],
+      DEFAULT_SCHEDULE,
+      30,
+    ).map((o) => o.value);
+    expect(options).toContain("10:00 AM");
+  });
+
+  it("does not let the appointment being moved collide with itself", () => {
+    const options = getAvailableTimeOptions(
+      THURSDAY,
+      [appointment({ id: "moving" })],
+      [],
+      DEFAULT_SCHEDULE,
+      30,
+      "moving",
     ).map((o) => o.value);
     expect(options).toContain("10:00 AM");
   });
@@ -255,6 +290,17 @@ describe("isTimeSlotInPast / filterFutureTimesOnly", () => {
     expect(isTimeSlotInPast(new Date(2026, 9, 16), 8)).toBe(false);
   });
 
+  it("compares the slot start to the minute on the same day", () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date(2026, 9, 15, 11, 20));
+
+    expect(isTimeSlotInPast(new Date(2026, 9, 15), 11, 15)).toBe(true);
+    expect(isTimeSlotInPast(new Date(2026, 9, 15), 11, 20)).toBe(true);
+    expect(isTimeSlotInPast(new Date(2026, 9, 15), 11, 30)).toBe(false);
+    expect(isTimeStrInPast(new Date(2026, 9, 15), "11:45 AM")).toBe(false);
+    expect(isTimeStrInPast(new Date(2026, 9, 15), "11:00 AM")).toBe(true);
+  });
+
   it("keeps only times at least one hour ahead when the date is today", () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date(2026, 9, 15, 11, 20));
@@ -262,5 +308,30 @@ describe("isTimeSlotInPast / filterFutureTimesOnly", () => {
     const times = ["11:00 AM", "12:00 PM", "12:30 PM", "01:00 PM"];
     expect(filterFutureTimesOnly(times, THURSDAY)).toEqual(["12:30 PM", "01:00 PM"]);
     expect(filterFutureTimesOnly(times, "2026-10-16")).toEqual(times);
+  });
+
+  it("drops only the slots that already started today from staff availability", () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date(2026, 9, 15, 11, 20));
+
+    const today = getBookableTimeOptions(THURSDAY, [], [], DEFAULT_SCHEDULE, 30).map(
+      (o) => o.value,
+    );
+    expect(today).not.toContain("11:15 AM");
+    expect(today[0]).toBe("11:30 AM");
+    expect(today).toContain("11:45 AM");
+
+    const tomorrow = getBookableTimeOptions("2026-10-16", [], [], DEFAULT_SCHEDULE, 30);
+    expect(tomorrow[0].value).toBe("08:00 AM");
+  });
+
+  it("keeps a 45-minute service inside today's closing time, to the minute", () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date(2026, 9, 15, 16, 50)); // 04:50 PM, clinic closes 06:00 PM
+
+    const today = getBookableTimeOptions(THURSDAY, [], [], DEFAULT_SCHEDULE, 45).map(
+      (o) => o.value,
+    );
+    expect(today).toEqual(["05:00 PM", "05:15 PM"]);
   });
 });

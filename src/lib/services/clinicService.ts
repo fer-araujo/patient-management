@@ -129,6 +129,10 @@ export const updateAppointmentStatus = async (
   }
 };
 
+/** Slot conflicts raised on purpose by the booking RPCs carry code P0001 and a Spanish message. */
+const rpcError = (error: { code?: string; message: string }, fallback: string) =>
+  new Error(error.code === "P0001" ? error.message : fallback);
+
 // 3. CREAR NUEVA CITA (Agendar)
 export const createAppointment = async (
   patientId: string,
@@ -147,37 +151,36 @@ export const createAppointment = async (
   // Usamos el nuevo traductor que respeta tu zona horaria
   const utcIsoDateTime = combineVisualDateAndTime(dateStr, timeStr);
 
-  const { error } = await supabase.from("appointments").insert({
-    patient_id: patientId,
-    service_id: srv.id,
-    start_time: utcIsoDateTime,
-    status: "confirmed",
+  // staff_create_appointment runs the same locked overlap check as patient
+  // bookings, so two bookings can never take the same slot at once.
+  const { error } = await supabase.rpc("staff_create_appointment", {
+    p_patient_id: patientId,
+    p_service_id: srv.id,
+    p_start_time: utcIsoDateTime,
   });
 
   if (error) {
     console.error("Error al crear cita:", error.message);
-    throw new Error("No se pudo agendar la cita.");
+    throw rpcError(error, "No se pudo agendar la cita.");
   }
 };
 
 // 4. REPROGRAMAR CITA (staff)
 // Patients use rescheduleMyAppointment in patientBookingService instead: RLS
-// gives them no UPDATE privilege on appointments.
+// gives them no UPDATE privilege on appointments. The RPC checks the new slot
+// (ignoring the appointment itself) and sets the status back to "pending".
 export const rescheduleAppointment = async (
   id: string,
   isoDateTime: string,
 ) => {
-  const { error } = await supabase
-    .from("appointments")
-    .update({
-      start_time: isoDateTime,
-      status: "pending",
-    }) // AHORA SE QUEDA PENDIENTE
-    .eq("id", id);
+  const { error } = await supabase.rpc("staff_reschedule_appointment", {
+    p_appointment_id: id,
+    p_start_time: isoDateTime,
+  });
 
   if (error) {
     console.error("Error al reprogramar:", error.message);
-    throw new Error("No se pudo reprogramar la cita.");
+    throw rpcError(error, "No se pudo reprogramar la cita.");
   }
 };
 

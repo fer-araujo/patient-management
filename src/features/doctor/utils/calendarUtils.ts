@@ -48,26 +48,30 @@ export const getServiceColors = (service: string, isPast: boolean): string => {
   return isPast ? `${colors} opacity-60` : colors;
 };
 
-export const isTimeSlotInPast = (dateObj: Date, hour24: number): boolean => {
-  const now = new Date();
-  const currentHour = now.getHours();
-  const targetMidnight = new Date(
+/**
+ * Whether a slot starting at `hour24:minutes` on `dateObj` (local time) has
+ * already started, to the minute. For a whole-hour cell (minutes = 0) this is
+ * the same as "the hour has begun".
+ */
+export const isTimeSlotInPast = (
+  dateObj: Date,
+  hour24: number,
+  minutes: number = 0,
+): boolean => {
+  const slotStart = new Date(
     dateObj.getFullYear(),
     dateObj.getMonth(),
     dateObj.getDate(),
+    hour24,
+    minutes,
   );
-  const todayMidnight = new Date(
-    now.getFullYear(),
-    now.getMonth(),
-    now.getDate(),
-  );
-  if (targetMidnight < todayMidnight) return true;
-  if (
-    targetMidnight.getTime() === todayMidnight.getTime() &&
-    hour24 <= currentHour
-  )
-    return true;
-  return false;
+  return slotStart.getTime() <= Date.now();
+};
+
+/** isTimeSlotInPast for a "hh:mm AM/PM" start time. */
+export const isTimeStrInPast = (dateObj: Date, timeStr: string): boolean => {
+  const { hours, minutes } = extractHoursMinutes(timeStr);
+  return isTimeSlotInPast(dateObj, hours, minutes);
 };
 
 export const parseVisualDateToISO = (visualDate: string): string => {
@@ -199,8 +203,18 @@ export const getAvailableTimeOptionsFromBusy = (
 };
 
 /**
+ * Whether an appointment holds its calendar slot. Must match the busy rule of
+ * assert_slot_free() and get_availability() in the database: every status
+ * except 'cancelled' and 'rejected'. A rescheduled appointment goes back to
+ * 'pending' and must keep blocking its new time.
+ */
+export const holdsSlot = (status: DashboardAppointment["status"]): boolean =>
+  status !== "cancelled" && status !== "rejected";
+
+/**
  * Availability for the STAFF calendar, which already holds the full appointment
- * and block lists in memory.
+ * and block lists in memory. `excludeAppointmentId` lets a reschedule ignore the
+ * appointment being moved, so its current slot never collides with itself.
  */
 export const getAvailableTimeOptions = (
   isoDate: string,
@@ -208,6 +222,7 @@ export const getAvailableTimeOptions = (
   blockedSlots: DashboardBlockedSlot[],
   workingSchedule: WeeklySchedule,
   requiredDurationMins: number = 30,
+  excludeAppointmentId?: string,
 ): { label: string; value: string }[] => {
   const candidates = buildDayCandidates(isoDate, workingSchedule);
   if (!candidates) return [];
@@ -225,7 +240,10 @@ export const getAvailableTimeOptions = (
     .replace(/\./g, "")
     .toLowerCase();
   const appsToday = appointments.filter(
-    (a) => a.date.toLowerCase() === visualDateStr && a.status === "confirmed",
+    (a) =>
+      a.date.toLowerCase() === visualDateStr &&
+      holdsSlot(a.status) &&
+      a.id !== excludeAppointmentId,
   );
   const blocksToday = blockedSlots.filter(
     (b) => b.date.toLowerCase() === visualDateStr,
@@ -252,6 +270,32 @@ export const getAvailableTimeOptions = (
       return !colisionCita && !colisionBloqueo;
     })
     .map((t) => ({ label: t, value: t }));
+};
+
+/**
+ * Staff availability without the slots that already started today: a slot is
+ * offered only when its start is after now, to the minute (the server's
+ * assert_slot_free() applies the same "start > now()" rule).
+ */
+export const getBookableTimeOptions = (
+  isoDate: string,
+  appointments: DashboardAppointment[],
+  blockedSlots: DashboardBlockedSlot[],
+  workingSchedule: WeeklySchedule,
+  requiredDurationMins: number = 30,
+  excludeAppointmentId?: string,
+): { label: string; value: string }[] => {
+  if (!isoDate) return [];
+  const [y, m, d] = isoDate.split("-").map(Number);
+  const dateObj = new Date(y, m - 1, d);
+  return getAvailableTimeOptions(
+    isoDate,
+    appointments,
+    blockedSlots,
+    workingSchedule,
+    requiredDurationMins,
+    excludeAppointmentId,
+  ).filter((opt) => !isTimeStrInPast(dateObj, opt.value));
 };
 
 export const filterFutureTimesOnly = (

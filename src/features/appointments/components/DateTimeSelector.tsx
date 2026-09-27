@@ -138,7 +138,10 @@ export const DateTimeSelector = ({
   }, [serviceId]);
 
   const isDateDisabled = (dateStr: string) => {
-    const date = new Date(dateStr);
+    // "YYYY-MM-DD" must be read as a local date: new Date(dateStr) is UTC
+    // midnight, which is the previous day in Monterrey.
+    const [year, month, day] = dateStr.split("-").map(Number);
+    const date = new Date(year, month - 1, day);
     return !workingSchedule[date.getDay()].isOpen;
   };
 
