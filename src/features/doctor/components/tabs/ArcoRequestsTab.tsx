@@ -1,6 +1,16 @@
 import { useEffect, useState } from "react";
 import toast from "react-hot-toast";
-import { Loader2, ShieldCheck, UserX } from "lucide-react";
+import {
+  Eye,
+  Loader2,
+  Search,
+  ShieldCheck,
+  UserPen,
+  UserX,
+} from "lucide-react";
+import { EditPatientModal } from "../modals/EditPatientModal";
+import { Modal } from "../../../../components/ui/Modal";
+import { DataGrid, type ColumnDef } from "../../../../components/ui/DataGrid";
 import {
   anonymizePatient,
   fetchArcoRequests,
@@ -40,6 +50,7 @@ const RequestCard = ({ request, onChanged }: RequestCardProps) => {
   const [note, setNote] = useState("");
   const [isSaving, setIsSaving] = useState(false);
   const [confirmAnonymize, setConfirmAnonymize] = useState(false);
+  const [isEditingPatient, setIsEditingPatient] = useState(false);
 
   const dueDate = addBusinessDays(
     new Date(request.createdAt),
@@ -132,6 +143,25 @@ const RequestCard = ({ request, onChanged }: RequestCardProps) => {
         </p>
       )}
 
+      {request.requestType === "rectification" && (
+        <div className="border-t border-slate-100 pt-3">
+          <button
+            type="button"
+            onClick={() => setIsEditingPatient(true)}
+            className={secondaryButton}
+          >
+            <UserPen className="w-4 h-4" aria-hidden="true" />
+            Ver y corregir datos
+          </button>
+          <EditPatientModal
+            isOpen={isEditingPatient}
+            patientId={request.patientId}
+            onClose={() => setIsEditingPatient(false)}
+            onSaved={onChanged}
+          />
+        </div>
+      )}
+
       {isOpen(request) && (
         <div className="space-y-2 border-t border-slate-100 pt-3">
           <textarea
@@ -220,11 +250,97 @@ const RequestCard = ({ request, onChanged }: RequestCardProps) => {
   );
 };
 
-/** Staff list of ARCO requests (LFPDPPP 2025, arts. 21-34). */
+type ArcoView = "pending" | "resolved" | "rejected" | "all";
+
+// Key order is the tab order; "Todas" is the default view.
+const VIEW_LABELS: Record<ArcoView, string> = {
+  all: "Todas",
+  pending: "Pendientes",
+  resolved: "Atendidas",
+  rejected: "Rechazadas",
+};
+
+const dueDateOf = (r: ArcoRequest) =>
+  addBusinessDays(new Date(r.createdAt), ARCO_RESPONSE_BUSINESS_DAYS);
+
+const inView = (r: ArcoRequest, view: ArcoView) =>
+  view === "all" ? true : view === "pending" ? isOpen(r) : r.status === view;
+
+/** History rows open the full request card in a modal. */
+const historyColumns = (
+  onView: (r: ArcoRequest) => void,
+): ColumnDef<ArcoRequest>[] => [
+  {
+    header: "Paciente",
+    cell: (r) => (
+      <span className="text-sm font-bold text-brand-dark">
+        {r.patientName || "Paciente"}
+      </span>
+    ),
+  },
+  {
+    header: "Tipo",
+    cell: (r) => (
+      <span className="text-[10px] font-bold text-slate-500 bg-slate-100 px-2 py-0.5 rounded-md uppercase tracking-wider">
+        {ARCO_TYPE_LABELS[r.requestType].title}
+      </span>
+    ),
+  },
+  {
+    header: "Recibida",
+    cell: (r) => (
+      <span className="text-sm text-brand-gray">{formatDate(r.createdAt)}</span>
+    ),
+  },
+  {
+    header: "Estado",
+    cell: (r) => (
+      <span
+        className={`rounded-full px-2.5 py-1 text-[11px] font-bold ${ARCO_STATUS_LABELS[r.status].className}`}
+      >
+        {ARCO_STATUS_LABELS[r.status].label}
+      </span>
+    ),
+  },
+  {
+    header: "Cerrada",
+    cell: (r) => (
+      <span className="text-sm text-brand-gray">
+        {r.resolvedAt ? formatDate(r.resolvedAt) : "—"}
+      </span>
+    ),
+  },
+  {
+    header: "",
+    className: "text-right",
+    cell: (r) => (
+      <div className="flex justify-end">
+        <button
+          type="button"
+          onClick={() => onView(r)}
+          className="flex items-center justify-center w-10 h-10 bg-slate-50 text-slate-600 hover:bg-brand-primary hover:text-white rounded-xl transition-all border border-slate-200 hover:border-brand-primary shadow-sm cursor-pointer"
+          title="Ver detalle"
+          aria-label={`Ver solicitud de ${r.patientName || "paciente"}`}
+        >
+          <Eye className="w-5 h-5" strokeWidth={2.5} />
+        </button>
+      </div>
+    ),
+  },
+];
+
+/**
+ * ARCO inbox (LFPDPPP 2025, arts. 21-34). Pending requests are the work
+ * queue: cards with the reply actions, soonest deadline first. Closed ones
+ * are history: a compact paginated table whose rows open the full card.
+ */
 export const ArcoRequestsTab = () => {
   const [requests, setRequests] = useState<ArcoRequest[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [reloadKey, setReloadKey] = useState(0);
+  const [view, setView] = useState<ArcoView>("all");
+  const [search, setSearch] = useState("");
+  const [detail, setDetail] = useState<ArcoRequest | null>(null);
 
   useEffect(() => {
     let active = true;
@@ -245,6 +361,37 @@ export const ArcoRequestsTab = () => {
   }, [reloadKey]);
 
   const openCount = requests.filter(isOpen).length;
+  const counts: Record<ArcoView, number> = {
+    pending: openCount,
+    resolved: requests.filter((r) => r.status === "resolved").length,
+    rejected: requests.filter((r) => r.status === "rejected").length,
+    all: requests.length,
+  };
+
+  const term = search.trim().toLowerCase();
+  const visible = requests.filter(
+    (r) =>
+      inView(r, view) &&
+      (!term || (r.patientName ?? "").toLowerCase().includes(term)),
+  );
+  const pendingQueue = [...visible].sort(
+    (a, b) => dueDateOf(a).getTime() - dueDateOf(b).getTime(),
+  );
+  const history = [...visible].sort((a, b) =>
+    b.createdAt.localeCompare(a.createdAt),
+  );
+
+  const handleChanged = () => {
+    setDetail(null);
+    setReloadKey((k) => k + 1);
+  };
+
+  const choiceClasses = (selected: boolean) =>
+    `rounded-xl border-2 px-3 py-1.5 text-sm font-bold transition-all cursor-pointer ${
+      selected
+        ? "border-brand-primary bg-brand-light/40 text-brand-dark"
+        : "border-brand-light bg-white text-brand-gray hover:border-brand-primary/40"
+    }`;
 
   if (isLoading) {
     return (
@@ -257,39 +404,80 @@ export const ArcoRequestsTab = () => {
 
   return (
     <div className="space-y-6">
-      <div className="bg-white border border-slate-200 rounded-3xl p-6 shadow-[0_8px_30px_rgb(0,0,0,0.04)] flex items-center gap-4">
-        <div className="w-14 h-14 bg-brand-light/40 text-brand-primary rounded-2xl flex items-center justify-center shrink-0">
-          <ShieldCheck className="w-7 h-7" />
-        </div>
-        <div>
-          <p className="text-sm font-bold text-brand-gray uppercase tracking-wider mb-1">
-            Solicitudes pendientes
-          </p>
-          <h4 className="text-3xl font-black text-brand-dark leading-none">
-            {openCount}
-          </h4>
-        </div>
-        <p className="ml-auto text-xs text-brand-gray max-w-xs text-right hidden sm:block">
-          Datos personales (ARCO). La ley da {ARCO_RESPONSE_BUSINESS_DAYS} días
-          hábiles para responder.
-        </p>
-      </div>
-
-      {requests.length === 0 ? (
-        <p className="text-center text-brand-gray font-medium py-10">
-          No hay solicitudes.
-        </p>
-      ) : (
-        <ul className="space-y-4">
-          {requests.map((r) => (
-            <RequestCard
-              key={r.id}
-              request={r}
-              onChanged={() => setReloadKey((k) => k + 1)}
-            />
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+        <div className="flex flex-wrap gap-2" role="tablist">
+          {(Object.keys(VIEW_LABELS) as ArcoView[]).map((v) => (
+            <button
+              key={v}
+              type="button"
+              role="tab"
+              aria-selected={view === v}
+              onClick={() => setView(v)}
+              className={choiceClasses(view === v)}
+            >
+              {VIEW_LABELS[v]} ({counts[v]})
+            </button>
           ))}
-        </ul>
+        </div>
+        <div className="relative w-full sm:w-72">
+          <Search className="w-5 h-5 text-brand-gray absolute left-4 top-1/2 -translate-y-1/2" />
+          <input
+            type="text"
+            placeholder="Buscar paciente..."
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            className="w-full pl-11 pr-4 py-2.5 bg-white border border-slate-200 shadow-[0_2px_10px_rgb(0,0,0,0.02)] rounded-xl text-sm font-medium focus:outline-none focus:border-brand-primary focus:ring-2 focus:ring-brand-primary/20 transition-all"
+          />
+        </div>
+      </div>
+      <p className="text-xs text-brand-gray -mt-3">
+        Solicitudes de los pacientes sobre sus datos personales. La ley da{" "}
+        {ARCO_RESPONSE_BUSINESS_DAYS} días hábiles para responder.
+      </p>
+
+      {view === "pending" ? (
+        pendingQueue.length === 0 ? (
+          <p className="text-center text-brand-gray font-medium py-10">
+            {term
+              ? "Ninguna solicitud pendiente coincide con la búsqueda."
+              : "No hay solicitudes pendientes."}
+          </p>
+        ) : (
+          <ul className="space-y-4">
+            {pendingQueue.map((r) => (
+              <RequestCard key={r.id} request={r} onChanged={handleChanged} />
+            ))}
+          </ul>
+        )
+      ) : (
+        <div className="bg-white border border-slate-200 rounded-3xl shadow-[0_8px_30px_rgb(0,0,0,0.04)] overflow-hidden">
+          <DataGrid
+            data={history}
+            columns={historyColumns(setDetail)}
+            keyExtractor={(r) => r.id}
+            itemsPerPage={10}
+            emptyState={
+              <p className="text-center text-brand-gray font-medium py-10">
+                No hay solicitudes.
+              </p>
+            }
+          />
+        </div>
       )}
+
+      <Modal
+        isOpen={detail !== null}
+        onClose={() => setDetail(null)}
+        title="Solicitud"
+        icon={<ShieldCheck className="w-5 h-5 text-brand-primary" />}
+        hideFooter={true}
+      >
+        {detail && (
+          <ul className="list-none">
+            <RequestCard request={detail} onChanged={handleChanged} />
+          </ul>
+        )}
+      </Modal>
     </div>
   );
 };
