@@ -1,5 +1,6 @@
 import { Calendar, CheckCircle2, Clock, Hourglass } from "lucide-react";
 import { Button } from "../../../../components/ui/Button";
+import { CLINIC_TIME_LABEL } from "../../../../lib/clinicTime";
 
 interface NextAppointmentProps {
   service: string;
@@ -48,7 +49,10 @@ export const NextAppointmentCard = ({
             <div className="w-1 h-1 rounded-full bg-slate-300 hidden sm:block"></div>
             <div className="flex items-center gap-2">
               <Clock className="w-4 h-4 text-brand-primary" />
-              {time}
+              <span>{time}</span>
+              <span className="text-xs text-brand-gray font-medium">
+                ({CLINIC_TIME_LABEL})
+              </span>
             </div>
           </div>
         </div>

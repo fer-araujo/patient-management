@@ -8,6 +8,7 @@ import {
   Plus,
 } from "lucide-react";
 import { Button } from "../../../components/ui/Button";
+import { CLINIC_TIME_LABEL } from "../../../lib/clinicTime";
 
 interface Props {
   bookingData: {
@@ -112,6 +113,7 @@ export const BookingSuccess = ({
                 <Clock className="w-5 h-5" />
               </div>
               <span>{bookingData.time}</span>
+              <span className="text-sm">({CLINIC_TIME_LABEL})</span>
             </div>
           </div>
         </motion.div>

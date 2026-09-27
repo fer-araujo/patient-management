@@ -1,4 +1,5 @@
 import { combineVisualDateAndTime } from "../../features/doctor/utils/calendarUtils";
+import { formatClinicShortDate, formatClinicTime12h } from "../clinicTime";
 import { supabase } from "../supabase";
 
 export interface DashboardAppointment {
@@ -68,21 +69,11 @@ export const fetchDoctorAppointments = async (): Promise<
   if (!data) return [];
 
   return data.map((apt) => {
+    // Clinic wall clock, so the calendar grid, past-slot checks and
+    // availability (all in clinic time) agree whatever the browser zone.
     const startDate = new Date(apt.start_time);
-
-    const formattedDate = startDate
-      .toLocaleDateString("es-MX", {
-        day: "2-digit",
-        month: "short",
-        year: "numeric",
-      })
-      .replace(/\./g, "");
-
-    const h = startDate.getHours();
-    const m = String(startDate.getMinutes()).padStart(2, "0");
-    const ampm = h >= 12 ? "PM" : "AM";
-    const h12 = h % 12 || 12; // Convierte formato 24h a 12h
-    const cleanTime = `${String(h12).padStart(2, "0")}:${m} ${ampm}`;
+    const formattedDate = formatClinicShortDate(startDate);
+    const cleanTime = formatClinicTime12h(startDate);
 
     const firstName = apt.patients?.first_name || "Paciente";
     const lastName = apt.patients?.last_name || "Desconocido";

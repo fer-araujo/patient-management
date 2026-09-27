@@ -8,6 +8,7 @@ import {
   getAvailableTimeOptionsFromBusy,
   getBookableTimeOptions,
   getGridHoursRange,
+  getSmartStartDate,
   getServiceColors,
   isTimeSlotInPast,
   isTimeStrInPast,
@@ -333,5 +334,17 @@ describe("isTimeSlotInPast / filterFutureTimesOnly", () => {
       (o) => o.value,
     );
     expect(today).toEqual(["05:00 PM", "05:15 PM"]);
+  });
+});
+
+describe("getSmartStartDate (patient booking start day)", () => {
+  it("offers today until 04:59 PM and moves to the next day at 05:00 PM", () => {
+    expect(getSmartStartDate(DEFAULT_SCHEDULE, new Date(2026, 9, 15, 16, 59))).toBe(THURSDAY);
+    expect(getSmartStartDate(DEFAULT_SCHEDULE, new Date(2026, 9, 15, 17, 0))).toBe("2026-10-16");
+  });
+
+  it("skips closed days after the cut-off", () => {
+    // Saturday 17 Oct at 05:00 PM: Sunday is closed, so Monday 19 Oct.
+    expect(getSmartStartDate(DEFAULT_SCHEDULE, new Date(2026, 9, 17, 17, 0))).toBe("2026-10-19");
   });
 });

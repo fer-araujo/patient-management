@@ -24,7 +24,13 @@ import { type WeeklySchedule } from "../../../lib/services/settingsService";
 import {
   getAvailableTimeOptionsFromBusy,
   filterFutureTimesOnly,
+  getSmartStartDate,
 } from "../../doctor/utils/calendarUtils";
+import {
+  CLINIC_TIME_LABEL,
+  clinicWallTimeToUtc,
+  nowInClinic,
+} from "../../../lib/clinicTime";
 
 const SHORT_DAY_NAMES = ["Dom", "Lun", "Mar", "Mié", "Jue", "Vie", "Sáb"];
 
@@ -44,26 +50,6 @@ interface Props {
 
 /** Must match the appointments_reason_length check in the database. */
 const REASON_MAX_LENGTH = 1000;
-
-// FIX: Sacamos la función del componente para que no se re-cree y sea más pura
-const getSmartStartDate = (schedule: WeeklySchedule) => {
-  const now = new Date();
-  if (
-    now.getHours() >= 17 ||
-    (now.getHours() === 17 && now.getMinutes() >= 30)
-  ) {
-    now.setDate(now.getDate() + 1);
-  }
-
-  for (let i = 0; i < 7; i++) {
-    const dayOfWeek = now.getDay() as keyof WeeklySchedule;
-    if (schedule[dayOfWeek]?.isOpen) {
-      break;
-    }
-    now.setDate(now.getDate() + 1);
-  }
-  return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
-};
 
 export const DateTimeSelector = ({
   serviceId,
@@ -101,10 +87,11 @@ export const DateTimeSelector = ({
   useEffect(() => {
     const loadAgendaData = async () => {
       try {
-        const rangeStart = new Date();
-        rangeStart.setHours(0, 0, 0, 0);
-        const rangeEnd = new Date(rangeStart);
-        rangeEnd.setDate(rangeEnd.getDate() + AVAILABILITY_WINDOW_DAYS);
+        // From the clinic's midnight today, not the browser's.
+        const rangeStart = clinicWallTimeToUtc(nowInClinic().isoDate, 0, 0);
+        const rangeEnd = new Date(
+          rangeStart.getTime() + AVAILABILITY_WINDOW_DAYS * 24 * 60 * 60 * 1000,
+        );
 
         const [servicesData, busyData, scheduleData] = await Promise.all([
           fetchActiveServices(),
@@ -347,6 +334,9 @@ export const DateTimeSelector = ({
               <h3 className="text-xl font-bold text-brand-dark">
                 Horarios Disponibles
               </h3>
+              <span className="text-brand-gray font-medium text-sm">
+                ({CLINIC_TIME_LABEL})
+              </span>
             </div>
 
             {selectedDay ? (

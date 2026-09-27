@@ -2,6 +2,11 @@ import type { DashboardAppointment } from "../../../lib/services/clinicService";
 import type { DashboardBlockedSlot } from "../../../lib/services/blockedSlotsService";
 import type { BusyRange } from "../../../lib/services/availabilityService";
 import type { WeeklySchedule } from "../../../lib/services/settingsService";
+import {
+  clinicWallTimeToUtc,
+  localDateToIso,
+  nowInClinic,
+} from "../../../lib/clinicTime";
 
 export const HOUR_HEIGHT = 100;
 
@@ -49,22 +54,17 @@ export const getServiceColors = (service: string, isPast: boolean): string => {
 };
 
 /**
- * Whether a slot starting at `hour24:minutes` on `dateObj` (local time) has
- * already started, to the minute. For a whole-hour cell (minutes = 0) this is
- * the same as "the hour has begun".
+ * Whether a slot starting at `hour24:minutes` clinic time on the calendar date
+ * of `dateObj` (its local date components) has already started, to the
+ * minute. For a whole-hour cell (minutes = 0) this is the same as "the hour
+ * has begun".
  */
 export const isTimeSlotInPast = (
   dateObj: Date,
   hour24: number,
   minutes: number = 0,
 ): boolean => {
-  const slotStart = new Date(
-    dateObj.getFullYear(),
-    dateObj.getMonth(),
-    dateObj.getDate(),
-    hour24,
-    minutes,
-  );
+  const slotStart = clinicWallTimeToUtc(localDateToIso(dateObj), hour24, minutes);
   return slotStart.getTime() <= Date.now();
 };
 
@@ -93,14 +93,16 @@ export const parseVisualDateToISO = (visualDate: string): string => {
   return `${year}-${months[monthStr] || "01"}-${day.padStart(2, "0")}`;
 };
 
+/**
+ * UTC ISO string for a clinic wall-clock date and time. Always interpreted in
+ * the clinic's zone, whatever zone the browser is in.
+ */
 export const combineIsoDateAndTime = (
   isoDate: string,
   timeStr: string,
 ): string => {
-  const [year, month, day] = isoDate.split("-").map(Number);
   const { hours, minutes } = extractHoursMinutes(timeStr);
-  const localDate = new Date(year, month - 1, day, hours, minutes);
-  return localDate.toISOString();
+  return clinicWallTimeToUtc(isoDate, hours, minutes).toISOString();
 };
 
 export const combineVisualDateAndTime = (
@@ -182,8 +184,6 @@ export const getAvailableTimeOptionsFromBusy = (
   const candidates = buildDayCandidates(isoDate, workingSchedule);
   if (!candidates) return [];
 
-  const [y, m, d] = isoDate.split("-").map(Number);
-
   return candidates.options
     .filter((timeStr) => {
       const slotStartDec = timeToDecimal(timeStr);
@@ -192,7 +192,7 @@ export const getAvailableTimeOptionsFromBusy = (
       }
 
       const { hours, minutes } = extractHoursMinutes(timeStr);
-      const slotStart = new Date(y, m - 1, d, hours, minutes);
+      const slotStart = clinicWallTimeToUtc(isoDate, hours, minutes);
       const slotEnd = new Date(slotStart.getTime() + requiredDurationMins * 60000);
 
       return !busyRanges.some(
@@ -298,18 +298,48 @@ export const getBookableTimeOptions = (
   ).filter((opt) => !isTimeStrInPast(dateObj, opt.value));
 };
 
+/**
+ * First day the patient booking screen opens on: the clinic's today, or
+ * tomorrow from 5:00 PM clinic time on, moved forward to the next open day.
+ * The day is walked as a UTC date purely as a calendar cursor.
+ */
+export const getSmartStartDate = (
+  schedule: WeeklySchedule,
+  now: Date = new Date(),
+): string => {
+  const clinicNow = nowInClinic(now);
+  const day = new Date(
+    Date.UTC(clinicNow.year, clinicNow.month - 1, clinicNow.day),
+  );
+  if (clinicNow.hours >= 17) {
+    day.setUTCDate(day.getUTCDate() + 1);
+  }
+
+  for (let i = 0; i < 7; i++) {
+    const dayOfWeek = day.getUTCDay() as keyof WeeklySchedule;
+    if (schedule[dayOfWeek]?.isOpen) {
+      break;
+    }
+    day.setUTCDate(day.getUTCDate() + 1);
+  }
+  return day.toISOString().slice(0, 10);
+};
+
+/**
+ * Patient-facing "not too soon" filter: on the clinic's today, keeps only the
+ * slots at least one hour ahead of the clinic's current time.
+ */
 export const filterFutureTimesOnly = (
   times12h: string[],
   dateIso: string,
 ): string[] => {
-  const now = new Date();
-  const todayIso = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
+  const now = nowInClinic();
 
   // Si la fecha no es hoy, todos los horarios son futuros y válidos
-  if (dateIso !== todayIso) return times12h;
+  if (dateIso !== now.isoDate) return times12h;
 
-  const currentHour = now.getHours();
-  const currentMinute = now.getMinutes();
+  const currentHour = now.hours;
+  const currentMinute = now.minutes;
 
   return times12h.filter((timeStr) => {
     // Usamos tu utilidad existente que ya es perfecta manejando AM/PM

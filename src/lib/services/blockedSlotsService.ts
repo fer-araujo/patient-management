@@ -3,6 +3,7 @@ import {
   combineIsoDateAndTime,
   timeToDecimal,
 } from "../../features/doctor/utils/calendarUtils";
+import { CLINIC_TIME_ZONE } from "../clinicTime";
 
 export interface DashboardBlockedSlot {
   id: string;
@@ -38,6 +39,7 @@ export const fetchBlockedSlots = async (): Promise<DashboardBlockedSlot[]> => {
         day: "2-digit",
         month: "short",
         year: "numeric",
+        timeZone: CLINIC_TIME_ZONE,
       })
       .replace(/\./g, "");
     const startTimeStr = start
@@ -45,6 +47,7 @@ export const fetchBlockedSlots = async (): Promise<DashboardBlockedSlot[]> => {
         hour: "2-digit",
         minute: "2-digit",
         hour12: true,
+        timeZone: CLINIC_TIME_ZONE,
       })
       .toUpperCase();
     const endTimeStr = end
@@ -52,6 +55,7 @@ export const fetchBlockedSlots = async (): Promise<DashboardBlockedSlot[]> => {
         hour: "2-digit",
         minute: "2-digit",
         hour12: true,
+        timeZone: CLINIC_TIME_ZONE,
       })
       .toUpperCase();
 
