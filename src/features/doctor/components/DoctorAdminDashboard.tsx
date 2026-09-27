@@ -1,28 +1,23 @@
 import { useEffect, useState } from "react";
-import {
-  Stethoscope,
-  Package,
-  CircleDollarSign,
-  ShieldCheck,
-  History,
-} from "lucide-react";
+import { Stethoscope, Package, CircleDollarSign } from "lucide-react";
 import { CatalogTab } from "./tabs/CatalogTab";
 import { InventoryTab } from "./tabs/InventoryTab";
-import { ArcoRequestsTab } from "./tabs/ArcoRequestsTab";
-import { AuditLogTab } from "./tabs/AuditLogTab";
 import { FinanceTab } from "./tabs/FinanceTab";
 import {
   countItemsNeedingRestock,
   fetchInventory,
   type InventoryItem,
 } from "../../../lib/services/inventoryService";
+import { isDoctorRole, useAuthRole } from "../../auth/useAuthRole";
 
 export const DoctorAdminDashboard = () => {
   const [activeTab, setActiveTab] = useState<
-    "catalog" | "inventory" | "finances" | "arco" | "audit"
+    "catalog" | "inventory" | "finances"
   >("catalog");
   const [inventoryItems, setInventoryItems] = useState<InventoryItem[]>([]);
   const restockCount = countItemsNeedingRestock(inventoryItems);
+  // Patient names in Finanzas are for the doctor only, never for an admin.
+  const { role, loading: roleLoading } = useAuthRole();
 
   // Loads once for the badge; InventoryTab keeps it current while open.
   useEffect(() => {
@@ -82,28 +77,6 @@ export const DoctorAdminDashboard = () => {
           >
             <CircleDollarSign className="w-4 h-4" /> Finanzas y Métricas
           </button>
-
-          <button
-            onClick={() => setActiveTab("arco")}
-            className={`flex items-center gap-2 px-6 py-3 rounded-full text-sm font-bold transition-all cursor-pointer whitespace-nowrap ${
-              activeTab === "arco"
-                ? "bg-brand-dark text-white shadow-md"
-                : "bg-slate-100 text-brand-gray hover:bg-slate-200 hover:text-brand-dark"
-            }`}
-          >
-            <ShieldCheck className="w-4 h-4" /> Solicitudes ARCO
-          </button>
-
-          <button
-            onClick={() => setActiveTab("audit")}
-            className={`flex items-center gap-2 px-6 py-3 rounded-full text-sm font-bold transition-all cursor-pointer whitespace-nowrap ${
-              activeTab === "audit"
-                ? "bg-brand-dark text-white shadow-md"
-                : "bg-slate-100 text-brand-gray hover:bg-slate-200 hover:text-brand-dark"
-            }`}
-          >
-            <History className="w-4 h-4" /> Bitácora
-          </button>
         </div>
       </div>
 
@@ -115,11 +88,9 @@ export const DoctorAdminDashboard = () => {
           <InventoryTab onItemsChange={setInventoryItems} />
         )}
 
-        {activeTab === "arco" && <ArcoRequestsTab />}
-
-        {activeTab === "audit" && <AuditLogTab />}
-
-        {activeTab === "finances" && <FinanceTab />}
+        {activeTab === "finances" && !roleLoading && (
+          <FinanceTab showPatientNames={isDoctorRole(role)} />
+        )}
       </div>
     </main>
   );

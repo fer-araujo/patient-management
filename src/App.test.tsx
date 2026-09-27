@@ -104,6 +104,57 @@ describe("DoctorProtectedRoute", () => {
   });
 });
 
+describe("staff route matrix", () => {
+  type Who = "none" | "patient" | "admin" | "doctor";
+  const CLINICAL = "/doctor/dashboard";
+  const BUSINESS = "/doctor/admin";
+
+  it.each<[Who, string, string, string]>([
+    // who,       route,    expected screen,           expected path
+    ["none",    CLINICAL, "Correo corporativo",      CLINICAL],
+    ["none",    BUSINESS, "Correo corporativo",      BUSINESS],
+    ["patient", CLINICAL, "Patient dashboard",       "/dashboard"],
+    ["patient", BUSINESS, "Patient dashboard",       "/dashboard"],
+    ["admin",   CLINICAL, "Doctor admin dashboard",  BUSINESS],
+    ["admin",   BUSINESS, "Doctor admin dashboard",  BUSINESS],
+    ["doctor",  CLINICAL, "Doctor dashboard",        CLINICAL],
+    ["doctor",  BUSINESS, "Doctor admin dashboard",  BUSINESS],
+  ])("%s at %s lands on %s (%s)", async (who, route, screenText, path) => {
+    if (who !== "none") signInAs(`${who}-user`, who);
+
+    renderAt(route);
+
+    if (who === "none") {
+      expect(await screen.findByLabelText(screenText)).toBeInTheDocument();
+    } else {
+      expect(await screen.findByText(screenText)).toBeInTheDocument();
+    }
+    await waitFor(() => expect(window.location.pathname).toBe(path));
+  });
+
+  it("never renders Centro Clínico for an admin and explains the redirect", async () => {
+    const toastError = vi.spyOn(toast, "error");
+    signInAs("admin-user", "admin");
+
+    renderAt(CLINICAL);
+
+    expect(await screen.findByText("Doctor admin dashboard")).toBeInTheDocument();
+    expect(screen.queryByText("Doctor dashboard")).not.toBeInTheDocument();
+    expect(toastError).toHaveBeenCalledWith("Tu cuenta solo tiene acceso a Administración.");
+    expect(toastError).not.toHaveBeenCalledWith("Tu cuenta no tiene acceso al área médica.");
+  });
+
+  it("does not toast for a doctor in either area", async () => {
+    const toastError = vi.spyOn(toast, "error");
+    signInAs("doctor-user", "doctor");
+
+    renderAt(BUSINESS);
+
+    expect(await screen.findByText("Doctor admin dashboard")).toBeInTheDocument();
+    expect(toastError).not.toHaveBeenCalled();
+  });
+});
+
 describe("PatientProtectedRoute", () => {
   it("sends a visitor without a session back to the public booking page", async () => {
     renderAt("/dashboard");

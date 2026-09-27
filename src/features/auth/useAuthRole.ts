@@ -10,9 +10,28 @@ export interface AuthRoleState {
   loading: boolean;
 }
 
-/** Clinic staff: allowed into the /doctor area. */
-export const isStaffRole = (role: AppRole | null): boolean =>
+/**
+ * Clinical staff: the doctor. Allowed into Centro Clínico (patients, agenda,
+ * consultations, ARCO, Bitácora). Mirrors public.is_staff() in the database.
+ */
+export const isDoctorRole = (role: AppRole | null): boolean =>
+  role === "doctor";
+
+/**
+ * Business staff: the doctor or an administrative account. Allowed into
+ * Administración (catalog, inventory, finances) only. Mirrors
+ * public.is_business_staff() in the database.
+ */
+export const isBusinessRole = (role: AppRole | null): boolean =>
   role === "doctor" || role === "admin";
+
+/**
+ * Any clinic staff account (doctor or admin), i.e. never a patient. Use it to
+ * tell staff sessions apart from patient sessions; use isDoctorRole or
+ * isBusinessRole to decide what a staff account may open.
+ */
+export const isStaffRole = (role: AppRole | null): boolean =>
+  isBusinessRole(role);
 
 const readRole = async (userId: string): Promise<AppRole | null> => {
   const { data, error } = await supabase

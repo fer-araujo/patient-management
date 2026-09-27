@@ -241,8 +241,22 @@ interface PaymentSummaryRow {
   list_price: number | string | null;
   created_at: string;
   services: { name: string | null } | null;
-  patients: { first_name: string | null; last_name: string | null } | null;
+  /** Only requested for the doctor; absent (or null under RLS) for an admin. */
+  patients?: { first_name: string | null; last_name: string | null } | null;
 }
+
+export interface FinanceSummaryOptions {
+  /**
+   * Adds the patient's name to each payment's concept. Only the doctor may see
+   * it: tying "Hilos Tensores · $5,500" to a person is health data. Off by
+   * default, so an admin view never even asks for it (and RLS would return no
+   * patient anyway).
+   */
+  includePatientNames?: boolean;
+}
+
+const PAYMENT_COLUMNS =
+  "id, status, amount_charged, list_price, created_at, services ( name )";
 
 interface PurchaseRow {
   id: string;
@@ -262,6 +276,7 @@ const roundCents = (n: number) => Math.round(n * 100) / 100;
 export const getFinanceSummary = async (
   from: string,
   to: string,
+  { includePatientNames = false }: FinanceSummaryOptions = {},
 ): Promise<FinanceSummary> => {
   const fromUtc = dayStartUtc(from);
   const toUtc = dayStartUtc(to);
@@ -270,7 +285,9 @@ export const getFinanceSummary = async (
     supabase
       .from("payments")
       .select(
-        "id, status, amount_charged, list_price, created_at, services ( name ), patients ( first_name, last_name )",
+        includePatientNames
+          ? `${PAYMENT_COLUMNS}, patients ( first_name, last_name )`
+          : PAYMENT_COLUMNS,
       )
       .gte("created_at", fromUtc)
       .lt("created_at", toUtc)
@@ -313,9 +330,9 @@ export const getFinanceSummary = async (
 
   for (const p of payments) {
     const service = p.services?.name || "Servicio eliminado";
-    const patient = [p.patients?.first_name, p.patients?.last_name]
-      .filter(Boolean)
-      .join(" ");
+    const patient = includePatientNames
+      ? [p.patients?.first_name, p.patients?.last_name].filter(Boolean).join(" ")
+      : "";
     const concept = patient ? `${service} · ${patient}` : service;
 
     if (p.status === "courtesy") {

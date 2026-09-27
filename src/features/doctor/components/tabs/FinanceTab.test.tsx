@@ -33,10 +33,10 @@ const PURCHASES = [
   },
 ];
 
-const renderTab = async () => {
+const renderTab = async (props: { showPatientNames?: boolean } = {}) => {
   supabaseMock.onFrom("payments", { data: PAYMENTS });
   supabaseMock.onFrom("inventory_movements", { data: PURCHASES });
-  render(<FinanceTab />);
+  render(<FinanceTab {...props} />);
   await screen.findByText("Ingresos");
   return { user: userEvent.setup() };
 };
@@ -116,8 +116,8 @@ describe("FinanceTab", () => {
     expect(cardValue("Ganancia")).not.toHaveTextContent(formatMXN(-1300));
   });
 
-  it("lists payments, courtesies and purchases with signed amounts", async () => {
-    await renderTab();
+  it("lists payments, courtesies and purchases with signed amounts (doctor view)", async () => {
+    await renderTab({ showPatientNames: true });
 
     const rowOf = (text: string) => screen.getByText(text).closest("tr")!;
     expect(within(rowOf("Toxina · Ana Pérez")).getByText("Cobro")).toBeInTheDocument();
@@ -125,5 +125,18 @@ describe("FinanceTab", () => {
     expect(within(rowOf("Valoración · Eva Ruiz")).getByText("Cortesía")).toBeInTheDocument();
     expect(within(rowOf("Jeringas (10)")).getByText("Compra")).toBeInTheDocument();
     expect(within(rowOf("Jeringas (10)")).getByText(formatMXN(-1200))).toHaveClass("text-rose-600");
+  });
+
+  it("shows an admin the amount and the service but never the patient", async () => {
+    await renderTab();
+
+    const rowOf = (text: string) => screen.getByText(text).closest("tr")!;
+    expect(within(rowOf("Toxina")).getByText("Cobro")).toBeInTheDocument();
+    expect(within(rowOf("Toxina")).getByText(`+${formatMXN(800)}`)).toBeInTheDocument();
+    expect(within(rowOf("Valoración")).getByText("Cortesía")).toBeInTheDocument();
+    expect(screen.queryByText(/Ana|Pérez|Eva|Ruiz/)).not.toBeInTheDocument();
+
+    const periodQuery = supabaseMock.queries("payments")[0];
+    expect(String(periodQuery.args("select")?.[0])).not.toContain("patients");
   });
 });

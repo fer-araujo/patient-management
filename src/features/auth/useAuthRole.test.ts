@@ -1,7 +1,35 @@
 import { describe, expect, it, vi } from "vitest";
 import { act, renderHook, waitFor } from "@testing-library/react";
 import { makeSession, supabaseMock } from "../../test/supabaseMock";
-import { isStaffRole, useAuthRole, type AppRole } from "./useAuthRole";
+import {
+  isBusinessRole,
+  isDoctorRole,
+  isStaffRole,
+  useAuthRole,
+  type AppRole,
+} from "./useAuthRole";
+
+describe("isDoctorRole (Centro Clínico)", () => {
+  it.each<[AppRole | null, boolean]>([
+    ["doctor", true],
+    ["admin", false],
+    ["patient", false],
+    [null, false],
+  ])("isDoctorRole(%s) is %s", (role, expected) => {
+    expect(isDoctorRole(role)).toBe(expected);
+  });
+});
+
+describe("isBusinessRole (Administración)", () => {
+  it.each<[AppRole | null, boolean]>([
+    ["doctor", true],
+    ["admin", true],
+    ["patient", false],
+    [null, false],
+  ])("isBusinessRole(%s) is %s", (role, expected) => {
+    expect(isBusinessRole(role)).toBe(expected);
+  });
+});
 
 describe("isStaffRole", () => {
   it.each<[AppRole | null, boolean]>([
