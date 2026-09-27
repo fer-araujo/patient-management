@@ -158,7 +158,15 @@ serve(async (req: Request) => {
     const updatedBy = record.updated_by || "doctor";
     let messageBody = "";
 
-    if (payload.type === "INSERT") {
+    if (payload.type === "INSERT" && record.status === "confirmed") {
+      // Booked by the clinic from the calendar: it is born confirmed, so no
+      // later UPDATE will send the confirmation.
+      messageBody =
+        `¡Hola ${firstName}! ✅\n\n` +
+        `Tu cita del *${formattedDate}* a las *${formattedTime}* quedó AGENDADA y CONFIRMADA.\n\n` +
+        `*Si este horario no te funciona*, entra a tu portal para reprogramarla o cancelarla.\n\n` +
+        `_Atte: ${CLINIC_NAME}_ 🏥`;
+    } else if (payload.type === "INSERT") {
       messageBody =
         `¡Hola ${firstName}! 👋\n\n` +
         `Recibimos tu solicitud de cita para el *${formattedDate}* a las *${formattedTime}*. ` +
