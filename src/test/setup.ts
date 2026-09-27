@@ -19,6 +19,12 @@ if (activeTimeZone !== CLINIC_TIME_ZONE) {
   );
 }
 
+// jsdom has no scrollIntoView; the DatePicker year grid scrolls the current
+// year into view when it opens.
+if (typeof Element.prototype.scrollIntoView !== "function") {
+  Element.prototype.scrollIntoView = () => {};
+}
+
 // jsdom has no matchMedia; react-hot-toast's <Toaster> queries it on render.
 // Reports "no match" for every query (e.g. prefers-reduced-motion: false).
 if (typeof window.matchMedia !== "function") {

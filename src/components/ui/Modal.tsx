@@ -45,7 +45,7 @@ export const Modal = ({
                 {icon}
                 <h3 className="text-xl font-bold text-brand-dark">{title}</h3>
               </div>
-              <button
+              <button type="button"
                 onClick={onClose}
                 className="w-8 h-8 flex items-center justify-center rounded-full bg-brand-light/50 text-brand-gray hover:bg-brand-light hover:text-brand-dark transition-colors"
               >
@@ -59,7 +59,7 @@ export const Modal = ({
 
             {!hideFooter && (
               <div className="px-6 py-4 border-t border-brand-light bg-slate-50 flex justify-end shrink-0">
-                <button
+                <button type="button"
                   onClick={onClose}
                   className="bg-brand-primary cursor-pointer text-white font-bold px-8 py-2.5 rounded-xl hover:bg-teal-500 transition-colors shadow-md"
                 >

@@ -15,7 +15,17 @@ interface DatePickerProps {
   minDate?: string;
   maxDate?: string;
   isDateDisabled?: (dateStr: string) => boolean; // <-- NUEVA PROP PARA DÍAS BLOQUEADOS
+  /**
+   * Allows past days and past years (e.g. a birth date). Off by default:
+   * scheduling pickers must never offer the past.
+   */
+  allowPast?: boolean;
+  /** Modal title; defaults to the scheduling one. */
+  title?: string;
 }
+
+/** Earliest year offered when `allowPast` is on. */
+const EARLIEST_PAST_YEAR = 1900;
 
 const MONTH_NAMES = [
   "Enero",
@@ -69,12 +79,21 @@ export const DatePicker = ({
   minDate,
   maxDate,
   isDateDisabled,
+  allowPast = false,
+  title = "Agendar Cita",
 }: DatePickerProps) => {
   const today = new Date();
   const currentActualYear = today.getFullYear();
   const todayStr = formatDateObj(today);
+  const earliestYear = allowPast ? EARLIEST_PAST_YEAR : currentActualYear;
+  const latestYear = maxDate
+    ? (parseDateStr(maxDate)?.getFullYear() ?? Infinity)
+    : Infinity;
 
-  const [viewMode, setViewMode] = useState<"calendar" | "year">("calendar");
+  // Standard flow: year grid -> month grid -> day calendar.
+  const [viewMode, setViewMode] = useState<"calendar" | "month" | "year">(
+    "calendar",
+  );
   const [viewDate, setViewDate] = useState<Date>(today);
   const [internalDate, setInternalDate] = useState<string | null>(null);
   const [yearPageStart, setYearPageStart] = useState<number>(currentActualYear); // Empezamos el grid en el año actual
@@ -115,21 +134,38 @@ export const DatePicker = ({
 
   // Paginación de años (bloqueando ir al pasado)
   const handlePrevYears = () => {
-    if (yearPageStart > currentActualYear) {
+    if (yearPageStart > earliestYear) {
       setYearPageStart((prev) => prev - 9);
     }
   };
-  const handleNextYears = () => setYearPageStart((prev) => prev + 9);
+  const handleNextYears = () => {
+    if (yearPageStart + 8 < latestYear) {
+      setYearPageStart((prev) => prev + 9);
+    }
+  };
 
   // Lógica central de validación
   const checkIsDisabled = (dateStr: string) => {
-    if (dateStr < todayStr) return true; // NUNCA agendar en el pasado
+    if (!allowPast && dateStr < todayStr) return true; // NUNCA agendar en el pasado
     if (minDate && dateStr < minDate) return true;
     if (maxDate && dateStr > maxDate) return true;
 
     // Si pasaron la función custom (como en el paciente)
     if (isDateDisabled && isDateDisabled(dateStr)) return true;
 
+    return false;
+  };
+
+  // A month is off only when every day in it is out of range.
+  const isMonthDisabled = (y: number, m: number) => {
+    const first = formatDateObj(new Date(y, m, 1));
+    const last = formatDateObj(new Date(y, m + 1, 0));
+    const bounds = [allowPast ? null : todayStr, minDate ?? null].filter(
+      (b): b is string => b !== null,
+    );
+    const lower = bounds.sort().pop();
+    if (lower && last < lower) return true;
+    if (maxDate && first > maxDate) return true;
     return false;
   };
 
@@ -150,13 +186,14 @@ export const DatePicker = ({
     (_, i) => yearPageStart + i,
   );
   // No podemos regresar la página de años si la página actual ya contiene el año en curso
-  const isPrevYearsDisabled = yearPageStart <= currentActualYear;
+  const isPrevYearsDisabled = yearPageStart <= earliestYear;
+  const isNextYearsDisabled = yearPageStart + 8 >= latestYear;
 
   return (
     <Modal
       isOpen={isOpen}
       onClose={onClose}
-      title="Agendar Cita"
+      title={title}
       icon={<CalendarSearch className="w-5 h-5 text-brand-primary" />}
       hideFooter={true} // <-- MAGIA APLICADA: Adiós botón duplicado
     >
@@ -171,7 +208,7 @@ export const DatePicker = ({
           {viewMode === "calendar" ? (
             <>
               <div className="flex items-center justify-between mb-4">
-                <button
+                <button type="button"
                   onClick={() => {
                     setYearPageStart(year - (year % 9));
                     setViewMode("year");
@@ -184,13 +221,13 @@ export const DatePicker = ({
                   <ChevronDown className="w-5 h-5 text-brand-gray" />
                 </button>
                 <div className="flex gap-1">
-                  <button
+                  <button type="button"
                     onClick={handlePrevMonth}
                     className="w-10 h-10 flex items-center justify-center rounded-full hover:bg-slate-100 transition-colors cursor-pointer"
                   >
                     <ChevronLeft className="w-6 h-6 text-brand-dark" />
                   </button>
-                  <button
+                  <button type="button"
                     onClick={handleNextMonth}
                     className="w-10 h-10 flex items-center justify-center rounded-full hover:bg-slate-100 transition-colors cursor-pointer"
                   >
@@ -223,7 +260,7 @@ export const DatePicker = ({
                   const isDayDisabled = checkIsDisabled(dateStr);
 
                   return (
-                    <button
+                    <button type="button"
                       key={`day-${day}-${i}`}
                       disabled={isDayDisabled}
                       onClick={() => setInternalDate(dateStr)}
@@ -241,10 +278,54 @@ export const DatePicker = ({
                 })}
               </div>
             </>
+          ) : viewMode === "month" ? (
+            <div className="flex flex-col h-full animate-in fade-in duration-200">
+              <div className="flex items-center justify-center mb-6">
+                <button type="button"
+                  onClick={() => {
+                    setYearPageStart(year - (year % 9));
+                    setViewMode("year");
+                  }}
+                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-full hover:bg-slate-100 transition-colors cursor-pointer"
+                >
+                  <span className="font-bold text-brand-dark text-lg">
+                    {year}
+                  </span>
+                  <ChevronDown className="w-5 h-5 text-brand-gray" />
+                </button>
+              </div>
+
+              <div className="grid grid-cols-3 gap-4">
+                {SHORT_MONTH_NAMES.map((name, m) => {
+                  const isCurrentMonth = m === month;
+                  const isMonthOff = isMonthDisabled(year, m);
+
+                  return (
+                    <button type="button"
+                      key={name}
+                      disabled={isMonthOff}
+                      onClick={() => {
+                        setViewDate(new Date(year, m, 1));
+                        setViewMode("calendar");
+                      }}
+                      className={`py-4 rounded-2xl text-base font-bold transition-all ${
+                        isCurrentMonth && !isMonthOff
+                          ? "bg-brand-primary text-white shadow-md shadow-brand-primary/30 cursor-pointer"
+                          : isMonthOff
+                            ? "bg-slate-50/50 text-slate-300 cursor-not-allowed border border-transparent"
+                            : "bg-slate-50 text-brand-dark hover:bg-brand-light hover:text-brand-primary border border-slate-100 cursor-pointer"
+                      }`}
+                    >
+                      {name}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
           ) : (
             <div className="flex flex-col h-full animate-in fade-in duration-200">
               <div className="flex items-center justify-between mb-6">
-                <button
+                <button type="button"
                   onClick={handlePrevYears}
                   disabled={isPrevYearsDisabled}
                   className={`w-10 h-10 flex items-center justify-center rounded-full transition-colors ${
@@ -258,9 +339,14 @@ export const DatePicker = ({
                 <span className="font-bold text-brand-gray text-sm tracking-widest uppercase">
                   {currentYearsGrid[0]} - {currentYearsGrid[8]}
                 </span>
-                <button
+                <button type="button"
                   onClick={handleNextYears}
-                  className="w-10 h-10 flex items-center justify-center rounded-full hover:bg-slate-100 transition-colors cursor-pointer text-brand-dark"
+                  disabled={isNextYearsDisabled}
+                  className={`w-10 h-10 flex items-center justify-center rounded-full transition-colors ${
+                    isNextYearsDisabled
+                      ? "text-slate-200 cursor-not-allowed"
+                      : "hover:bg-slate-100 text-brand-dark cursor-pointer"
+                  }`}
                 >
                   <ChevronRight className="w-6 h-6" />
                 </button>
@@ -269,16 +355,16 @@ export const DatePicker = ({
               <div className="grid grid-cols-3 gap-4">
                 {currentYearsGrid.map((y) => {
                   const isCurrentYear = y === year;
-                  const isYearDisabled = y < currentActualYear;
+                  const isYearDisabled = y < earliestYear || y > latestYear;
 
                   return (
-                    <button
+                    <button type="button"
                       key={y}
                       ref={isCurrentYear ? currentYearRef : null}
                       disabled={isYearDisabled}
                       onClick={() => {
                         setViewDate(new Date(y, month, 1));
-                        setViewMode("calendar");
+                        setViewMode("month");
                       }}
                       className={`py-4 rounded-2xl text-base font-bold transition-all ${
                         isCurrentYear && !isYearDisabled
@@ -298,13 +384,13 @@ export const DatePicker = ({
         </div>
 
         <div className="flex items-center justify-end gap-3 mt-4 pt-4 border-t border-slate-50">
-          <button
+          <button type="button"
             onClick={onClose}
             className="px-5 py-2.5 text-sm font-bold text-brand-gray hover:text-brand-dark hover:bg-slate-100 rounded-xl transition-colors cursor-pointer"
           >
             Cancelar
           </button>
-          <button
+          <button type="button"
             onClick={handleConfirm}
             disabled={!internalDate}
             className="px-6 py-2.5 text-sm font-bold text-white bg-brand-primary hover:bg-brand-primary-hover rounded-xl shadow-md transition-colors disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer"
