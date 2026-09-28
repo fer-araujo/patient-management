@@ -17,6 +17,8 @@ export interface DashboardAppointment {
   reason: string | null;
   /** Catalog price of the service, used to pre-fill the charge. */
   servicePrice?: number | null;
+  /** patients.status; an "archived" patient cannot be booked by the staff. */
+  patientStatus?: "active" | "blocked" | "archived" | null;
 }
 
 // INTERFAZ ESTRICTA PARA SUPABASE (CERO 'any')
@@ -26,7 +28,12 @@ interface RawAppointmentData {
   status: "pending" | "confirmed" | "completed" | "cancelled" | "rejected";
   patient_id: string;
   reason: string | null;
-  patients: { first_name: string; last_name: string; phone: string } | null;
+  patients: {
+    first_name: string;
+    last_name: string;
+    phone: string;
+    status: "active" | "blocked" | "archived" | null;
+  } | null;
   services: {
     name: string;
     duration_mins: number;
@@ -49,7 +56,8 @@ export const fetchDoctorAppointments = async (): Promise<
       patients (
         first_name,
         last_name,
-        phone
+        phone,
+        status
       ),
       services (
         name,
@@ -97,6 +105,7 @@ export const fetchDoctorAppointments = async (): Promise<
         apt.services?.price === null || apt.services?.price === undefined
           ? null
           : Number(apt.services.price),
+      patientStatus: apt.patients?.status ?? null,
     };
   });
 };

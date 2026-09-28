@@ -98,9 +98,11 @@ export const CalendarTab = ({
 
   const patientOptions = useMemo(() => {
     const patientMap = new Map<string, string>();
-    appointments.forEach((app) =>
-      patientMap.set(app.patientId, app.patientName),
-    );
+    // An archived record is inactive: it must be reactivated from the patient
+    // directory before it can be booked (the server refuses it as well).
+    appointments
+      .filter((app) => app.patientStatus !== "archived")
+      .forEach((app) => patientMap.set(app.patientId, app.patientName));
     const uniquePatients = Array.from(patientMap.entries()).map(
       ([value, label]) => ({ label, value }),
     );

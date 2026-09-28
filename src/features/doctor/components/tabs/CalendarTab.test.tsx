@@ -158,6 +158,38 @@ describe("CalendarTab scheduling", () => {
     expect(supabaseMock.queries("appointments")).toHaveLength(0);
   });
 
+  it("never offers an archived patient in Buscar Paciente", async () => {
+    setNow(new Date(2026, 9, 14, 7, 0));
+    const { user } = renderTab([
+      appt({ patientStatus: "active" }),
+      appt({
+        id: "a-rosa",
+        patientId: "p-rosa",
+        patientName: "Rosa Archivada",
+        date: "21 oct 2026",
+        patientStatus: "archived",
+      }),
+      appt({
+        id: "a-luis",
+        patientId: "p-luis",
+        patientName: "Luis Suspendido",
+        date: "22 oct 2026",
+        patientStatus: "blocked",
+      }),
+      marta,
+    ]);
+
+    await openMonthDay(user, "16");
+    await user.click(combobox("Buscar Paciente"));
+    const options = within(listbox("Buscar Paciente"));
+
+    expect(options.queryByRole("option", { name: "Rosa Archivada" })).toBeNull();
+    expect(options.getByRole("option", { name: "Ana Pérez" })).toBeInTheDocument();
+    expect(options.getByRole("option", { name: "Marta López" })).toBeInTheDocument();
+    // Suspended only blocks the public portal; the doctor can still book.
+    expect(options.getByRole("option", { name: "Luis Suspendido" })).toBeInTheDocument();
+  });
+
   it("starts the next booking empty instead of reusing the last patient and service", async () => {
     setNow(new Date(2026, 9, 14, 7, 0));
     supabaseMock.onFrom("services", { data: { id: "srv-toxina" } });

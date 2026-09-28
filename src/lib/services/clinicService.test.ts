@@ -1,12 +1,41 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { supabaseMock } from "../../test/supabaseMock";
-import { createAppointment, rescheduleAppointment } from "./clinicService";
+import {
+  createAppointment,
+  fetchDoctorAppointments,
+  rescheduleAppointment,
+} from "./clinicService";
 
 const SLOT_TAKEN = "El horario seleccionado acaba de ocuparse. Por favor elige otro.";
 
 beforeEach(() => {
   // The service logs every failure; keep the test output clean.
   vi.spyOn(console, "error").mockImplementation(() => {});
+});
+
+describe("fetchDoctorAppointments", () => {
+  it("reads each patient's status, so an archived patient can be left out of booking", async () => {
+    supabaseMock.onFrom("appointments", {
+      data: [
+        {
+          id: "a-rosa",
+          start_time: "2026-10-16T14:00:00.000Z",
+          status: "completed",
+          patient_id: "p-rosa",
+          reason: null,
+          patients: { first_name: "Rosa", last_name: "Ruiz", phone: "+528100000000", status: "archived" },
+          services: { name: "Toxina", duration_mins: 30, price: 500 },
+        },
+      ],
+    });
+
+    const [appointment] = await fetchDoctorAppointments();
+
+    expect(appointment.patientStatus).toBe("archived");
+    expect(String(supabaseMock.queries("appointments")[0].args("select")?.[0])).toMatch(
+      /patients \(\s*first_name,\s*last_name,\s*phone,\s*status\s*\)/,
+    );
+  });
 });
 
 describe("createAppointment", () => {
