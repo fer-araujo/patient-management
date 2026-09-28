@@ -199,8 +199,9 @@ begin
   end if;
 
   -- Clinical writes.
-  insert into public.clinical_notes (appointment_id, patient_id, subjective)
-  values (v_appt, v_patient, 'ROLES-CHECK note')
+  -- Diagnosis and plan are required to finalize (migration 20).
+  insert into public.clinical_notes (appointment_id, patient_id, subjective, analysis, plan)
+  values (v_appt, v_patient, 'ROLES-CHECK note', 'ROLES-CHECK diagnosis', 'ROLES-CHECK plan')
   returning id into v_note;
 
   insert into public.prescriptions (appointment_id, patient_id, medications)

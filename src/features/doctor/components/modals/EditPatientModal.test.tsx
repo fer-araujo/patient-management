@@ -17,6 +17,11 @@ const patient: PatientDetails = {
   blood_type: "O-",
   allergies: null,
   chronic_conditions: "Diabetes",
+  address: "Av. Juárez 10, Centro, Monterrey",
+  family_history: "Madre con diabetes",
+  personal_pathological_history: null,
+  non_pathological_history: null,
+  current_illness: null,
   anonymized_at: null,
 };
 
@@ -117,7 +122,61 @@ describe("EditPatientModal", () => {
       blood_type: null,
       allergies: null,
       chronic_conditions: "Diabetes",
+      address: "Av. Juárez 10, Centro, Monterrey",
+      family_history: "Madre con diabetes",
+      personal_pathological_history: null,
+      non_pathological_history: null,
+      current_illness: null,
     });
+  });
+
+  it("edits the address and the clinical history (antecedentes)", async () => {
+    const { user, onSaved } = await renderModal();
+
+    expect(screen.getByLabelText("Domicilio")).toHaveValue(
+      "Av. Juárez 10, Centro, Monterrey",
+    );
+    expect(screen.getByText("Antecedentes")).toBeInTheDocument();
+    expect(screen.getByLabelText("Heredofamiliares")).toHaveValue("Madre con diabetes");
+    expect(screen.getByLabelText("Personales patológicos")).toHaveValue("");
+
+    await user.clear(screen.getByLabelText("Domicilio"));
+    await user.type(screen.getByLabelText("Domicilio"), "Calle 5 #20, Mitras, Monterrey");
+    await user.clear(screen.getByLabelText("Heredofamiliares"));
+    await user.type(screen.getByLabelText("Personales patológicos"), "Cirugía de vesícula 2010");
+    await user.type(screen.getByLabelText("Personales no patológicos"), "No fuma");
+    await user.type(screen.getByLabelText("Padecimiento actual"), "Manchas en mejillas");
+    await user.click(screen.getByRole("button", { name: /Guardar Cambios/ }));
+
+    await waitFor(() => expect(onSaved).toHaveBeenCalled());
+    expect(updates()[0].args("update")?.[0]).toMatchObject({
+      address: "Calle 5 #20, Mitras, Monterrey",
+      // Cleared fields are stored as empty (null), not as "".
+      family_history: null,
+      personal_pathological_history: "Cirugía de vesícula 2010",
+      non_pathological_history: "No fuma",
+      current_illness: "Manchas en mejillas",
+    });
+  });
+
+  it('suggests "Ej. Negados" in every clinical-history field, which stays optional', async () => {
+    const { user, onSaved } = await renderModal();
+
+    for (const label of [
+      "Heredofamiliares",
+      "Personales patológicos",
+      "Personales no patológicos",
+      "Padecimiento actual",
+    ]) {
+      const field = screen.getByLabelText(label);
+      expect(field).toHaveAttribute("placeholder", "Ej. Negados");
+      expect(field).not.toBeRequired();
+    }
+
+    // Filled history is still editable, and emptying it does not block saving.
+    await user.clear(screen.getByLabelText("Heredofamiliares"));
+    await user.click(screen.getByRole("button", { name: /Guardar Cambios/ }));
+    await waitFor(() => expect(onSaved).toHaveBeenCalled());
   });
 
   it("shows an anonymized record read-only", async () => {

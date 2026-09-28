@@ -90,8 +90,13 @@ describe("renderMyDataDocument", () => {
         profile: {
           ...baseExport().profile!,
           email: XSS,
+          address: XSS,
           allergies: XSS,
           chronic_conditions: XSS,
+          family_history: XSS,
+          personal_pathological_history: XSS,
+          non_pathological_history: XSS,
+          current_illness: XSS,
           referred_by: XSS,
           blood_type: XSS,
           gender: XSS,
@@ -155,6 +160,7 @@ describe("renderMyDataDocument", () => {
     expect(html).not.toContain("SECRET-");
     expect(headings).toEqual([
       "Datos personales",
+      "Antecedentes",
       "Citas",
       "Resumen clínico",
       "Medicamentos indicados",
@@ -179,6 +185,42 @@ describe("renderMyDataDocument", () => {
     );
     expect(html).toContain("1 de enero de 1975");
     expect(html).not.toContain("1974");
+  });
+
+  it("shows the address when the clinic recorded one", () => {
+    const base = baseExport();
+    const html = render(
+      baseExport({ profile: { ...base.profile!, address: "Av. Juárez 10, Monterrey" } }),
+    );
+    expect(html).toContain("Domicilio");
+    expect(html).toContain("Av. Juárez 10, Monterrey");
+    expect(render(base)).not.toContain("Domicilio");
+  });
+
+  it("shows the clinical history (antecedentes) the doctor recorded", () => {
+    const base = baseExport();
+    const html = render(
+      baseExport({
+        profile: {
+          ...base.profile!,
+          family_history: "Madre con diabetes",
+          current_illness: "Manchas en mejillas",
+        },
+      }),
+    );
+    const doc = parse(html);
+    const section = [...doc.querySelectorAll("section")].find(
+      (s) => s.querySelector("h2")?.textContent === "Antecedentes",
+    )!;
+    expect(section).toBeDefined();
+    expect(section.textContent).toContain("Heredofamiliares");
+    expect(section.textContent).toContain("Madre con diabetes");
+    expect(section.textContent).toContain("Padecimiento actual");
+    expect(section.textContent).toContain("Manchas en mejillas");
+    // Empty fields are not listed.
+    expect(section.textContent).not.toContain("Personales patológicos");
+
+    expect(render(base)).toContain("No hay antecedentes registrados.");
   });
 
   it("shows placeholders for empty sections and translates statuses", () => {

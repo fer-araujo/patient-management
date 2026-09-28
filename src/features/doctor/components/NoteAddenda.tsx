@@ -76,6 +76,7 @@ export const NoteAddenda = ({ note, onAdded }: NoteAddendaProps) => {
             >
               <p className="text-xs font-semibold text-brand-gray">
                 {formatDateTime(addendum.createdAt)}
+                {addendum.authorName ? ` · ${addendum.authorName}` : ""}
               </p>
               <p className="text-sm text-brand-dark whitespace-pre-wrap mt-0.5">
                 {addendum.body}

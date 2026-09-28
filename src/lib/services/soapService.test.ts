@@ -1,17 +1,31 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { supabaseMock } from "../../test/supabaseMock";
 import {
   addNoteAddendum,
   fetchPatientHistory,
   finalizeConsultation,
+  finalizeConsultationWithPayment,
+  findConsultationDraft,
   savePrescription,
   saveSoapNote,
+  type PatientClinicalHistory,
+  type Prescription,
+  type SoapNote,
 } from "./soapService";
 
 const FINALIZED_MESSAGE_START = "Esta consulta ya fue finalizada y no se puede modificar.";
 
+const vitals = { bp_sys: 120, bp_dia: 80, spo2: 98, weight_kg: 70.5 };
+
 const saveDraft = () =>
-  saveSoapNote("appt-1", "patient-1", "Subjetivo", "Objetivo", "Análisis", "Plan");
+  saveSoapNote("appt-1", "patient-1", {
+    subjective: "Subjetivo",
+    objective: "Objetivo",
+    analysis: "Análisis",
+    plan: "Plan",
+    prognosis: "Favorable",
+    vitalSigns: vitals,
+  });
 
 describe("saveSoapNote (draft save)", () => {
   it("inserts a new note when the consultation has none, without finalizing", async () => {
@@ -31,6 +45,8 @@ describe("saveSoapNote (draft save)", () => {
           objective: "Objetivo",
           analysis: "Análisis",
           plan: "Plan",
+          prognosis: "Favorable",
+          vital_signs: vitals,
         },
       ],
     ]);
@@ -50,7 +66,14 @@ describe("saveSoapNote (draft save)", () => {
 
     const update = supabaseMock.queries("clinical_notes")[1];
     expect(update.args("update")).toEqual([
-      { subjective: "Subjetivo", objective: "Objetivo", analysis: "Análisis", plan: "Plan" },
+      {
+        subjective: "Subjetivo",
+        objective: "Objetivo",
+        analysis: "Análisis",
+        plan: "Plan",
+        prognosis: "Favorable",
+        vital_signs: vitals,
+      },
     ]);
     expect(update.args("eq")).toEqual(["id", "note-1"]);
     expect(supabaseMock.client.rpc).not.toHaveBeenCalled();
@@ -129,6 +152,67 @@ describe("finalizeConsultation", () => {
   });
 });
 
+describe("finalizeConsultationWithPayment", () => {
+  it("charges and finalizes through ONE rpc call", async () => {
+    await finalizeConsultationWithPayment("appt-1", {
+      status: "paid",
+      amount: 800,
+      method: "cash",
+      note: "  Pagó completo ",
+    });
+    await finalizeConsultationWithPayment("appt-2", {
+      status: "courtesy",
+      amount: 800,
+      method: "card",
+      note: "",
+    });
+
+    expect(supabaseMock.rpcCalls()).toEqual([
+      {
+        name: "finalize_consultation_with_payment",
+        args: {
+          p_appointment_id: "appt-1",
+          p_status: "paid",
+          p_amount: 800,
+          p_method: "cash",
+          p_note: "Pagó completo",
+        },
+      },
+      {
+        name: "finalize_consultation_with_payment",
+        args: {
+          p_appointment_id: "appt-2",
+          p_status: "courtesy",
+          p_amount: 0,
+          p_method: null,
+          p_note: null,
+        },
+      },
+    ]);
+    expect(supabaseMock.client.from).not.toHaveBeenCalled();
+  });
+
+  it("surfaces the server's Spanish reason, and a clear message otherwise", async () => {
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    supabaseMock.onRpc("finalize_consultation_with_payment", {
+      error: {
+        message: "Para finalizar la consulta, escribe el diagnóstico y el plan.",
+        code: "P0001",
+      },
+    });
+    await expect(
+      finalizeConsultationWithPayment("appt-1", { status: "courtesy" }),
+    ).rejects.toThrow(/^Para finalizar la consulta, escribe el diagnóstico y el plan\.$/);
+
+    supabaseMock.onRpc("finalize_consultation_with_payment", {
+      error: { message: "connection reset", code: "08006" },
+    });
+    await expect(
+      finalizeConsultationWithPayment("appt-1", { status: "courtesy" }),
+    ).rejects.toThrow("No se pudo finalizar la consulta. No se guardó nada; intenta de nuevo.");
+  });
+});
+
 describe("fetchPatientHistory", () => {
   it("maps notes and prescriptions and attaches addenda to their note", async () => {
     supabaseMock.onFrom("clinical_notes", {
@@ -141,6 +225,9 @@ describe("fetchPatientHistory", () => {
           objective: "O",
           analysis: "A",
           plan: "P",
+          prognosis: "Favorable",
+          vital_signs: { bp_sys: 120, bp_dia: 80 },
+          author_id: "doc-1",
           created_at: "2026-09-20T16:00:00Z",
           finalized_at: "2026-09-20T17:00:00Z",
         },
@@ -159,17 +246,35 @@ describe("fetchPatientHistory", () => {
     });
     supabaseMock.onFrom("clinical_note_addenda", {
       data: [
-        { id: "ad-1", note_id: "note-1", body: "Corrección", created_at: "2026-09-21T16:00:00Z" },
+        {
+          id: "ad-1",
+          note_id: "note-1",
+          body: "Corrección",
+          created_at: "2026-09-21T16:00:00Z",
+          author_id: "doc-1",
+        },
       ],
+    });
+    supabaseMock.onFrom("profiles", {
+      data: [{ id: "doc-1", first_name: "Laura", last_name: "Garza" }],
     });
 
     const history = await fetchPatientHistory("patient-1");
 
     expect(history.notes[0]).toMatchObject({
       id: "note-1",
+      prognosis: "Favorable",
+      vitalSigns: { bp_sys: 120, bp_dia: 80 },
+      authorName: "Laura Garza",
       finalizedAt: "2026-09-20T17:00:00Z",
-      addenda: [{ id: "ad-1", noteId: "note-1", body: "Corrección" }],
+      addenda: [
+        { id: "ad-1", noteId: "note-1", body: "Corrección", authorName: "Laura Garza" },
+      ],
     });
+    // One lookup for every author, notes and addenda together.
+    const profiles = supabaseMock.queries("profiles");
+    expect(profiles).toHaveLength(1);
+    expect(profiles[0].args("in")).toEqual(["id", ["doc-1"]]);
     expect(history.prescriptions[0]).toMatchObject({ medications: [], finalizedAt: null });
     expect(supabaseMock.queries("clinical_note_addenda")[0].args("in")).toEqual([
       "note_id",
@@ -186,6 +291,91 @@ describe("fetchPatientHistory", () => {
       prescriptions: [],
     });
     expect(supabaseMock.queries("clinical_note_addenda")).toHaveLength(0);
+    expect(supabaseMock.queries("profiles")).toHaveLength(0);
+  });
+
+  it("still loads the history when author names cannot be read", async () => {
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    supabaseMock.onFrom("clinical_notes", {
+      data: [
+        {
+          id: "note-1",
+          appointment_id: "appt-1",
+          patient_id: "patient-1",
+          analysis: "A",
+          author_id: "doc-1",
+          created_at: "2026-09-20T16:00:00Z",
+        },
+      ],
+    });
+    supabaseMock.onFrom("prescriptions", { data: [] });
+    supabaseMock.onFrom("clinical_note_addenda", { data: [] });
+    supabaseMock.onFrom("profiles", { error: { message: "denied", code: "42501" } });
+
+    const history = await fetchPatientHistory("patient-1");
+
+    expect(history.notes[0]).toMatchObject({
+      id: "note-1",
+      authorName: null,
+      prognosis: null,
+      vitalSigns: null,
+    });
+  });
+});
+
+describe("findConsultationDraft", () => {
+  const note = (over: Partial<SoapNote>): SoapNote => ({
+    id: "n",
+    appointmentId: "appt-1",
+    patientId: "patient-1",
+    subjective: null,
+    objective: null,
+    analysis: null,
+    plan: null,
+    prognosis: null,
+    vitalSigns: null,
+    createdAt: "2026-09-20T16:00:00Z",
+    authorName: null,
+    finalizedAt: null,
+    addenda: [],
+    ...over,
+  });
+  const rx = (over: Partial<Prescription>): Prescription => ({
+    id: "rx",
+    appointmentId: "appt-1",
+    patientId: "patient-1",
+    medications: [],
+    createdAt: "2026-09-20T16:00:00Z",
+    finalizedAt: null,
+    ...over,
+  });
+
+  it("returns the oldest unfinalized note and prescription of that appointment", () => {
+    const history: PatientClinicalHistory = {
+      notes: [
+        note({ id: "newer", createdAt: "2026-09-20T18:00:00Z" }),
+        note({ id: "other-appt", appointmentId: "appt-0" }),
+        note({ id: "oldest", createdAt: "2026-09-20T16:00:00Z" }),
+      ],
+      prescriptions: [rx({ id: "rx-1" }), rx({ id: "rx-other", appointmentId: "appt-0" })],
+    };
+
+    const draft = findConsultationDraft(history, "appt-1");
+
+    expect(draft.note?.id).toBe("oldest");
+    expect(draft.prescription?.id).toBe("rx-1");
+  });
+
+  it("never returns a finalized record as a draft", () => {
+    const history: PatientClinicalHistory = {
+      notes: [note({ finalizedAt: "2026-09-20T17:00:00Z" })],
+      prescriptions: [rx({ finalizedAt: "2026-09-20T17:00:00Z" })],
+    };
+
+    expect(findConsultationDraft(history, "appt-1")).toEqual({
+      note: null,
+      prescription: null,
+    });
   });
 });
 

@@ -92,9 +92,16 @@ export interface MyDataExport {
     email: string | null;
     gender: string | null;
     dob: string | null;
+    /** Absent until migration 20 is applied. */
+    address?: string | null;
     blood_type: string | null;
     allergies: string | null;
     chronic_conditions: string | null;
+    /** Clinical history (antecedentes); absent until migration 20 is applied. */
+    family_history?: string | null;
+    personal_pathological_history?: string | null;
+    non_pathological_history?: string | null;
+    current_illness?: string | null;
     referred_by: string | null;
     created_at: string | null;
   } | null;

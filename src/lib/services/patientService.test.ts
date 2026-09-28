@@ -3,7 +3,11 @@ import { supabaseMock } from "../../test/supabaseMock";
 import {
   ANONYMIZED_PATIENT_MESSAGE,
   fetchPatientDetails,
+  fetchPatientNotes,
+  updatePatientBackground,
   updatePatientDetails,
+  updatePatientStatus,
+  type PatientBackgroundFields,
   type PatientDetailsFields,
 } from "./patientService";
 
@@ -17,6 +21,11 @@ const fields = (extra: Partial<PatientDetailsFields> = {}): PatientDetailsFields
   blood_type: "O-",
   allergies: "",
   chronic_conditions: "Diabetes",
+  address: " Av. Juárez 10, Centro, Monterrey ",
+  family_history: "Madre con diabetes",
+  personal_pathological_history: "",
+  non_pathological_history: "No fuma",
+  current_illness: "  ",
   ...extra,
 });
 
@@ -34,13 +43,43 @@ describe("fetchPatientDetails", () => {
     expect(patient.blood_type).toBe("O-");
     const query = supabaseMock.queries("patients")[0];
     expect(query.args("eq")).toEqual(["id", "p1"]);
-    expect(String(query.args("select")?.[0])).toContain("anonymized_at");
+    const columns = String(query.args("select")?.[0]);
+    expect(columns).toContain("anonymized_at");
+    for (const column of [
+      "address",
+      "family_history",
+      "personal_pathological_history",
+      "non_pathological_history",
+      "current_illness",
+    ]) {
+      expect(columns).toContain(column);
+    }
   });
 
   it("reports a missing patient in Spanish", async () => {
     supabaseMock.onFrom("patients", { data: null });
     await expect(fetchPatientDetails("nope")).rejects.toThrow(
       "No encontramos a este paciente.",
+    );
+  });
+});
+
+describe("fetchPatientNotes", () => {
+  it("reads only the reminders column of one patient", async () => {
+    supabaseMock.onFrom("patients", { data: { notes: "Paga en efectivo" } });
+
+    await expect(fetchPatientNotes("p1")).resolves.toBe("Paga en efectivo");
+    const query = supabaseMock.queries("patients")[0];
+    expect(query.args("select")).toEqual(["notes"]);
+    expect(query.args("eq")).toEqual(["id", "p1"]);
+  });
+
+  it("returns an empty pad when there are none, and fails loudly on errors", async () => {
+    supabaseMock.onFrom("patients", { data: { notes: null } }, { error: { message: "x" } });
+
+    await expect(fetchPatientNotes("p1")).resolves.toBe("");
+    await expect(fetchPatientNotes("p1")).rejects.toThrow(
+      "Error al cargar los recordatorios del paciente.",
     );
   });
 });
@@ -68,6 +107,11 @@ describe("updatePatientDetails", () => {
       blood_type: "O-",
       allergies: null,
       chronic_conditions: "Diabetes",
+      address: "Av. Juárez 10, Centro, Monterrey",
+      family_history: "Madre con diabetes",
+      personal_pathological_history: null,
+      non_pathological_history: "No fuma",
+      current_illness: null,
     });
     expect(query.args("eq")).toEqual(["id", "p1"]);
     expect(query.args("is")).toEqual(["anonymized_at", null]);
@@ -127,6 +171,65 @@ describe("updatePatientDetails", () => {
 
     await expect(updatePatientDetails("p1", fields())).rejects.toThrow(
       ANONYMIZED_PATIENT_MESSAGE,
+    );
+  });
+});
+
+describe("updatePatientBackground", () => {
+  it("sends only the background columns given, trimmed, never other columns", async () => {
+    supabaseMock.onFrom("patients", updated);
+
+    await updatePatientBackground("p1", {
+      family_history: " Negados ",
+      allergies: "",
+      blood_type: "a+",
+      phone: "+525512345678",
+      notes: "x",
+    } as Partial<PatientBackgroundFields>);
+
+    const query = supabaseMock.queries("patients")[0];
+    expect(query.args("update")?.[0]).toEqual({
+      family_history: "Negados",
+      allergies: null,
+      blood_type: "A+",
+    });
+    expect(query.args("eq")).toEqual(["id", "p1"]);
+    expect(query.args("is")).toEqual(["anonymized_at", null]);
+  });
+
+  it("does not call the server when nothing changed or the blood type is invalid", async () => {
+    await updatePatientBackground("p1", {});
+    await expect(updatePatientBackground("p1", { blood_type: "Z+" })).rejects.toThrow(
+      "Elige un tipo de sangre de la lista.",
+    );
+    expect(supabaseMock.queries("patients")).toHaveLength(0);
+  });
+
+  it("refuses an anonymized patient (no row updated)", async () => {
+    supabaseMock.onFrom("patients", { data: [] });
+
+    await expect(
+      updatePatientBackground("p1", { current_illness: "Acné" }),
+    ).rejects.toThrow(ANONYMIZED_PATIENT_MESSAGE);
+  });
+});
+
+describe("updatePatientStatus", () => {
+  it("shows the database's reason when it refuses the change (P0001)", async () => {
+    const reason = "Este expediente fue anonimizado y no se puede restaurar.";
+    supabaseMock.onFrom("patients", { data: null, error: { code: "P0001", message: reason } });
+
+    await expect(updatePatientStatus("p1", "active")).rejects.toThrow(reason);
+  });
+
+  it("hides any other error behind a generic message", async () => {
+    supabaseMock.onFrom("patients", {
+      data: null,
+      error: { code: "42501", message: "permission denied for table patients" },
+    });
+
+    await expect(updatePatientStatus("p1", "active")).rejects.toThrow(
+      /^Error al actualizar el estado del paciente\.$/,
     );
   });
 });

@@ -1454,3 +1454,74 @@ changes from any session that is not the doctor):
 To revoke access, set the role back to `patient` (or delete the auth user).
 Never set `doctor` on anyone but the doctor: `doctor` sees every clinical
 record.
+
+---
+
+# NOM-004 consultation record
+
+## Migration 20 — Prognosis, vital signs, history, address, atomic finalize
+
+**File:** `supabase/migrations/20260927110000_nom004_consultation.sql`.
+Idempotent; paste it into the SQL editor after migration 19
+(`20260927100000_staff_booking_overlap.sql`).
+
+- Expected: one notice starting with `Migration 20 PASSED`.
+- A failure raises `Migration 20 FAILED: …` naming the broken rule.
+
+What it adds:
+
+- `clinical_notes.prognosis` (text) and `clinical_notes.vital_signs` (jsonb
+  object with numeric `bp_sys`, `bp_dia`, `spo2`, `weight_kg`, `height_cm`;
+  a check refuses any other key or a non-number).
+- `patients.address`, `family_history`, `personal_pathological_history`,
+  `non_pathological_history`, `current_illness`. Patients still have no write
+  policy on `patients`, so only the doctor edits them; the gate proves it.
+- `clinical_notes_enforce_integrity()` re-created from migration 10 with
+  `prognosis` and `vital_signs` in the frozen fields.
+- `finalize_consultation()` re-created: it refuses (P0001, "Para finalizar la
+  consulta, escribe el diagnóstico y el plan.") when the note has an empty
+  diagnosis or plan, or when the appointment has no note. An already
+  finalized consultation still returns 0.
+- New RPC `finalize_consultation_with_payment(appointment, status, amount,
+  method, note)`: doctor only, `SECURITY DEFINER` with a pinned
+  `search_path`. It calls `finalize_consultation()` and then
+  `record_payment()` in one call, so both succeed or neither does; both keep
+  their own audit rows. "Finalizar Consulta" uses only this RPC now.
+- `export_my_data()` re-created from migration 14 with the address and the
+  four antecedentes (never `patients.notes`, never SOAP notes).
+- `anonymize_patient()` re-created from migration 11: it also clears
+  `address`.
+
+**Deploy order:** run the migration BEFORE deploying the frontend. The new
+"Finalizar Consulta" calls `finalize_consultation_with_payment()` and fails
+(nothing saved, the doctor sees an error) while it is missing. After the
+migration, re-run `supabase/tests/roles_check.sql`: its fixture note now has a
+diagnosis and a plan, which `finalize_consultation()` requires.
+
+**Rollback:** `drop function public.finalize_consultation_with_payment(uuid, text, numeric, text, text);`
+disables "Finalizar Consulta" in the new frontend. Re-running migration 10
+restores the old freeze trigger and `finalize_consultation()` (no diagnosis or
+plan check; `prognosis` and `vital_signs` would no longer be frozen), and
+migrations 13/14 and 11 the previous `export_my_data()` and
+`anonymize_patient()`. Keep the new columns: they hold clinical data.
+
+## NOM-004 check — `supabase/tests/nom004_check.sql`
+
+**Run:** paste the whole file into the SQL editor after migration 20. It runs
+inside `begin; … rollback;` with throwaway doctor and patient users, a
+patient, a service and five appointments, and disables the
+`whatsapp_notifications` and `appointments_prevent_overlap` triggers inside
+the transaction, so nothing is committed or sent.
+
+- Expected: one notice starting with `NOM004 CHECK PASSED`.
+- A failure raises `NOM004 CHECK FAILED: …` naming the broken rule.
+
+It proves: `finalize_consultation()` refuses an empty diagnosis, a blank plan
+and an appointment with no note, and leaves those notes open; a complete note
+finalizes and a second call returns 0; `finalize_consultation_with_payment()`
+leaves no payment row when finalization fails, leaves the note open when the
+charge is refused, and stores both on a corrected retry; `prognosis` and
+`vital_signs` cannot change after finalization; `vital_signs` refuses text
+values and unknown keys; the doctor reads the author's name; a patient cannot
+change their own clinical history or address, and their export carries the
+address and the antecedentes but no internal notes and no SOAP notes.

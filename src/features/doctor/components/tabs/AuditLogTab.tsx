@@ -56,6 +56,8 @@ const COLUMN_LABELS: Record<string, string> = {
   objective: "exploración (O)",
   analysis: "diagnóstico (A)",
   plan: "plan (P)",
+  prognosis: "pronóstico",
+  vital_signs: "signos vitales",
   medications: "medicamentos",
   finalized_at: "cierre",
   cancel_reason: "motivo de cancelación",
@@ -64,6 +66,11 @@ const COLUMN_LABELS: Record<string, string> = {
   blood_type: "tipo de sangre",
   gender: "género",
   referred_by: "referido por",
+  address: "domicilio",
+  family_history: "antecedentes heredofamiliares",
+  personal_pathological_history: "antecedentes personales patológicos",
+  non_pathological_history: "antecedentes personales no patológicos",
+  current_illness: "padecimiento actual",
   anonymized_at: "anonimización",
 };
 

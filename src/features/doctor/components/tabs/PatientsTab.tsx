@@ -10,19 +10,44 @@ import {
   FileText,
   UserPlus,
   UserPen,
+  Calendar as CalendarIcon,
 } from "lucide-react";
 import { Button } from "../../../../components/ui/Button";
 import { DataGrid, type ColumnDef } from "../../../../components/ui/DataGrid";
 import { Modal } from "../../../../components/ui/Modal";
+import { Dropdown } from "../../../../components/ui/Dropdown";
+import { DatePicker } from "../../../../components/ui/DatePicker";
 import {
   fetchPatients,
   updatePatientStatus,
   createPatient,
+  PATIENT_GENDERS,
   type DashboardPatient,
 } from "../../../../lib/services/patientService";
 import { ConsultationWorkspace } from "../ConsultationWorkspace";
 import { EditPatientModal } from "../modals/EditPatientModal";
 import { toast } from "react-hot-toast/headless";
+
+const GENDER_OPTIONS = [
+  { label: "Sin especificar", value: "" },
+  ...PATIENT_GENDERS.map((g) => ({ label: g, value: g })),
+];
+
+const todayIso = (): string => {
+  const now = new Date();
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`;
+};
+
+/** "12 de marzo de 1955", built as a local date (not UTC midnight). */
+const formatBirthDate = (iso: string): string => {
+  const [y, m, d] = iso.split("-").map(Number);
+  return new Date(y, m - 1, d).toLocaleDateString("es-MX", {
+    day: "numeric",
+    month: "long",
+    year: "numeric",
+  });
+};
 
 export const PatientsTab = () => {
   const [patients, setPatients] = useState<DashboardPatient[]>([]);
@@ -44,6 +69,7 @@ export const PatientsTab = () => {
   const [isSubmitting, setIsSubmitting] = useState(false);
 
   const [isNewPatientModalOpen, setIsNewPatientModalOpen] = useState(false);
+  const [isNewDobPickerOpen, setIsNewDobPickerOpen] = useState(false);
   const [newPatientForm, setNewPatientForm] = useState({
     firstName: "",
     lastName: "",
@@ -104,7 +130,12 @@ export const PatientsTab = () => {
         "Error al cambiar estatus:",
         err instanceof Error ? err.message : err,
       );
-      toast.error("Ocurrió un error al cambiar el estatus del paciente.");
+      // The service throws Spanish messages (the database's reason for P0001).
+      toast.error(
+        err instanceof Error
+          ? err.message
+          : "Ocurrió un error al cambiar el estatus del paciente.",
+      );
     } finally {
       setIsSubmitting(false);
     }
@@ -184,14 +215,14 @@ export const PatientsTab = () => {
       className: "w-[25%] text-right",
       cell: (row) => (
         <div className="flex items-center justify-end gap-2">
-          <button
+          <button type="button"
             onClick={() => setSelectedPatientProfile(row)}
             className="flex items-center justify-center w-10 h-10 bg-brand-light/20 text-brand-primary hover:bg-brand-primary hover:text-white rounded-xl transition-all border border-brand-primary/20 hover:border-brand-primary shadow-sm cursor-pointer shrink-0"
             title="Ver Expediente"
           >
             <FileText className="w-5 h-5" strokeWidth={2.5} />
           </button>
-          <button
+          <button type="button"
             onClick={() => setPatientToEditId(row.id)}
             className="flex items-center justify-center w-10 h-10 bg-brand-light/20 text-brand-primary hover:bg-brand-primary hover:text-white rounded-xl transition-all border border-brand-primary/20 hover:border-brand-primary shadow-sm cursor-pointer shrink-0"
             title="Editar datos"
@@ -200,14 +231,14 @@ export const PatientsTab = () => {
           </button>
           {row.status === "active" && (
             <>
-              <button
+              <button type="button"
                 onClick={() => setPatientToBlock(row)}
                 className="flex items-center justify-center w-10 h-10 bg-amber-50 text-amber-600 hover:bg-amber-500 hover:text-white rounded-xl transition-all border border-amber-100 hover:border-amber-500 shadow-sm cursor-pointer shrink-0"
                 title="Suspender Paciente"
               >
                 <Ban className="w-5 h-5" strokeWidth={2.5} />
               </button>
-              <button
+              <button type="button"
                 onClick={() => setPatientToArchive(row)}
                 className="flex items-center justify-center w-10 h-10 bg-rose-50 text-rose-600 hover:bg-rose-500 hover:text-white rounded-xl transition-all border border-rose-100 hover:border-rose-500 shadow-sm cursor-pointer shrink-0"
                 title="Archivar Expediente"
@@ -216,15 +247,18 @@ export const PatientsTab = () => {
               </button>
             </>
           )}
-          {(row.status === "blocked" || row.status === "archived") && (
-            <button
-              onClick={() => handleChangeStatus(row.id, "active")}
-              className="flex items-center justify-center w-10 h-10 bg-teal-50 text-teal-600 hover:bg-teal-500 hover:text-white rounded-xl transition-all border border-teal-100 hover:border-teal-500 shadow-sm cursor-pointer shrink-0"
-              title="Restaurar Paciente"
-            >
-              <UserCheck className="w-5 h-5" strokeWidth={2.5} />
-            </button>
-          )}
+          {/* An anonymized record stays archived for good (the database
+              refuses it too), so it has no restore action. */}
+          {(row.status === "blocked" || row.status === "archived") &&
+            !row.anonymizedAt && (
+              <button type="button"
+                onClick={() => handleChangeStatus(row.id, "active")}
+                className="flex items-center justify-center w-10 h-10 bg-teal-50 text-teal-600 hover:bg-teal-500 hover:text-white rounded-xl transition-all border border-teal-100 hover:border-teal-500 shadow-sm cursor-pointer shrink-0"
+                title="Restaurar Paciente"
+              >
+                <UserCheck className="w-5 h-5" strokeWidth={2.5} />
+              </button>
+            )}
         </div>
       ),
     },
@@ -234,6 +268,8 @@ export const PatientsTab = () => {
   if (selectedPatientProfile) {
     return (
       <ConsultationWorkspace
+        // One mount per patient: no state leaks between records.
+        key={selectedPatientProfile.id}
         patient={selectedPatientProfile}
         onClose={() => {
           setSelectedPatientProfile(null);
@@ -293,19 +329,19 @@ export const PatientsTab = () => {
 
       <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4 mb-2">
         <div className="flex bg-slate-100 p-1.5 rounded-xl border border-slate-200 w-full lg:w-auto">
-          <button
+          <button type="button"
             onClick={() => setActiveTab("active")}
             className={`cursor-pointer flex-1 sm:flex-none px-6 py-2 rounded-lg text-sm font-bold transition-all ${activeTab === "active" ? "bg-white text-brand-dark shadow-sm" : "text-brand-gray hover:text-brand-dark"}`}
           >
             Activos
           </button>
-          <button
+          <button type="button"
             onClick={() => setActiveTab("blocked")}
             className={`cursor-pointer flex-1 sm:flex-none px-6 py-2 rounded-lg text-sm font-bold transition-all ${activeTab === "blocked" ? "bg-white text-brand-dark shadow-sm" : "text-brand-gray hover:text-brand-dark"}`}
           >
             Suspendidos
           </button>
-          <button
+          <button type="button"
             onClick={() => setActiveTab("archived")}
             className={`cursor-pointer flex-1 sm:flex-none px-6 py-2 rounded-lg text-sm font-bold transition-all ${activeTab === "archived" ? "bg-white text-brand-dark shadow-sm" : "text-brand-gray hover:text-brand-dark"}`}
           >
@@ -323,7 +359,7 @@ export const PatientsTab = () => {
               className="w-full pl-11 pr-4 py-2.5 bg-white border border-slate-200 shadow-[0_2px_10px_rgb(0,0,0,0.02)] rounded-xl text-sm font-medium focus:outline-none focus:border-brand-primary focus:ring-2 focus:ring-brand-primary/20 transition-all"
             />
           </div>
-          <Button
+          <Button type="button"
             onClick={() => setIsNewPatientModalOpen(true)}
             className="w-full sm:w-auto py-2.5 px-5 rounded-xl bg-brand-primary hover:bg-brand-dark text-white font-bold shadow-md cursor-pointer border-none"
           >
@@ -433,38 +469,63 @@ export const PatientsTab = () => {
             </div>
           </div>
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-            <div className="space-y-1.5">
-              <label className="text-sm font-bold text-brand-dark">
-                Fecha de Nacimiento
+            {/* Same DatePicker trigger as the patient edit modal, opened on
+                past years since this is a birth date. */}
+            <div className="w-full relative">
+              <label
+                htmlFor="new-patient-dob"
+                className="text-brand-dark font-bold text-sm mb-2 block"
+              >
+                Fecha de nacimiento
               </label>
-              <input
-                type="date"
-                value={newPatientForm.dob}
-                onChange={(e) =>
-                  setNewPatientForm({ ...newPatientForm, dob: e.target.value })
-                }
-                className="w-full p-3 border border-slate-200 rounded-xl focus:outline-none focus:border-brand-primary text-sm text-brand-dark"
-              />
+              <button
+                id="new-patient-dob"
+                type="button"
+                onClick={() => setIsNewDobPickerOpen(true)}
+                className="w-full px-4 py-3 bg-white border border-slate-200 rounded-xl text-sm font-medium text-left transition-all flex items-center justify-between group cursor-pointer"
+              >
+                <span
+                  className={
+                    newPatientForm.dob ? "text-brand-dark" : "text-brand-gray"
+                  }
+                >
+                  {newPatientForm.dob
+                    ? formatBirthDate(newPatientForm.dob)
+                    : "Seleccionar..."}
+                </span>
+                <CalendarIcon className="w-4 h-4 text-brand-gray group-hover:text-brand-primary transition-colors" />
+              </button>
+              <div className="absolute top-full mt-2 z-50">
+                <DatePicker
+                  isOpen={isNewDobPickerOpen}
+                  onClose={() => setIsNewDobPickerOpen(false)}
+                  selectedDate={newPatientForm.dob || null}
+                  maxDate={todayIso()}
+                  allowPast
+                  title="Fecha de nacimiento"
+                  onSelectDate={(d) => {
+                    setNewPatientForm({ ...newPatientForm, dob: d });
+                    setIsNewDobPickerOpen(false);
+                  }}
+                />
+              </div>
             </div>
-            <div className="space-y-1.5">
-              <label className="text-sm font-bold text-brand-dark">
+            <div className="w-full">
+              <label
+                id="new-patient-gender-label"
+                className="text-brand-dark font-bold text-sm mb-2 block"
+              >
                 Género
               </label>
-              <select
+              <Dropdown
+                options={GENDER_OPTIONS}
                 value={newPatientForm.gender}
-                onChange={(e) =>
-                  setNewPatientForm({
-                    ...newPatientForm,
-                    gender: e.target.value,
-                  })
+                onChange={(val) =>
+                  setNewPatientForm({ ...newPatientForm, gender: val })
                 }
-                className="w-full p-3 border border-slate-200 rounded-xl focus:outline-none focus:border-brand-primary text-sm bg-white"
-              >
-                <option value="">Seleccionar...</option>
-                <option value="Femenino">Femenino</option>
-                <option value="Masculino">Masculino</option>
-                <option value="Otro">Otro</option>
-              </select>
+                labelledBy="new-patient-gender-label"
+                className="py-0! text-sm!"
+              />
             </div>
           </div>
           <div className="pt-4 flex gap-3 border-t border-slate-100 mt-2">
@@ -513,14 +574,14 @@ export const PatientsTab = () => {
               El paciente no podrá agendar nuevas citas desde el portal público.
             </p>
             <div className="pt-4 border-t border-slate-100 flex gap-3">
-              <Button
+              <Button type="button"
                 variant="outline"
                 onClick={() => setPatientToBlock(null)}
                 className="flex-1 py-3.5 rounded-xl cursor-pointer"
               >
                 Cancelar
               </Button>
-              <Button
+              <Button type="button"
                 onClick={() => handleChangeStatus(patientToBlock.id, "blocked")}
                 disabled={isSubmitting}
                 className="flex-1 py-3.5 rounded-xl bg-amber-500 hover:bg-amber-600 text-white border-none shadow-md cursor-pointer disabled:opacity-50"
@@ -552,14 +613,14 @@ export const PatientsTab = () => {
               normativo.
             </p>
             <div className="pt-4 border-t border-slate-100 flex gap-3">
-              <Button
+              <Button type="button"
                 variant="outline"
                 onClick={() => setPatientToArchive(null)}
                 className="flex-1 py-3.5 rounded-xl cursor-pointer"
               >
                 Cancelar
               </Button>
-              <Button
+              <Button type="button"
                 onClick={() =>
                   handleChangeStatus(patientToArchive.id, "archived")
                 }

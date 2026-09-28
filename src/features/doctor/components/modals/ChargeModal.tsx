@@ -10,7 +10,11 @@ import {
   type Payment,
   type PaymentMethod,
   type PaymentStatus,
+  type RecordPaymentInput,
 } from "../../../../lib/services/financeService";
+
+/** What the doctor answered, without saving it. */
+export type ChargeInput = Omit<RecordPaymentInput, "appointmentId">;
 
 const METHODS: PaymentMethod[] = ["cash", "card", "transfer"];
 
@@ -18,7 +22,14 @@ interface Props {
   isOpen: boolean;
   onClose: () => void;
   /** Called with the stored payment once the server accepted it. */
-  onSaved: (payment: Payment) => void;
+  onSaved?: (payment: Payment) => void;
+  /**
+   * When given, the modal only collects the charge and hands it here instead
+   * of saving it itself (e.g. "Finalizar Consulta", which saves the charge and
+   * finalizes in one transaction). A rejection is shown and the modal stays
+   * open so the doctor can retry.
+   */
+  onConfirm?: (charge: ChargeInput) => Promise<void>;
   appointmentId: string;
   /** Shown under the title, e.g. "Ana Pérez · Valoración". */
   subtitle?: string;
@@ -38,6 +49,7 @@ export const ChargeModal = ({
   isOpen,
   onClose,
   onSaved,
+  onConfirm,
   appointmentId,
   subtitle,
   servicePrice,
@@ -74,16 +86,21 @@ export const ChargeModal = ({
     if (!isValid || isLoading) return;
     setIsLoading(true);
 
+    const charge: ChargeInput = {
+      status,
+      amount: isPaid ? parsedAmount : undefined,
+      method: isPaid ? method : null,
+      note,
+    };
+
     try {
-      const payment = await recordPayment({
-        appointmentId,
-        status,
-        amount: isPaid ? parsedAmount : undefined,
-        method: isPaid ? method : null,
-        note,
-      });
+      if (onConfirm) {
+        await onConfirm(charge);
+        return;
+      }
+      const payment = await recordPayment({ appointmentId, ...charge });
       toast.success(isPaid ? "Cobro guardado" : "Cortesía guardada");
-      onSaved(payment);
+      onSaved?.(payment);
     } catch (error: unknown) {
       console.error("[ChargeModal] Error al guardar el cobro:", error);
       toast.error(
