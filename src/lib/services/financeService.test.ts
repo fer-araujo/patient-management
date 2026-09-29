@@ -4,6 +4,7 @@ import {
   fetchPayment,
   getFinanceSummary,
   getPeriodRange,
+  getProcedureProfit,
   monthKeyOf,
   recordPayment,
 } from "./financeService";
@@ -330,6 +331,99 @@ describe("getFinanceSummary", () => {
 
     await expect(getFinanceSummary("2026-09-01", "2026-10-01")).rejects.toThrow(
       "No se pudieron cargar las finanzas.",
+    );
+  });
+});
+
+describe("getProcedureProfit", () => {
+  // Rows as get_procedure_profit returns them (numerics come back as strings).
+  const rows = [
+    {
+      service_id: "svc-relleno", service_name: "Relleno", times: 3,
+      charged: "9000.00", courtesy_value: "4500.00", supplies_cost: "3600.00",
+      uncosted_supplies: 0, profit: "5400.00", unrecorded_consultations: 2,
+    },
+    {
+      service_id: "svc-toxina", service_name: "Toxina", times: 2,
+      charged: "1500.00", courtesy_value: "0.00", supplies_cost: "1800.50",
+      uncosted_supplies: 2, profit: "-300.50", unrecorded_consultations: 1,
+    },
+    {
+      service_id: null, service_name: null, times: 1,
+      charged: "0.00", courtesy_value: "0.00", supplies_cost: "0.00",
+      uncosted_supplies: 0, profit: "0.00",
+    },
+  ];
+
+  it("asks the server for the Monterrey-day range in UTC", async () => {
+    await getProcedureProfit("2026-09-01", "2026-10-01");
+
+    expect(supabaseMock.lastRpc("get_procedure_profit")?.args).toEqual({
+      p_from: "2026-09-01T06:00:00.000Z",
+      p_to: "2026-10-01T06:00:00.000Z",
+    });
+  });
+
+  it("gives one row per service: charged, courtesies, supplies and charged minus supplies", async () => {
+    supabaseMock.onRpc("get_procedure_profit", { data: rows });
+
+    const { rows: result } = await getProcedureProfit("2026-09-01", "2026-10-01");
+
+    expect(result[0]).toEqual({
+      serviceId: "svc-relleno",
+      service: "Relleno",
+      times: 3,
+      charged: 9000,
+      courtesyValue: 4500,
+      suppliesCost: 3600,
+      uncostedSupplies: 0,
+      // The courtesy value is reported apart; it never lowers the profit.
+      profit: 5400,
+      unrecordedConsultations: 2,
+    });
+    expect(result[1]).toMatchObject({ service: "Toxina", suppliesCost: 1800.5, profit: -300.5 });
+    expect(result[2]).toMatchObject({ serviceId: null, service: "Sin servicio", profit: 0 });
+  });
+
+  it("totals every column and flags supplies used without a registered cost", async () => {
+    supabaseMock.onRpc("get_procedure_profit", { data: rows });
+
+    const summary = await getProcedureProfit("2026-09-01", "2026-10-01");
+
+    expect(summary.total).toEqual({
+      times: 6,
+      charged: 10500,
+      courtesyValue: 4500,
+      suppliesCost: 5400.5,
+      uncostedSupplies: 2,
+      profit: 5099.5,
+      // Consultations closed without their supplies: the profit may be high.
+      unrecordedConsultations: 3,
+    });
+    expect(summary.hasUncostedSupplies).toBe(true);
+  });
+
+  it("does not flag missing costs when every supply had one, and handles an empty period", async () => {
+    supabaseMock.onRpc("get_procedure_profit", { data: [rows[0]] });
+    await expect(getProcedureProfit("2026-09-01", "2026-10-01")).resolves.toMatchObject({
+      hasUncostedSupplies: false,
+    });
+
+    supabaseMock.onRpc("get_procedure_profit", { data: [] });
+    const empty = await getProcedureProfit("2026-09-01", "2026-10-01");
+    expect(empty.rows).toEqual([]);
+    expect(empty.total).toMatchObject({ times: 0, charged: 0, profit: 0 });
+    expect(empty.hasUncostedSupplies).toBe(false);
+  });
+
+  it("fails with a readable message when the server refuses", async () => {
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    supabaseMock.onRpc("get_procedure_profit", {
+      error: { code: "42501", message: "No tienes permisos para ver las finanzas." },
+    });
+
+    await expect(getProcedureProfit("2026-09-01", "2026-10-01")).rejects.toThrow(
+      "No se pudo cargar la ganancia por procedimiento.",
     );
   });
 });

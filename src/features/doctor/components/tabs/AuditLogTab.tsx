@@ -22,6 +22,7 @@ const TABLE_LABELS: Record<string, string> = {
   consents: "un consentimiento",
   arco_requests: "una solicitud de datos personales",
   payments: "un cobro",
+  service_supplies: "los insumos de un tratamiento",
 };
 
 const ACTION_LABELS: Record<string, string> = {

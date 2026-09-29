@@ -195,3 +195,161 @@ describe("ChargeModal collecting only (onConfirm)", () => {
     await waitFor(() => expect(onConfirm).toHaveBeenCalledTimes(2));
   });
 });
+
+describe("ChargeModal supplies used (withSupplies)", () => {
+  const inventoryRow = (overrides: Record<string, unknown>) => ({
+    category: "Insumos",
+    min_alert_level: 1,
+    last_restock_date: "2026-09-01",
+    is_active: true,
+    ...overrides,
+  });
+
+  const stubSupplies = () => {
+    supabaseMock.onFrom("inventory", {
+      data: [
+        inventoryRow({ id: "item-s", name: "Sculptra", stock_quantity: 3, unit_measure: "viales" }),
+        inventoryRow({ id: "item-j", name: "Jeringas", stock_quantity: 10, unit_measure: "piezas" }),
+        inventoryRow({ id: "item-g", name: "Gasas", stock_quantity: 50, unit_measure: "paquetes" }),
+        inventoryRow({ id: "item-old", name: "Toxina vieja", stock_quantity: 4, unit_measure: "viales", is_active: false }),
+      ],
+    });
+    supabaseMock.onFrom("service_supplies", {
+      data: [
+        { item_id: "item-s", quantity: 1, inventory: { name: "Sculptra", unit_measure: "viales" } },
+        { item_id: "item-j", quantity: 2, inventory: { name: "Jeringas", unit_measure: "piezas" } },
+        { item_id: "item-old", quantity: 1, inventory: { name: "Toxina vieja", unit_measure: "viales" } },
+      ],
+    });
+  };
+
+  const renderWithSupplies = () => {
+    stubSupplies();
+    const onConfirm = vi.fn().mockResolvedValue(undefined);
+    const rendered = renderModal({
+      onConfirm,
+      withSupplies: true,
+      serviceId: "svc-1",
+      confirmLabel: "Guardar y finalizar",
+    });
+    return { ...rendered, onConfirm };
+  };
+
+  const confirmButton = () => screen.getByRole("button", { name: /Guardar y finalizar/ });
+  const quantityOf = (name: string) => screen.getByLabelText(`Cantidad de ${name}`);
+
+  it("pre-fills the service's supplies with the current stock of each", async () => {
+    renderWithSupplies();
+
+    expect(await screen.findByLabelText("Cantidad de Sculptra")).toHaveValue(1);
+    expect(quantityOf("Jeringas")).toHaveValue(2);
+    expect(screen.getByText("En inventario: 3")).toBeInTheDocument();
+    expect(screen.getByText("En inventario: 10")).toBeInTheDocument();
+    // An archived item cannot be used, so it is not pre-filled.
+    expect(screen.queryByLabelText("Cantidad de Toxina vieja")).toBeNull();
+    expect(supabaseMock.queries("service_supplies")[0].args("eq")).toEqual(["service_id", "svc-1"]);
+  });
+
+  it("blocks confirming while a quantity is above the stock, until it is corrected", async () => {
+    const { user, onConfirm } = renderWithSupplies();
+    await screen.findByLabelText("Cantidad de Sculptra");
+    await user.click(screen.getByRole("radio", { name: "Efectivo" }));
+    expect(confirmButton()).toBeEnabled();
+
+    await user.clear(quantityOf("Sculptra"));
+    await user.type(quantityOf("Sculptra"), "5");
+
+    expect(screen.getByText("Solo hay 3 en inventario")).toBeInTheDocument();
+    expect(confirmButton()).toBeDisabled();
+    await user.click(confirmButton());
+    expect(onConfirm).not.toHaveBeenCalled();
+
+    // 0 means "not used" and is left out of what is sent.
+    await user.clear(quantityOf("Sculptra"));
+    await user.type(quantityOf("Sculptra"), "0");
+    expect(screen.queryByText("Solo hay 3 en inventario")).toBeNull();
+    expect(confirmButton()).toBeEnabled();
+
+    await user.click(confirmButton());
+    await waitFor(() => expect(onConfirm).toHaveBeenCalledTimes(1));
+    expect(onConfirm.mock.calls[0][0].supplies).toEqual([{ itemId: "item-j", quantity: 2 }]);
+  });
+
+  it("can remove a supply and add another one before confirming", async () => {
+    const { user, onConfirm } = renderWithSupplies();
+    await screen.findByLabelText("Cantidad de Sculptra");
+
+    await user.click(screen.getByRole("button", { name: "Quitar Jeringas" }));
+    expect(screen.queryByLabelText("Cantidad de Jeringas")).toBeNull();
+
+    await user.click(screen.getByRole("combobox", { name: "Insumos usados" }));
+    // Already listed and archived items are not offered.
+    expect(screen.queryByRole("option", { name: "Sculptra" })).toBeNull();
+    expect(screen.queryByRole("option", { name: "Toxina vieja" })).toBeNull();
+    await user.click(screen.getByRole("option", { name: "Gasas" }));
+    await user.clear(screen.getByLabelText("Cantidad a agregar"));
+    await user.type(screen.getByLabelText("Cantidad a agregar"), "2");
+    await user.click(screen.getByRole("button", { name: /Agregar/ }));
+
+    expect(quantityOf("Gasas")).toHaveValue(2);
+    expect(screen.getByText("En inventario: 50")).toBeInTheDocument();
+
+    await user.click(screen.getByRole("radio", { name: "Tarjeta" }));
+    await user.click(confirmButton());
+
+    await waitFor(() =>
+      expect(onConfirm).toHaveBeenCalledWith({
+        status: "paid",
+        amount: 800,
+        method: "card",
+        note: "",
+        supplies: [
+          { itemId: "item-s", quantity: 1 },
+          { itemId: "item-g", quantity: 2 },
+        ],
+      }),
+    );
+  });
+
+  it("confirming with every supply removed sends an EMPTY list (the step was done)", async () => {
+    const { user, onConfirm } = renderWithSupplies();
+    await screen.findByLabelText("Cantidad de Sculptra");
+
+    await user.click(screen.getByRole("button", { name: "Quitar Sculptra" }));
+    await user.click(screen.getByRole("button", { name: "Quitar Jeringas" }));
+    expect(screen.getByText("Sin insumos anotados.")).toBeInTheDocument();
+    await user.click(screen.getByRole("radio", { name: "No cobré (cortesía)" }));
+    await user.click(confirmButton());
+
+    await waitFor(() => expect(onConfirm).toHaveBeenCalledTimes(1));
+    expect(onConfirm.mock.calls[0][0].supplies).toEqual([]);
+  });
+
+  it("when the inventory does not load, she can still finalize and the supplies stay pending", async () => {
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    supabaseMock.onFrom("inventory", { error: { message: "boom" } });
+    const onConfirm = vi.fn().mockResolvedValue(undefined);
+    const { user } = renderModal({
+      onConfirm,
+      withSupplies: true,
+      serviceId: "svc-1",
+      confirmLabel: "Guardar y finalizar",
+    });
+
+    expect(await screen.findByText(/No se pudieron cargar los insumos/)).toBeInTheDocument();
+    await user.click(screen.getByRole("radio", { name: "Efectivo" }));
+    await user.click(confirmButton());
+
+    await waitFor(() => expect(onConfirm).toHaveBeenCalledTimes(1));
+    // No "supplies" at all: the server leaves the consultation unmarked, so
+    // the calendar shows it in red to record them later.
+    expect(onConfirm.mock.calls[0][0]).not.toHaveProperty("supplies");
+  });
+
+  it("the calendar's charge (no supplies) never loads the inventory", () => {
+    renderModal();
+    expect(screen.queryByText("Insumos usados")).toBeNull();
+    expect(supabaseMock.queries("inventory")).toHaveLength(0);
+    expect(supabaseMock.queries("service_supplies")).toHaveLength(0);
+  });
+});

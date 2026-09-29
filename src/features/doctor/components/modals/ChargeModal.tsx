@@ -12,9 +12,19 @@ import {
   type PaymentStatus,
   type RecordPaymentInput,
 } from "../../../../lib/services/financeService";
+import type { SupplyQuantity } from "../../../../lib/services/catalogService";
+import { useSuppliesUsed } from "./useSuppliesUsed";
+import { SuppliesUsedList } from "./SuppliesUsedList";
 
 /** What the doctor answered, without saving it. */
-export type ChargeInput = Omit<RecordPaymentInput, "appointmentId">;
+export type ChargeInput = Omit<RecordPaymentInput, "appointmentId"> & {
+  /**
+   * Only with withSupplies: the supplies used (possibly none). Absent when the
+   * list could not be loaded, so the step counts as not done and the
+   * consultation shows up in the calendar to record them later.
+   */
+  supplies?: SupplyQuantity[];
+};
 
 const METHODS: PaymentMethod[] = ["cash", "card", "transfer"];
 
@@ -38,6 +48,13 @@ interface Props {
   /** The charge already recorded, when editing it. */
   existing?: Payment | null;
   confirmLabel?: string;
+  /**
+   * Also asks which supplies were used ("Finalizar Consulta"), pre-filled from
+   * the service's supplies in the catalog. Needs onConfirm.
+   */
+  withSupplies?: boolean;
+  /** Catalog service of the appointment, to pre-fill the supplies. */
+  serviceId?: string | null;
 }
 
 /**
@@ -55,6 +72,8 @@ export const ChargeModal = ({
   servicePrice,
   existing,
   confirmLabel = "Guardar cobro",
+  withSupplies = false,
+  serviceId = null,
 }: Props) => {
   const initialAmount =
     existing?.status === "paid"
@@ -75,11 +94,19 @@ export const ChargeModal = ({
   );
   const [note, setNote] = useState(existing?.note ?? "");
 
+  const supplies = useSuppliesUsed({
+    enabled: withSupplies && isOpen,
+    serviceId,
+  });
+  const areSuppliesValid =
+    !withSupplies || supplies.loadFailed || supplies.isValid;
+
   const isPaid = status === "paid";
   const parsedAmount = Number(amount);
   const isAmountValid =
     amount !== "" && Number.isFinite(parsedAmount) && parsedAmount > 0;
-  const isValid = !isPaid || (isAmountValid && method !== null);
+  const isValid =
+    (!isPaid || (isAmountValid && method !== null)) && areSuppliesValid;
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -92,6 +119,11 @@ export const ChargeModal = ({
       method: isPaid ? method : null,
       note,
     };
+    if (withSupplies) {
+      // A quantity of 0 means "not used": it is simply left out.
+      const used = supplies.toSupplies();
+      if (used !== undefined) charge.supplies = used;
+    }
 
     try {
       if (onConfirm) {
@@ -215,6 +247,14 @@ export const ChargeModal = ({
           containerClassName={`w-full ${compactLabelClasses}`}
           className={compactInputClasses}
         />
+
+        {withSupplies && (
+          <SuppliesUsedList
+            supplies={supplies}
+            labelId="charge-supplies-label"
+            loadFailedMessage="No se pudieron cargar los insumos. Puedes finalizar y registrarlos después desde la Agenda."
+          />
+        )}
 
         <div className="pt-4 mt-2 border-t border-brand-light flex gap-3 justify-end">
           <Button

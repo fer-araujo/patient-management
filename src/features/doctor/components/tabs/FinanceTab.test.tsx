@@ -33,6 +33,19 @@ const PURCHASES = [
   },
 ];
 
+const PROCEDURES = [
+  {
+    service_id: "svc-toxina", service_name: "Toxina", times: 1,
+    charged: "800.00", courtesy_value: "0.00", supplies_cost: "300.00",
+    uncosted_supplies: 0, profit: "500.00",
+  },
+  {
+    service_id: "svc-valoracion", service_name: "Valoración", times: 1,
+    charged: "0.00", courtesy_value: "900.00", supplies_cost: "120.00",
+    uncosted_supplies: 1, profit: "-120.00",
+  },
+];
+
 const renderTab = async (props: { showPatientNames?: boolean } = {}) => {
   supabaseMock.onFrom("payments", { data: PAYMENTS });
   supabaseMock.onFrom("inventory_movements", { data: PURCHASES });
@@ -41,7 +54,9 @@ const renderTab = async (props: { showPatientNames?: boolean } = {}) => {
   return { user: userEvent.setup() };
 };
 
-const cardValue = (label: string) => screen.getByText(label).nextElementSibling!;
+// Card labels are <p>; the same words also head table columns.
+const cardValue = (label: string) =>
+  screen.getByText(label, { selector: "p" }).nextElementSibling!;
 
 beforeEach(() => {
   // Only Date is faked, so userEvent and the promises keep working.
@@ -138,5 +153,99 @@ describe("FinanceTab", () => {
 
     const periodQuery = supabaseMock.queries("payments")[0];
     expect(String(periodQuery.args("select")?.[0])).not.toContain("patients");
+  });
+
+  describe("Ganancia por procedimiento", () => {
+    const profitTable = () =>
+      screen.getByText("Ganancia por procedimiento").parentElement!;
+
+    it.each([
+      ["an admin", {}],
+      ["the doctor", { showPatientNames: true }],
+    ])("shows %s one row per service with charged, courtesies, supplies and profit", async (_who, props) => {
+      supabaseMock.onRpc("get_procedure_profit", { data: PROCEDURES });
+      await renderTab(props);
+
+      const table = within(profitTable());
+      const toxina = table.getByText("Toxina").closest("tr")!;
+      expect(within(toxina).getByText(formatMXN(800))).toBeInTheDocument();
+      expect(within(toxina).getByText(formatMXN(300))).toBeInTheDocument();
+      expect(within(toxina).getByText(formatMXN(500))).toBeInTheDocument();
+
+      // Marked because one of its supplies has no registered cost.
+      const valoracion = table.getByText("Valoración *").closest("tr")!;
+      expect(within(valoracion).getByText(formatMXN(900))).toBeInTheDocument();
+      expect(within(valoracion).getByText(formatMXN(-120))).toHaveClass("text-rose-600");
+
+      const total = table.getByText("Total").closest("tr")!;
+      expect(within(total).getByText("2")).toBeInTheDocument();
+      expect(within(total).getByText(formatMXN(380))).toBeInTheDocument();
+
+      expect(
+        table.getByText("Compara lo cobrado contra el costo de los insumos usados en cada procedimiento."),
+      ).toBeInTheDocument();
+      expect(table.getByText(/Algunos insumos usados no tienen costo registrado/)).toBeInTheDocument();
+      // Same range as the cards.
+      expect(supabaseMock.lastRpc("get_procedure_profit")?.args).toEqual({
+        p_from: "2026-09-01T06:00:00.000Z",
+        p_to: "2026-10-01T06:00:00.000Z",
+      });
+      // No patient ever appears in it.
+      expect(table.queryByText(/Ana|Pérez|Eva|Ruiz/)).toBeNull();
+    });
+
+    it("keeps the cash view as is: the profit card still ignores the supplies used", async () => {
+      supabaseMock.onRpc("get_procedure_profit", { data: PROCEDURES });
+      await renderTab();
+      // 800 charged - 1200 purchased; the 420 of supplies used is not subtracted again.
+      expect(cardValue("Ganancia")).toHaveTextContent(formatMXN(-400));
+    });
+
+    it("warns how many consultations have no recorded supplies", async () => {
+      supabaseMock.onRpc("get_procedure_profit", {
+        data: [
+          { ...PROCEDURES[0], unrecorded_consultations: 2 },
+          { ...PROCEDURES[1], unrecorded_consultations: 0 },
+        ],
+      });
+      await renderTab();
+
+      expect(
+        within(profitTable()).getByText(
+          "2 consultas sin insumos registrados: la ganancia puede estar incompleta.",
+        ),
+      ).toBeInTheDocument();
+    });
+
+    it("uses the singular for one, and says nothing when all were recorded", async () => {
+      supabaseMock.onRpc("get_procedure_profit", {
+        data: [{ ...PROCEDURES[0], unrecorded_consultations: 1 }],
+      });
+      await renderTab();
+      expect(
+        screen.getByText("1 consulta sin insumos registrados: la ganancia puede estar incompleta."),
+      ).toBeInTheDocument();
+    });
+
+    it("says nothing about unrecorded supplies when every consultation has them", async () => {
+      supabaseMock.onRpc("get_procedure_profit", { data: PROCEDURES });
+      await renderTab();
+      expect(screen.queryByText(/sin insumos registrados/)).toBeNull();
+    });
+
+    it("has no missing-cost note when every supply had a cost", async () => {
+      supabaseMock.onRpc("get_procedure_profit", { data: [PROCEDURES[0]] });
+      await renderTab();
+      expect(screen.queryByText(/Algunos insumos usados no tienen costo registrado/)).toBeNull();
+    });
+
+    it("only this card shows an error when its data fails; the rest still loads", async () => {
+      vi.spyOn(console, "error").mockImplementation(() => {});
+      supabaseMock.onRpc("get_procedure_profit", { error: { message: "boom", code: "XX000" } });
+      await renderTab();
+
+      expect(within(profitTable()).getByText(/No se pudo cargar esta tabla/)).toBeInTheDocument();
+      expect(cardValue("Ingresos")).toHaveTextContent(formatMXN(800));
+    });
   });
 });

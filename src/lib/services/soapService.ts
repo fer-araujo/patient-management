@@ -317,13 +317,33 @@ export interface ConsultationCharge {
   /** Required when status is "paid"; ignored for a courtesy. */
   method?: "cash" | "card" | "transfer" | null;
   note?: string;
+  /**
+   * Supplies used in the consultation, possibly none. The server discounts
+   * them from the inventory, computes their cost (the browser never sends a
+   * cost) and marks the consultation as recorded. Absent = the supplies step
+   * was not done; "Registrar insumos" can record them later.
+   */
+  supplies?: SupplyUse[];
 }
+
+export interface SupplyUse {
+  itemId: string;
+  quantity: number;
+}
+
+/** Only item and quantity, above 0: the cost is computed on the server. */
+const toSupplyPayload = (supplies: SupplyUse[]) =>
+  supplies
+    .filter((s) => s.quantity > 0)
+    .map((s) => ({ item_id: s.itemId, quantity: s.quantity }));
 
 /**
  * "Finalizar Consulta": records the charge AND freezes the note and
  * prescription in one database transaction (finalize_consultation_with_payment,
  * migration 20). Either both happen or neither does, so a failure can simply
- * be retried.
+ * be retried. When the supplies step was done (even with none), they are
+ * discounted and the consultation is marked in that same transaction
+ * (migration 22).
  */
 export const finalizeConsultationWithPayment = async (
   appointmentId: string,
@@ -336,6 +356,11 @@ export const finalizeConsultationWithPayment = async (
     p_amount: isPaid ? charge.amount : 0,
     p_method: isPaid ? charge.method : null,
     p_note: charge.note?.trim() || null,
+    // Left out when the step was not done: the server then leaves the
+    // consultation pending instead of marking it as "used none".
+    ...(charge.supplies !== undefined && {
+      p_supplies: toSupplyPayload(charge.supplies),
+    }),
   });
   if (error) {
     // P0001 carries a Spanish message meant for the doctor; anything else is
@@ -345,6 +370,26 @@ export const finalizeConsultationWithPayment = async (
     throw new Error(
       "No se pudo finalizar la consulta. No se guardó nada; intenta de nuevo.",
     );
+  }
+};
+
+/**
+ * "Registrar insumos" for a finalized consultation whose supplies step was
+ * skipped (record_consultation_supplies, migration 22). Same checks and cost
+ * rule as "Finalizar Consulta"; refused when they were already recorded.
+ */
+export const recordConsultationSupplies = async (
+  appointmentId: string,
+  supplies: SupplyUse[],
+): Promise<void> => {
+  const { error } = await supabase.rpc("record_consultation_supplies", {
+    p_appointment_id: appointmentId,
+    p_supplies: toSupplyPayload(supplies),
+  });
+  if (error) {
+    if (error.code === "P0001") throw new Error(error.message);
+    console.error("[soapService] record_consultation_supplies failed:", error.code);
+    throw new Error("No se pudieron registrar los insumos. Intenta de nuevo.");
   }
 };
 

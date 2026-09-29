@@ -13,14 +13,17 @@ import { DataGrid, type ColumnDef } from "../../../../components/ui/DataGrid";
 import {
   getFinanceSummary,
   getPeriodRange,
+  getProcedureProfit,
   type FinanceMovement,
   type FinancePeriod,
   type FinanceSummary,
   type MonthlyFinance,
+  type ProcedureProfitSummary,
 } from "../../../../lib/services/financeService";
 import { formatMXN } from "../../../../lib/services/inventoryService";
 import { FinanceChart } from "./FinanceChart";
 import { FinanceTable } from "./FinanceTable";
+import { ProcedureProfitTable } from "./ProcedureProfitTable";
 
 type ChartView = "chart" | "table";
 
@@ -60,6 +63,8 @@ export const FinanceTab = ({ showPatientNames = false }: FinanceTabProps) => {
   const [period, setPeriod] = useState<FinancePeriod>("this_month");
   const [summary, setSummary] = useState<FinanceSummary | null>(null);
   const [monthly, setMonthly] = useState<MonthlyFinance[]>([]);
+  const [procedureProfit, setProcedureProfit] =
+    useState<ProcedureProfitSummary | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [view, setView] = useState<ChartView>("chart");
 
@@ -78,11 +83,20 @@ export const FinanceTab = ({ showPatientNames = false }: FinanceTabProps) => {
       chartFrom === range.from
         ? null
         : getFinanceSummary(chartFrom, range.to),
+      // Its own failure only empties its card; the cash view still loads.
+      getProcedureProfit(range.from, range.to).catch((error: unknown) => {
+        console.error(
+          "[FinanceTab] Error al cargar la ganancia por procedimiento:",
+          error,
+        );
+        return null;
+      }),
     ])
-      .then(([periodSummary, chartSummary]) => {
+      .then(([periodSummary, chartSummary, profit]) => {
         if (cancelled) return;
         setSummary(periodSummary);
         setMonthly((chartSummary ?? periodSummary).monthly);
+        setProcedureProfit(profit);
       })
       .catch((error: unknown) => {
         if (cancelled) return;
@@ -289,6 +303,37 @@ export const FinanceTab = ({ showPatientNames = false }: FinanceTabProps) => {
           <FinanceChart data={monthly} />
         ) : (
           <FinanceTable data={monthly} />
+        )}
+      </div>
+
+      <div className="bg-white border border-slate-200 rounded-3xl p-6 shadow-[0_8px_30px_rgb(0,0,0,0.04)] space-y-4">
+        <p className="text-sm font-bold text-brand-gray uppercase tracking-wider">
+          Ganancia por procedimiento
+        </p>
+        {procedureProfit ? (
+          <ProcedureProfitTable summary={procedureProfit} />
+        ) : (
+          <p className="text-xs text-brand-gray">
+            No se pudo cargar esta tabla. Intenta de nuevo más tarde.
+          </p>
+        )}
+        <p className="text-xs text-brand-gray">
+          Compara lo cobrado contra el costo de los insumos usados en cada
+          procedimiento.
+        </p>
+        {procedureProfit && procedureProfit.total.unrecordedConsultations > 0 && (
+          <p className="text-xs font-semibold text-rose-600">
+            {procedureProfit.total.unrecordedConsultations === 1
+              ? "1 consulta sin insumos registrados"
+              : `${procedureProfit.total.unrecordedConsultations} consultas sin insumos registrados`}
+            : la ganancia puede estar incompleta.
+          </p>
+        )}
+        {procedureProfit?.hasUncostedSupplies && (
+          <p className="text-xs text-brand-gray">
+            * Algunos insumos usados no tienen costo registrado (no hay compras
+            de ellos), así que ese costo no se restó.
+          </p>
         )}
       </div>
 

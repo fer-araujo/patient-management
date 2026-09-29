@@ -53,6 +53,23 @@ export const getServiceColors = (service: string, isPast: boolean): string => {
   return isPast ? `${colors} opacity-60` : colors;
 };
 
+/** Same rose palette as the other warnings in the app. */
+export const SUPPLIES_PENDING_COLORS = "bg-rose-50 border-rose-200 text-rose-600";
+
+/**
+ * Card colors of an appointment: faded red when it was finalized without its
+ * supplies ("Registrar insumos"), otherwise the service color.
+ */
+export const getAppointmentColors = (
+  app: { service: string; suppliesPending?: boolean },
+  isPast: boolean,
+): string => {
+  if (!app.suppliesPending) return getServiceColors(app.service, isPast);
+  return isPast
+    ? `${SUPPLIES_PENDING_COLORS} opacity-60`
+    : SUPPLIES_PENDING_COLORS;
+};
+
 /**
  * Whether a slot starting at `hour24:minutes` clinic time on the calendar date
  * of `dateObj` (its local date components) has already started, to the

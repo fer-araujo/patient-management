@@ -38,6 +38,45 @@ describe("fetchDoctorAppointments", () => {
   });
 });
 
+describe("fetchDoctorAppointments suppliesPending", () => {
+  const row = (id: string, over: Record<string, unknown>) => ({
+    id,
+    start_time: "2026-10-16T14:00:00.000Z",
+    status: "completed",
+    patient_id: "p-rosa",
+    service_id: "svc-relleno",
+    reason: null,
+    patients: { first_name: "Rosa", last_name: "Ruiz", phone: "+528100000000", status: "active" },
+    services: { name: "Relleno", duration_mins: 30, price: 500, service_supplies: [{ item_id: "item-s" }] },
+    clinical_notes: [{ finalized_at: "2026-10-16T15:00:00Z", supplies_recorded_at: null }],
+    ...over,
+  });
+
+  it("flags only finalized consultations of a service with supplies whose supplies were never recorded", async () => {
+    supabaseMock.onFrom("appointments", {
+      data: [
+        row("pending-supplies", {}),
+        row("recorded", {
+          clinical_notes: [{ finalized_at: "2026-10-16T15:00:00Z", supplies_recorded_at: "2026-10-16T15:00:00Z" }],
+        }),
+        row("draft-only", { clinical_notes: [{ finalized_at: null, supplies_recorded_at: null }] }),
+        row("no-supplies-configured", {
+          services: { name: "Valoración", duration_mins: 30, price: 500, service_supplies: [] },
+        }),
+        row("cancelled", { status: "cancelled" }),
+      ],
+    });
+
+    const list = await fetchDoctorAppointments();
+
+    expect(list.filter((a) => a.suppliesPending).map((a) => a.id)).toEqual(["pending-supplies"]);
+    expect(list[0].serviceId).toBe("svc-relleno");
+    const select = String(supabaseMock.queries("appointments")[0].args("select")?.[0]);
+    expect(select).toContain("clinical_notes ( finalized_at, supplies_recorded_at )");
+    expect(select).toContain("service_supplies ( item_id )");
+  });
+});
+
 describe("createAppointment", () => {
   it("books through staff_create_appointment with the service id and the UTC start", async () => {
     supabaseMock.onFrom("services", { data: { id: "srv-toxina" } });

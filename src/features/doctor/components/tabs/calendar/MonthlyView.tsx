@@ -3,8 +3,9 @@ import type { DashboardAppointment } from "../../../../../lib/services/clinicSer
 import type { DashboardBlockedSlot } from "../../../../../lib/services/blockedSlotsService";
 import type { WeeklySchedule } from "../../../../../lib/services/settingsService";
 import { useCalendar } from "../../../hooks/useCalendar";
-import { getServiceColors } from "../../../utils/calendarUtils";
+import { getAppointmentColors } from "../../../utils/calendarUtils";
 import { PendingBadge } from "./PendingBadge";
+import { SuppliesPendingBadge } from "./SuppliesPendingBadge";
 
 const DAYS_OF_WEEK = ["Dom", "Lun", "Mar", "Mié", "Jue", "Vie", "Sáb"];
 
@@ -156,11 +157,16 @@ export const MonthlyView = ({
                           onAppointmentClick(app);
                         }}
                         className={`text-[10px] font-bold px-1.5 py-1 rounded truncate transition-all cursor-pointer border
-                          ${getServiceColors(app.service, isPast)} ${!isPast && "hover:shadow-sm hover:scale-[1.02]"}`}
+                          ${getAppointmentColors(app, isPast)} ${!isPast && "hover:shadow-sm hover:scale-[1.02]"}`}
                       >
                         {app.status === "pending" && (
                           <span className="mr-1 inline-block align-middle">
                             <PendingBadge />
+                          </span>
+                        )}
+                        {app.suppliesPending && (
+                          <span className="mr-1 inline-block align-middle">
+                            <SuppliesPendingBadge />
                           </span>
                         )}
                         {app.time} - {app.patientName.split(" ")[0]}

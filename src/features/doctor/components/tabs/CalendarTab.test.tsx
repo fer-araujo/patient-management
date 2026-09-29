@@ -328,3 +328,122 @@ describe("CalendarTab blocked slots", () => {
     expect(screen.getByRole("button", { name: "17" })).toBeDisabled();
   });
 });
+
+describe("CalendarTab consultations without recorded supplies", () => {
+  // Thursday 15 Oct 2026 has passed: both consultations were finalized.
+  const pending = appt({
+    status: "completed",
+    serviceId: "svc-relleno",
+    service: "Relleno",
+    suppliesPending: true,
+  });
+  const recorded = appt({
+    id: "a-luis",
+    patientId: "p-luis",
+    patientName: "Luis Gómez",
+    time: "12:00 PM",
+    status: "completed",
+    suppliesPending: false,
+  });
+
+  const stubSupplies = () => {
+    supabaseMock.onFrom("inventory", {
+      data: [
+        {
+          id: "item-s", name: "Sculptra", category: "Medicamentos", stock_quantity: 3,
+          min_alert_level: 1, unit_measure: "viales", last_restock_date: "2026-09-01", is_active: true,
+        },
+      ],
+    });
+    supabaseMock.onFrom("service_supplies", {
+      data: [{ item_id: "item-s", quantity: 1, inventory: { name: "Sculptra", unit_measure: "viales" } }],
+    });
+  };
+
+  const cardOf = (name: string) => screen.getByText(name).closest("div.cursor-pointer")!;
+
+  it("shows finalized consultations, in faded red only when their supplies are missing", async () => {
+    setNow(new Date(2026, 9, 16, 12, 0));
+    const { user } = renderTab([pending, recorded]);
+
+    // Completed consultations are visible again, with their usual style...
+    expect(cardOf("Luis Gómez")).not.toHaveClass("bg-rose-50");
+    expect(cardOf("Luis Gómez")).toHaveClass("opacity-60");
+    // ...and the one without supplies in the rose warning palette.
+    expect(cardOf("Ana Pérez")).toHaveClass("bg-rose-50", "border-rose-200", "text-rose-600", "opacity-60");
+    expect(within(cardOf("Ana Pérez") as HTMLElement).getByText("Sin insumos")).toBeInTheDocument();
+    expect(screen.getAllByText("Sin insumos")).toHaveLength(1);
+    expect(screen.getByText("En rojo: consultas sin insumos registrados.")).toBeInTheDocument();
+
+    await openMonth(user);
+    expect(screen.getByText(/10:00 AM - Ana/).className).toContain("bg-rose-50");
+    expect(screen.getByText(/12:00 PM - Luis/).className).not.toContain("bg-rose-50");
+  });
+
+  it("a recorded consultation offers no \"Registrar insumos\" and can no longer be cancelled or started", async () => {
+    setNow(new Date(2026, 9, 16, 12, 0));
+    const { user } = renderTab([pending, recorded]);
+
+    await user.click(screen.getByText("Luis Gómez"));
+    await screen.findByText("Detalles de la Cita");
+
+    expect(screen.queryByRole("button", { name: "Registrar insumos" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Cancelar Cita" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Iniciar" })).toBeNull();
+  });
+
+  it('"Registrar insumos" opens the supplies list pre-filled from the service and records it', async () => {
+    setNow(new Date(2026, 9, 16, 12, 0));
+    stubSupplies();
+    const { user, onDataChange } = renderTab([pending, recorded]);
+
+    await user.click(screen.getByText("Ana Pérez"));
+    expect(await screen.findByText("Sin insumos registrados")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Registrar insumos" }));
+
+    expect(await screen.findByLabelText("Cantidad de Sculptra")).toHaveValue(1);
+    expect(screen.getByText("En inventario: 3")).toBeInTheDocument();
+    expect(supabaseMock.queries("service_supplies")[0].args("eq")).toEqual(["service_id", "svc-relleno"]);
+
+    // The same stock check as at checkout.
+    await user.clear(screen.getByLabelText("Cantidad de Sculptra"));
+    await user.type(screen.getByLabelText("Cantidad de Sculptra"), "4");
+    expect(screen.getByText("Solo hay 3 en inventario")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /Guardar insumos/ })).toBeDisabled();
+    await user.clear(screen.getByLabelText("Cantidad de Sculptra"));
+    await user.type(screen.getByLabelText("Cantidad de Sculptra"), "2");
+
+    await user.click(screen.getByRole("button", { name: /Guardar insumos/ }));
+
+    await waitFor(() => expect(onDataChange).toHaveBeenCalledTimes(1));
+    expect(supabaseMock.rpcCalls("record_consultation_supplies")).toEqual([
+      {
+        name: "record_consultation_supplies",
+        args: { p_appointment_id: "a-ana", p_supplies: [{ item_id: "item-s", quantity: 2 }] },
+      },
+    ]);
+    await waitFor(() => expect(screen.queryByLabelText("Cantidad de Sculptra")).toBeNull());
+  });
+
+  it("shows the refusal when the supplies were already recorded, and stays open", async () => {
+    setNow(new Date(2026, 9, 16, 12, 0));
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    const toastError = vi.spyOn(toast, "error");
+    stubSupplies();
+    supabaseMock.onRpc("record_consultation_supplies", {
+      error: { code: "P0001", message: "Los insumos de esta consulta ya estaban registrados." },
+    });
+    const { user, onDataChange } = renderTab([pending]);
+
+    await user.click(screen.getByText("Ana Pérez"));
+    await user.click(await screen.findByRole("button", { name: "Registrar insumos" }));
+    await screen.findByLabelText("Cantidad de Sculptra");
+    await user.click(screen.getByRole("button", { name: /Guardar insumos/ }));
+
+    await waitFor(() =>
+      expect(toastError).toHaveBeenCalledWith("Los insumos de esta consulta ya estaban registrados."),
+    );
+    expect(onDataChange).not.toHaveBeenCalled();
+    expect(screen.getByLabelText("Cantidad de Sculptra")).toBeInTheDocument();
+  });
+});
