@@ -1306,3 +1306,59 @@ refused while a rename still works; a purchase of 4 for $100 stamps
 `last_restock_date` and records unit cost 25.00; staff cannot insert, update or
 delete movements directly; the ledger sums to the stock; `anon` cannot call
 `adjust_stock()`.
+
+---
+
+# Phase 5 — Finances
+
+## Migration 17 — Consultation payments
+
+**File:** `supabase/migrations/20260922181600_payments.sql`. Idempotent; paste
+it into the SQL editor after migration 16.
+
+- Expected: one notice starting with `Migration 17 PASSED`.
+- A failure raises `Migration 17 FAILED: …` naming the broken rule.
+
+What it adds:
+
+- Table `public.payments`: one row per appointment (`appointment_id` is
+  unique). `status` is `paid` (amount > 0 and a method: `cash`, `card` or
+  `transfer`) or `courtesy` (amount 0, no method). Table checks enforce this
+  even for the table owner. Foreign keys are `ON DELETE RESTRICT`, so a charge
+  never disappears with its appointment, patient or service.
+- RLS: staff can `SELECT`; nobody can `INSERT/UPDATE/DELETE` through the API.
+  Patients and `anon` read nothing.
+- RPC `record_payment(appointment, status, amount, method, note)`: staff only,
+  `SECURITY DEFINER` with a pinned `search_path`. It upserts by appointment,
+  so "Editar cobro" corrects the same row, and fills `patient_id`,
+  `service_id` and `list_price` (the service price when the charge was first
+  recorded) on the server. It refuses cancelled or rejected appointments.
+- The existing `audit_row_change` trigger is attached to `payments`: every
+  charge and correction appears in the Bitácora ("un cobro"), with column
+  names only, never amounts.
+
+**Deploy order:** run the migration BEFORE deploying the frontend. The new
+"Finalizar Consulta" flow records the charge first and does not finalize if
+`record_payment()` is missing.
+
+**Rollback:** `drop function public.record_payment(uuid, text, numeric, text, text);`
+disables charging (and therefore "Finalizar Consulta" in the new frontend).
+Keep the table: it holds the income history.
+
+## Finance check — `supabase/tests/finance_check.sql`
+
+**Run:** paste the whole file into the SQL editor after migration 17. It runs
+inside `begin; … rollback;` with throwaway staff and patient users, a patient,
+a service and two appointments, and disables the `whatsapp_notifications`
+trigger inside the transaction, so nothing is committed or sent.
+
+- Expected: one notice starting with `FINANCE CHECK PASSED`.
+- A failure raises `FINANCE CHECK FAILED: …` naming the broken rule.
+
+It proves: staff record a paid charge and the server fills patient, service
+and list price; a second call corrects the same row and keeps the original
+list price; a courtesy is stored as 0 with no method; a paid charge of 0 or
+without a method is refused; staff cannot insert or delete payments directly;
+every write is audited; a patient reads zero payments and cannot call
+`record_payment()`; `anon` reads nothing and cannot call it; the table rejects
+inconsistent rows and a second payment for the same appointment.

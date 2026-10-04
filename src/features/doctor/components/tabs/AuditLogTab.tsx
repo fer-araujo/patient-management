@@ -19,6 +19,7 @@ const TABLE_LABELS: Record<string, string> = {
   clinical_note_addenda: "una adenda",
   consents: "un consentimiento",
   arco_requests: "una solicitud ARCO",
+  payments: "un cobro",
 };
 
 const ACTION_LABELS: Record<string, string> = {

@@ -50,6 +50,7 @@ import {
 } from "../../../lib/files/clinicalUploadRules";
 import { PrescriptionDisclaimer } from "../../../components/legal/PrescriptionDisclaimer";
 import { NoteAddenda } from "./NoteAddenda";
+import { ChargeModal } from "./modals/ChargeModal";
 
 interface ConsultationWorkspaceProps {
   appointment?: DashboardAppointment;
@@ -116,6 +117,7 @@ export const ConsultationWorkspace = ({
   const [photoViewerIndex, setPhotoViewerIndex] = useState<number | null>(null);
 
   const [isSaving, setIsSaving] = useState(false);
+  const [isChargeOpen, setIsChargeOpen] = useState(false);
 
   //ESTADO PARA EL ZOOM
   const [zoomLevel, setZoomLevel] = useState(100);
@@ -219,7 +221,15 @@ export const ConsultationWorkspace = ({
     }
   };
 
-  const handleFinishClick = () => saveConsultation(true);
+  // A live consultation first asks whether it was charged; the payment is
+  // recorded before anything is finalized, and a failed payment stops here.
+  const handleFinishClick = () => {
+    if (isReviewMode || !appointment) {
+      saveConsultation(true);
+      return;
+    }
+    setIsChargeOpen(true);
+  };
   const handleBackClick = () => saveConsultation(false);
 
   const handleAddPrescription = () => {
@@ -880,6 +890,22 @@ export const ConsultationWorkspace = ({
           </div>
         </div>
       </div>
+
+      {appointment && (
+        <ChargeModal
+          key={appointment.id}
+          isOpen={isChargeOpen}
+          onClose={() => setIsChargeOpen(false)}
+          onSaved={() => {
+            setIsChargeOpen(false);
+            saveConsultation(true);
+          }}
+          appointmentId={appointment.id}
+          subtitle={`${targetName} · ${appointment.service}`}
+          servicePrice={appointment.servicePrice}
+          confirmLabel="Guardar y finalizar"
+        />
+      )}
 
       <Modal
         isOpen={isPrescriptionModalOpen}

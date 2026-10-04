@@ -1,4 +1,4 @@
-import { useState, useMemo, useEffect } from "react";
+import { useState, useMemo, useEffect, useRef } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import {
   ChevronLeft,
@@ -31,6 +31,12 @@ import {
   updateClinicSettings,
   type WeeklySchedule,
 } from "../../../../lib/services/settingsService";
+import {
+  fetchPayment,
+  type Payment,
+} from "../../../../lib/services/financeService";
+import { formatMXN } from "../../../../lib/services/inventoryService";
+import { ChargeModal } from "../modals/ChargeModal";
 import { useCalendar } from "../../hooks/useCalendar";
 import { WeeklyView } from "./calendar/WeeklyView";
 import { DailyView } from "./calendar/DailyView";
@@ -144,6 +150,33 @@ export const CalendarTab = ({
 
   const [selectedAppointment, setSelectedAppointment] =
     useState<DashboardAppointment | null>(null);
+  // undefined while loading, null when nothing was charged yet.
+  const [selectedPayment, setSelectedPayment] = useState<
+    Payment | null | undefined
+  >(undefined);
+  const paymentRequestRef = useRef<string | null>(null);
+  const [chargeTarget, setChargeTarget] = useState<{
+    appointment: DashboardAppointment;
+    payment: Payment | null;
+  } | null>(null);
+
+  const openAppointment = (appointment: DashboardAppointment) => {
+    setSelectedAppointment(appointment);
+    setSelectedPayment(undefined);
+    paymentRequestRef.current = appointment.id;
+    fetchPayment(appointment.id)
+      .then((payment) => {
+        if (paymentRequestRef.current === appointment.id) {
+          setSelectedPayment(payment);
+        }
+      })
+      .catch((err: unknown) => {
+        console.error("Error al cargar el cobro:", err);
+        if (paymentRequestRef.current === appointment.id) {
+          setSelectedPayment(null);
+        }
+      });
+  };
 
   const [isCancelingAppt, setIsCancelingAppt] = useState(false);
   const [cancelReason, setCancelReason] = useState("");
@@ -452,7 +485,7 @@ export const CalendarTab = ({
             <DailyView
               appointments={confirmedAppointments}
               blockedSlots={blockedSlots}
-              onAppointmentClick={setSelectedAppointment}
+              onAppointmentClick={openAppointment}
               onBlockClick={setSelectedBlock}
               onEmptySlotClick={handleOpenActionModal}
             />
@@ -468,7 +501,7 @@ export const CalendarTab = ({
             <WeeklyView
               appointments={confirmedAppointments}
               blockedSlots={blockedSlots}
-              onAppointmentClick={setSelectedAppointment}
+              onAppointmentClick={openAppointment}
               onBlockClick={setSelectedBlock}
               onEmptySlotClick={handleOpenActionModal}
             />
@@ -484,7 +517,7 @@ export const CalendarTab = ({
             <MonthlyView
               appointments={confirmedAppointments}
               blockedSlots={blockedSlots}
-              onAppointmentClick={setSelectedAppointment}
+              onAppointmentClick={openAppointment}
               onBlockClick={setSelectedBlock}
               onEmptySlotClick={handleOpenActionModal}
             />
@@ -556,6 +589,32 @@ export const CalendarTab = ({
                     <p className="font-bold text-brand-primary">
                       {selectedAppointment.service}
                     </p>
+                    <div className="flex items-center justify-between gap-2">
+                      <p className="text-sm font-medium text-slate-500">
+                        {selectedPayment === undefined
+                          ? "Cargando cobro..."
+                          : selectedPayment === null
+                            ? "Sin cobro registrado"
+                            : selectedPayment.status === "courtesy"
+                              ? "Cortesía"
+                              : `Cobrado: ${formatMXN(selectedPayment.amountCharged)}`}
+                      </p>
+                      {selectedPayment !== undefined && (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setChargeTarget({
+                              appointment: selectedAppointment,
+                              payment: selectedPayment,
+                            });
+                            setSelectedAppointment(null);
+                          }}
+                          className="text-sm font-bold text-brand-primary hover:underline cursor-pointer shrink-0"
+                        >
+                          {selectedPayment ? "Editar" : "Registrar"}
+                        </button>
+                      )}
+                    </div>
                   </div>
                 </div>
                 <div className="pt-4 flex flex-wrap sm:flex-nowrap gap-3 bg-white -mx-6 -mb-6 p-6 border-t border-slate-200">
@@ -705,6 +764,19 @@ export const CalendarTab = ({
           </div>
         )}
       </Modal>
+
+      {chargeTarget && (
+        <ChargeModal
+          key={`charge-${chargeTarget.appointment.id}`}
+          isOpen={true}
+          onClose={() => setChargeTarget(null)}
+          onSaved={() => setChargeTarget(null)}
+          appointmentId={chargeTarget.appointment.id}
+          subtitle={`${chargeTarget.appointment.patientName} · ${chargeTarget.appointment.service}`}
+          servicePrice={chargeTarget.appointment.servicePrice}
+          existing={chargeTarget.payment}
+        />
+      )}
 
       <Modal
         isOpen={!!actionModal}
