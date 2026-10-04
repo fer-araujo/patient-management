@@ -31,6 +31,8 @@ export interface InventoryMovement {
   note: string | null;
   created_by: string | null;
   created_at: string;
+  /** Consultation a 'use' was recorded for (migration 22); null for manual movements. */
+  appointment_id?: string | null;
 }
 
 /**

@@ -11,6 +11,7 @@ import {
 import toast from "react-hot-toast";
 import {
   fetchAllServices,
+  formatSupplies,
   toggleServiceStatus,
   type ClinicService,
 } from "../../../../lib/services/catalogService";
@@ -91,7 +92,7 @@ export const CatalogTab = () => {
       header: "Tratamiento",
       accessorKey: "name",
       sortable: true,
-      className: "w-[30%]",
+      className: "w-[25%]",
       cell: (row) => (
         <div
           className={`flex flex-col items-start ${!row.isActive && "opacity-50"}`}
@@ -110,7 +111,7 @@ export const CatalogTab = () => {
     {
       header: "Descripción",
       accessorKey: "description",
-      className: "w-[40%]",
+      className: "w-[30%]",
       cell: (row) => (
         <span
           className={`text-sm font-medium ${row.isActive ? "text-brand-gray" : "text-slate-400"}`}
@@ -137,6 +138,17 @@ export const CatalogTab = () => {
             {row.price ? `$${row.price}` : "Variable"}
           </div>
         </div>
+      ),
+    },
+    {
+      header: "Insumos",
+      className: "w-[15%]",
+      cell: (row) => (
+        <span
+          className={`text-sm font-medium ${row.isActive ? "text-brand-gray" : "text-slate-400"}`}
+        >
+          {formatSupplies(row.supplies)}
+        </span>
       ),
     },
     {

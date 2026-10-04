@@ -38,6 +38,7 @@ import {
 } from "../../../../lib/services/financeService";
 import { formatMXN } from "../../../../lib/services/inventoryService";
 import { ChargeModal } from "../modals/ChargeModal";
+import { RecordSuppliesModal } from "../modals/RecordSuppliesModal";
 import { useCalendar } from "../../hooks/useCalendar";
 import { WeeklyView } from "./calendar/WeeklyView";
 import { DailyView } from "./calendar/DailyView";
@@ -80,11 +81,16 @@ export const CalendarTab = ({
     setWorkingSchedule,
   } = useCalendar();
 
-  // Pending appointments (e.g. just rescheduled) stay visible: they hold their slot.
+  // Pending appointments (e.g. just rescheduled) stay visible: they hold their
+  // slot. Completed consultations stay visible too, so one finalized without
+  // its supplies can be found (in red) and completed.
   const calendarAppointments = useMemo(
     () =>
       appointments.filter(
-        (app) => app.status === "confirmed" || app.status === "pending",
+        (app) =>
+          app.status === "confirmed" ||
+          app.status === "pending" ||
+          app.status === "completed",
       ),
     [appointments],
   );
@@ -176,6 +182,8 @@ export const CalendarTab = ({
     appointment: DashboardAppointment;
     payment: Payment | null;
   } | null>(null);
+  const [suppliesTarget, setSuppliesTarget] =
+    useState<DashboardAppointment | null>(null);
 
   const openAppointment = (appointment: DashboardAppointment) => {
     setSelectedAppointment(appointment);
@@ -605,6 +613,14 @@ export const CalendarTab = ({
         )}
       </AnimatePresence>
 
+      <p className="text-xs text-brand-gray flex items-center gap-2">
+        <span
+          aria-hidden="true"
+          className="w-3 h-3 rounded border bg-rose-50 border-rose-200 shrink-0"
+        />
+        En rojo: consultas sin insumos registrados.
+      </p>
+
       <Modal
         isOpen={!!selectedAppointment}
         onClose={() => {
@@ -695,8 +711,27 @@ export const CalendarTab = ({
                         </button>
                       )}
                     </div>
+                    {selectedAppointment.suppliesPending && (
+                      <div className="flex items-center justify-between gap-2">
+                        <p className="text-sm font-medium text-rose-600">
+                          Sin insumos registrados
+                        </p>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setSuppliesTarget(selectedAppointment);
+                            setSelectedAppointment(null);
+                          }}
+                          className="text-sm font-bold text-brand-primary hover:underline cursor-pointer shrink-0"
+                        >
+                          Registrar insumos
+                        </button>
+                      </div>
+                    )}
                   </div>
                 </div>
+                {/* A finalized consultation cannot be cancelled, moved or started again. */}
+                {selectedAppointment.status !== "completed" && (
                 <div className="pt-4 flex flex-wrap sm:flex-nowrap gap-3 bg-white -mx-6 -mb-6 p-6 border-t border-slate-200">
                   <Button
                     variant="outline"
@@ -729,6 +764,7 @@ export const CalendarTab = ({
                     Iniciar
                   </Button>
                 </div>
+                )}
               </>
             ) : isCancelingAppt ? (
               <motion.div
@@ -847,6 +883,22 @@ export const CalendarTab = ({
           </div>
         )}
       </Modal>
+
+      {suppliesTarget && (
+        <RecordSuppliesModal
+          key={`supplies-${suppliesTarget.id}`}
+          isOpen={true}
+          onClose={() => setSuppliesTarget(null)}
+          onSaved={() => {
+            setSuppliesTarget(null);
+            // Reloads the calendar so the appointment is no longer red.
+            void onDataChange();
+          }}
+          appointmentId={suppliesTarget.id}
+          serviceId={suppliesTarget.serviceId}
+          subtitle={`${suppliesTarget.patientName} · ${suppliesTarget.service}`}
+        />
+      )}
 
       {chargeTarget && (
         <ChargeModal

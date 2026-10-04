@@ -1525,3 +1525,151 @@ charge is refused, and stores both on a corrected retry; `prognosis` and
 values and unknown keys; the doctor reads the author's name; a patient cannot
 change their own clinical history or address, and their export carries the
 address and the antecedentes but no internal notes and no SOAP notes.
+
+---
+
+# Supplies per service and profit per procedure
+
+## Migration 22 — Supplies per service, supplies used, profit per procedure
+
+**File:** `supabase/migrations/20260928110000_service_supplies.sql`.
+Idempotent; paste it into the SQL editor after migration 21
+(`20260928100000_block_archived_booking.sql`).
+
+- Expected: one notice starting with `Migration 22 PASSED`.
+- `Migration 22 ABORTED: … movement(s) that are not purchases carry a cost`
+  means nothing changed: those rows cannot come from `adjust_stock()`; review
+  them, then run it again.
+- A failure raises `Migration 22 FAILED: …` naming the broken rule.
+
+What it adds:
+
+- Table `public.service_supplies` (`service_id`, `item_id`, `quantity > 0`,
+  unique per service and item, foreign keys to `services` and `inventory`).
+  RLS policy `service_supplies_business_all`: doctor and admin read and write
+  it (`is_business_staff()`); `anon` has no privilege at all. Every change is
+  written to the Bitácora by `audit_row_change` ("los insumos de un
+  tratamiento"), column names only.
+- RPC `set_service_supplies(service, supplies)`: business staff only. Saves the
+  whole "Insumos que usa" list of one service in one call (adds, changes,
+  removes; unchanged lines are not rewritten).
+- `inventory_movements.appointment_id` (nullable, `ON DELETE RESTRICT`): the
+  consultation a `use` was recorded for.
+- `inventory_movements_cost_check` still requires a cost on purchases and
+  refuses it on manual uses and adjustments; only a `use` linked to a
+  consultation may carry a cost, and that cost is computed by the server.
+  `inventory_movements_appointment_check` allows `appointment_id` only on a
+  `use` that removes stock.
+- Internal helper `apply_stock_movement()` (no grant to any API role): the
+  body of `adjust_stock()` that changes stock, moved as-is (ledger flag,
+  single atomic UPDATE, no negative stock, no archived items, same messages).
+  `adjust_stock()` keeps its signature, permission check and validation and
+  now calls it, so stock still changes in exactly one place and the ledger
+  still sums to the stock.
+- `clinical_notes.supplies_recorded_at` (nullable): set when the supplies of
+  a consultation are confirmed, also with an EMPTY list ("used none"). Null
+  on a finalized note = the consultation was closed without that step (for
+  example the inventory did not load). It is on the note, not on the
+  appointment, because every UPDATE of `appointments` fires the WhatsApp
+  webhook (a confirmed appointment would get "CONFIRMADA" again). Trigger
+  `clinical_notes_guard_supplies_marker` refuses any direct change (42501);
+  only the supplies RPCs write it.
+- **Old data:** the column is created with the migration time as a stored
+  default, so every existing note is marked WITHOUT an UPDATE (no Bitácora
+  entry per note, no trigger), then the default is dropped and only open
+  drafts are reset to null. Consultations finalized before this migration
+  therefore never turn red. This runs only when the column is created, so a
+  re-run never marks newer pending consultations.
+- Internal helper `record_supplies_used()` (no grant to any API role) is the
+  supplies step: it locks the consultation, refuses it when the supplies
+  were already recorded ("Los insumos de esta consulta ya estaban
+  registrados."), records one `use` per supply linked to the appointment with
+  `unit_cost`/`total_cost` = the weighted average of that item's purchases
+  (null when the item was never purchased), and stamps the marker. Any other
+  key in a supply (for example a cost) is refused.
+- `finalize_consultation_with_payment()` re-created from migration 20 (body
+  copied verbatim) with a new last parameter `p_supplies jsonb DEFAULT NULL`
+  (`[{"item_id": …, "quantity": …}]`). A list, even empty, runs the supplies
+  step in the same transaction as the note and the charge; null (what a
+  5-argument call sends) leaves the consultation pending. Not enough stock
+  ("Solo hay N de … en inventario."), an archived item or a bad list aborts
+  everything: no frozen note, no payment, no movement, no marker. The old
+  5-argument overload is dropped; a call with 5 arguments reaches the new
+  function through the default.
+- RPC `record_consultation_supplies(appointment, supplies)`: doctor only
+  (`is_staff()`). "Registrar insumos" in the calendar: only for a finalized
+  consultation whose supplies were never recorded, through the same
+  `record_supplies_used()`. A second call is refused.
+- RPC `get_procedure_profit(from, to)`: business staff only. One row per
+  service for the payments recorded in the range: times, charged, value of
+  courtesies, cost of the supplies used on those consultations, supplies with
+  no registered cost, charged minus supplies, and how many consultations of
+  a service with supplies configured never had their supplies recorded
+  (Finanzas warns that the profit may be incomplete). No patient data, so the
+  admin sees it too. The cash view (income − purchases) is unchanged; uses are
+  never counted as spending.
+
+**Deploy order:** run the migration BEFORE deploying the frontend. The new
+Catálogo saves supplies through `set_service_supplies()`, "Finalizar
+Consulta" sends `p_supplies` whenever the supplies step was shown, the
+calendar reads `clinical_notes.supplies_recorded_at` and calls
+`record_consultation_supplies()`, and Finanzas calls
+`get_procedure_profit()` (its table shows an error while the function is
+missing; the rest of Finanzas keeps working).
+
+**Re-running older files:** migration 18's gate whitelists every user of
+`is_business_staff()` as of migration 18, so re-running 18 after this file
+reports `service_supplies_business_all`, `set_service_supplies()` and
+`get_procedure_profit()`. Re-running 16, 18 or 20 would also bring back the
+older `adjust_stock()` or the 5-argument finalize overload; run this file
+again afterwards (the old-data marking does not run again).
+
+**Rollback:**
+
+```sql
+drop function public.get_procedure_profit(timestamptz, timestamptz);
+drop function public.set_service_supplies(uuid, jsonb);
+drop function public.record_consultation_supplies(uuid, jsonb);
+drop function public.finalize_consultation_with_payment(uuid, text, numeric, text, text, jsonb);
+drop function public.record_supplies_used(uuid, jsonb);
+```
+
+then re-run migration 20 (restores the 5-argument finalize). `adjust_stock()`
+and `apply_stock_movement()` can stay: together they behave exactly like the
+migration 18 `adjust_stock()`. Keep `service_supplies` and
+`inventory_movements.appointment_id` and `clinical_notes.supplies_recorded_at`:
+they hold catalog data and the history of what was used.
+
+## Service supplies check — `supabase/tests/service_supplies_check.sql`
+
+**Run:** paste the whole file into the SQL editor after migration 22. It runs
+inside `begin; … rollback;` with throwaway doctor and admin users, a patient,
+two services, two items and six appointments, and disables the
+`whatsapp_notifications` and `appointments_prevent_overlap` triggers inside
+the transaction, so nothing is committed or sent.
+
+- Expected: one notice starting with `SUPPLIES CHECK PASSED`.
+- A failure raises `SUPPLIES CHECK FAILED: …` naming the broken rule.
+
+It proves: `set_service_supplies()` saves, changes, merges and removes lines
+and refuses a quantity of 0 or a cost; finalizing with supplies lowers the
+stock and stores the server's average cost (600.00 from purchases of 1000 and
+1400 for 4 units), a never-purchased item is stored with no cost, and a later
+purchase does not change a past snapshot; using 5 of 4 units rolls back the
+note, the payment, every movement and every stock change; a supply carrying
+`unit_cost`/`total_cost`, a manual `use` with a cost and a direct movement
+insert are all refused; supplies of a consultation cannot be discounted
+twice; finalizing with supplies or with an EMPTY list marks the consultation,
+and a finalize without the step leaves it unmarked;
+`record_consultation_supplies()` refuses a consultation that is not
+finalized, works once (stock down, cost snapshot 660.00, marker set) and
+refuses a second call; the doctor cannot change the marker directly; the
+admin reads and writes `service_supplies` and reads the profit per procedure
+but reads no appointment, patient or clinical note and cannot finalize or
+record supplies; `get_procedure_profit()` counts the consultation without
+recorded supplies, then returns the expected times, charged, courtesies,
+supplies, uncosted supplies, profit and 0 unrecorded consultations, and its
+rows add up to
+the payments and the uses; `anon` reads nothing and cannot call the new RPCs;
+the ledger still matches the stock and every `service_supplies` write is
+audited.

@@ -1626,6 +1626,8 @@ export const ConsultationWorkspace = ({
           appointmentId={appointment.id}
           subtitle={`${targetName} · ${appointment.service}`}
           servicePrice={appointment.servicePrice}
+          withSupplies
+          serviceId={appointment.serviceId}
           confirmLabel="Guardar y finalizar"
         />
       )}

@@ -25,6 +25,7 @@ import {
   updatePatientNotes,
 } from "../../../lib/services/patientService";
 import { recordPayment, type Payment } from "../../../lib/services/financeService";
+import { supabaseMock } from "../../../test/supabaseMock";
 import { ConsultationWorkspace } from "./ConsultationWorkspace";
 
 vi.mock("../../../lib/services/soapService", async (importOriginal) => ({
@@ -277,6 +278,7 @@ describe("ConsultationWorkspace", () => {
       amount: 800,
       method: "cash",
       note: "",
+      supplies: [],
     });
     // The separate, non-atomic calls are never used.
     expect(recordPayment).not.toHaveBeenCalled();
@@ -317,6 +319,37 @@ describe("ConsultationWorkspace", () => {
 
     await waitFor(() => expect(onFinishConsultation).toHaveBeenCalledWith("appt-1"));
     expect(finalizeConsultationWithPayment).toHaveBeenCalledTimes(2);
+  });
+
+  it("hands the supplies of the appointment's service to the same finalize call", async () => {
+    supabaseMock.onFrom("inventory", {
+      data: [
+        {
+          id: "item-s", name: "Sculptra", category: "Medicamentos", stock_quantity: 3,
+          min_alert_level: 1, unit_measure: "viales", last_restock_date: "2026-09-01", is_active: true,
+        },
+      ],
+    });
+    supabaseMock.onFrom("service_supplies", {
+      data: [{ item_id: "item-s", quantity: 1, inventory: { name: "Sculptra", unit_measure: "viales" } }],
+    });
+    const { onFinishConsultation, user } = renderWorkspace({
+      appointment: { ...appointment, serviceId: "svc-1" },
+    });
+    await waitForHistory();
+
+    await fillRequiredNote(user);
+    await user.click(screen.getByRole("button", { name: /Finalizar Consulta/ }));
+    expect(await screen.findByLabelText("Cantidad de Sculptra")).toHaveValue(1);
+    expect(supabaseMock.queries("service_supplies")[0].args("eq")).toEqual(["service_id", "svc-1"]);
+    await user.click(screen.getByRole("radio", { name: "Efectivo" }));
+    await user.click(screen.getByRole("button", { name: /Guardar y finalizar/ }));
+
+    await waitFor(() => expect(onFinishConsultation).toHaveBeenCalledWith("appt-1"));
+    expect(finalizeConsultationWithPayment).toHaveBeenCalledWith(
+      "appt-1",
+      expect.objectContaining({ supplies: [{ itemId: "item-s", quantity: 1 }] }),
+    );
   });
 
   it("closes after finalizing when no finish handler is given", async () => {

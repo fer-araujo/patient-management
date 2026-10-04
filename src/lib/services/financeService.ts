@@ -402,3 +402,108 @@ export const getFinanceSummary = async (
     movements,
   };
 };
+
+// -----------------------------------------------------------------------------
+// Profit per procedure
+// -----------------------------------------------------------------------------
+
+export interface ProcedureProfit {
+  serviceId: string | null;
+  service: string;
+  /** Consultations recorded in the range (paid and courtesies). */
+  times: number;
+  /** Money actually charged. */
+  charged: number;
+  /** List price of the courtesies (value not charged). */
+  courtesyValue: number;
+  /** Cost of the supplies used on those consultations. */
+  suppliesCost: number;
+  /** Supplies used with no registered cost (never purchased). */
+  uncostedSupplies: number;
+  /** Charged minus supplies. Courtesies never reduce it. */
+  profit: number;
+  /**
+   * Finalized consultations whose supplies were never recorded (service with
+   * supplies configured): their supply cost is missing from this row.
+   */
+  unrecordedConsultations: number;
+}
+
+export interface ProcedureProfitSummary {
+  rows: ProcedureProfit[];
+  total: Omit<ProcedureProfit, "serviceId" | "service">;
+  /** True when some supply had no cost, so its procedure looks cheaper. */
+  hasUncostedSupplies: boolean;
+}
+
+interface ProcedureProfitRow {
+  service_id: string | null;
+  service_name: string | null;
+  times: number | string;
+  charged: number | string | null;
+  courtesy_value: number | string | null;
+  supplies_cost: number | string | null;
+  uncosted_supplies: number | string | null;
+  profit: number | string | null;
+  unrecorded_consultations?: number | string | null;
+}
+
+/**
+ * Charged vs. supply cost per service for the payments recorded between two
+ * clinic-time dates (`from` inclusive, `to` exclusive), the same rule as the
+ * cash view. The server does the join (get_procedure_profit, migration 22);
+ * it returns no patient data, so the admin can see it too.
+ */
+export const getProcedureProfit = async (
+  from: string,
+  to: string,
+): Promise<ProcedureProfitSummary> => {
+  const { data, error } = await supabase.rpc("get_procedure_profit", {
+    p_from: dayStartUtc(from),
+    p_to: dayStartUtc(to),
+  });
+
+  if (error) {
+    console.error("[FinanceService] get_procedure_profit failed:", error.code);
+    throw new Error("No se pudo cargar la ganancia por procedimiento.");
+  }
+
+  const rows = ((data ?? []) as ProcedureProfitRow[]).map((r) => {
+    const charged = roundCents(toNumber(r.charged));
+    const suppliesCost = roundCents(toNumber(r.supplies_cost));
+    return {
+      serviceId: r.service_id,
+      service: r.service_name || "Sin servicio",
+      times: toNumber(r.times),
+      charged,
+      courtesyValue: roundCents(toNumber(r.courtesy_value)),
+      suppliesCost,
+      uncostedSupplies: toNumber(r.uncosted_supplies),
+      profit: roundCents(charged - suppliesCost),
+      unrecordedConsultations: toNumber(r.unrecorded_consultations),
+    };
+  });
+
+  const sum = (pick: (r: ProcedureProfit) => number) =>
+    roundCents(rows.reduce((acc, r) => acc + pick(r), 0));
+  const charged = sum((r) => r.charged);
+  const suppliesCost = sum((r) => r.suppliesCost);
+  const uncostedSupplies = rows.reduce((acc, r) => acc + r.uncostedSupplies, 0);
+
+  return {
+    rows,
+    total: {
+      times: rows.reduce((acc, r) => acc + r.times, 0),
+      charged,
+      courtesyValue: sum((r) => r.courtesyValue),
+      suppliesCost,
+      uncostedSupplies,
+      profit: roundCents(charged - suppliesCost),
+      unrecordedConsultations: rows.reduce(
+        (acc, r) => acc + r.unrecordedConsultations,
+        0,
+      ),
+    },
+    hasUncostedSupplies: uncostedSupplies > 0,
+  };
+};

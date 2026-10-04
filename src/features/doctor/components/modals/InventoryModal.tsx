@@ -28,6 +28,7 @@ const UNIT_OPTIONS = [
   { label: "Viales / Ámpulas", value: "viales" },
   { label: "Paquetes", value: "paquetes" },
   { label: "Mililitros (ml)", value: "ml" },
+  { label: "Unidades (U)", value: "unidades" },
 ];
 
 interface Props {
@@ -205,6 +206,10 @@ export const InventoryModal = ({
               }
               className="py-0! text-sm!"
             />
+            <p className="text-xs text-brand-gray mt-1 flex items-center">
+              Si un frasco se usa en varios pacientes (ej. toxina), regístralo
+              en unidades.
+            </p>
           </div>
           <Input
             label="Alerta de Stock Bajo"

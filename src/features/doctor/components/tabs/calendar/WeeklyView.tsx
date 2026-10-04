@@ -6,13 +6,14 @@ import { useCalendar } from "../../../hooks/useCalendar";
 import {
   parseHour24,
   timeToPixels,
-  getServiceColors,
+  getAppointmentColors,
   isTimeSlotInPast,
   isTimeStrInPast,
   HOUR_HEIGHT,
   getGridHoursRange,
 } from "../../../utils/calendarUtils";
 import { PendingBadge } from "./PendingBadge";
+import { SuppliesPendingBadge } from "./SuppliesPendingBadge";
 
 interface WeeklyViewProps {
   appointments: DashboardAppointment[];
@@ -212,7 +213,7 @@ export const WeeklyView = ({
                       <div
                         key={app.id}
                         onClick={() => onAppointmentClick(app)}
-                        className={`absolute left-1 right-1 sm:left-2 sm:right-2 rounded-xl border-l-4 border-y-[3px] border-r-[3px] border-white cursor-pointer shadow-[0_3px_10px_rgba(0,0,0,0.08)] transition-all z-20 flex flex-col overflow-hidden ${getServiceColors(app.service, isPast)} ${isPast ? "opacity-60" : "hover:z-50 hover:shadow-xl hover:scale-[1.02]"}`}
+                        className={`absolute left-1 right-1 sm:left-2 sm:right-2 rounded-xl border-l-4 border-y-[3px] border-r-[3px] border-white cursor-pointer shadow-[0_3px_10px_rgba(0,0,0,0.08)] transition-all z-20 flex flex-col overflow-hidden ${getAppointmentColors(app, isPast)} ${isPast ? "opacity-60" : "hover:z-50 hover:shadow-xl hover:scale-[1.02]"}`}
                         style={{ top: topPosition, height: heightPixels }}
                       >
                         <div
@@ -225,6 +226,7 @@ export const WeeklyView = ({
                               {app.patientName}
                             </h4>
                             {app.status === "pending" && <PendingBadge />}
+                            {app.suppliesPending && <SuppliesPendingBadge />}
                             {!isSmall && (
                               <div className="flex items-center gap-1 text-[10px] font-bold opacity-90 bg-white/60 px-1.5 py-0.5 rounded-md shrink-0">
                                 <Clock className="w-3 h-3" /> {app.time}

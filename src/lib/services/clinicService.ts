@@ -17,6 +17,13 @@ export interface DashboardAppointment {
   reason: string | null;
   /** Catalog price of the service, used to pre-fill the charge. */
   servicePrice?: number | null;
+  /** Catalog service, used to pre-fill the supplies used at checkout. */
+  serviceId?: string | null;
+  /**
+   * Finalized without recording its supplies, and its service has supplies
+   * configured: the calendar shows it in red with "Registrar insumos".
+   */
+  suppliesPending?: boolean;
   /** patients.status; an "archived" patient cannot be booked by the staff. */
   patientStatus?: "active" | "blocked" | "archived" | null;
 }
@@ -27,6 +34,7 @@ interface RawAppointmentData {
   start_time: string;
   status: "pending" | "confirmed" | "completed" | "cancelled" | "rejected";
   patient_id: string;
+  service_id: string | null;
   reason: string | null;
   patients: {
     first_name: string;
@@ -38,8 +46,23 @@ interface RawAppointmentData {
     name: string;
     duration_mins: number;
     price: number | string | null;
+    service_supplies: { item_id: string }[] | null;
   } | null;
+  clinical_notes:
+    | { finalized_at: string | null; supplies_recorded_at: string | null }[]
+    | null;
 }
+
+/** See DashboardAppointment.suppliesPending. */
+const isSuppliesPending = (apt: RawAppointmentData): boolean => {
+  if (apt.status === "cancelled" || apt.status === "rejected") return false;
+  const notes = apt.clinical_notes ?? [];
+  return (
+    (apt.services?.service_supplies?.length ?? 0) > 0 &&
+    notes.some((n) => n.finalized_at !== null) &&
+    !notes.some((n) => n.supplies_recorded_at !== null)
+  );
+};
 
 export const fetchDoctorAppointments = async (): Promise<
   DashboardAppointment[]
@@ -52,6 +75,7 @@ export const fetchDoctorAppointments = async (): Promise<
       start_time,
       status,
       patient_id,
+      service_id,
       reason,
       patients (
         first_name,
@@ -62,8 +86,10 @@ export const fetchDoctorAppointments = async (): Promise<
       services (
         name,
         duration_mins,
-        price
-      )
+        price,
+        service_supplies ( item_id )
+      ),
+      clinical_notes ( finalized_at, supplies_recorded_at )
     `,
     )
     .order("start_time", { ascending: true })
@@ -106,6 +132,8 @@ export const fetchDoctorAppointments = async (): Promise<
           ? null
           : Number(apt.services.price),
       patientStatus: apt.patients?.status ?? null,
+      serviceId: apt.service_id ?? null,
+      suppliesPending: isSuppliesPending(apt),
     };
   });
 };

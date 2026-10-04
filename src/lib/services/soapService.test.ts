@@ -5,6 +5,7 @@ import {
   fetchPatientHistory,
   finalizeConsultation,
   finalizeConsultationWithPayment,
+  recordConsultationSupplies,
   findConsultationDraft,
   savePrescription,
   saveSoapNote,
@@ -190,6 +191,53 @@ describe("finalizeConsultationWithPayment", () => {
       },
     ]);
     expect(supabaseMock.client.from).not.toHaveBeenCalled();
+  });
+
+  it("sends the supplies used as item and quantity only, leaving out zeros", async () => {
+    await finalizeConsultationWithPayment("appt-1", {
+      status: "courtesy",
+      supplies: [
+        { itemId: "item-s", quantity: 1 },
+        { itemId: "item-j", quantity: 0 },
+        { itemId: "item-g", quantity: 3 },
+      ],
+    });
+
+    expect(supabaseMock.lastRpc("finalize_consultation_with_payment")?.args).toEqual({
+      p_appointment_id: "appt-1",
+      p_status: "courtesy",
+      p_amount: 0,
+      p_method: null,
+      p_note: null,
+      // Never a cost: the server computes it from the purchases.
+      p_supplies: [
+        { item_id: "item-s", quantity: 1 },
+        { item_id: "item-g", quantity: 3 },
+      ],
+    });
+  });
+
+  it("sends an EMPTY list when she confirmed no supplies, and nothing when the step was skipped", async () => {
+    await finalizeConsultationWithPayment("appt-1", { status: "courtesy", supplies: [] });
+    await finalizeConsultationWithPayment("appt-2", { status: "courtesy" });
+
+    const [confirmed, skipped] = supabaseMock.rpcCalls("finalize_consultation_with_payment");
+    // [] marks the consultation as "used none" on the server.
+    expect(confirmed.args?.p_supplies).toEqual([]);
+    // Left out: the server keeps the consultation pending for "Registrar insumos".
+    expect(skipped.args).not.toHaveProperty("p_supplies");
+  });
+
+  it("surfaces the stock refusal of the server as is", async () => {
+    supabaseMock.onRpc("finalize_consultation_with_payment", {
+      error: { message: 'Solo hay 2 de "Sculptra" en inventario.', code: "P0001" },
+    });
+    await expect(
+      finalizeConsultationWithPayment("appt-1", {
+        status: "courtesy",
+        supplies: [{ itemId: "item-s", quantity: 5 }],
+      }),
+    ).rejects.toThrow('Solo hay 2 de "Sculptra" en inventario.');
   });
 
   it("surfaces the server's Spanish reason, and a clear message otherwise", async () => {
@@ -394,5 +442,41 @@ describe("addNoteAddendum", () => {
     expect(supabaseMock.queries("clinical_note_addenda")[0].args("insert")).toEqual([
       { note_id: "note-1", body: "Texto" },
     ]);
+  });
+});
+
+describe("recordConsultationSupplies", () => {
+  it('"Registrar insumos" sends item and quantity only, through its own rpc', async () => {
+    await recordConsultationSupplies("appt-9", [
+      { itemId: "item-s", quantity: 2 },
+      { itemId: "item-j", quantity: 0 },
+    ]);
+
+    expect(supabaseMock.rpcCalls()).toEqual([
+      {
+        name: "record_consultation_supplies",
+        args: {
+          p_appointment_id: "appt-9",
+          p_supplies: [{ item_id: "item-s", quantity: 2 }],
+        },
+      },
+    ]);
+  });
+
+  it("shows the refusal of a second call, and a clear message otherwise", async () => {
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    supabaseMock.onRpc("record_consultation_supplies", {
+      error: { code: "P0001", message: "Los insumos de esta consulta ya estaban registrados." },
+    });
+    await expect(recordConsultationSupplies("appt-9", [])).rejects.toThrow(
+      /^Los insumos de esta consulta ya estaban registrados\.$/,
+    );
+
+    supabaseMock.onRpc("record_consultation_supplies", {
+      error: { code: "08006", message: "connection reset" },
+    });
+    await expect(recordConsultationSupplies("appt-9", [])).rejects.toThrow(
+      "No se pudieron registrar los insumos. Intenta de nuevo.",
+    );
   });
 });
