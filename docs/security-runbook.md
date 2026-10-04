@@ -755,3 +755,408 @@ go back to step 3.
 - **`.vite/deps` is committed to the repository.** Harmless to security, but it
   is generated build cache and should be removed from version control and added
   to `.gitignore`.
+
+---
+
+# Phase 2 — Mexican legal compliance
+
+Applies the consent record, audit trail, clinical-note integrity, ARCO rights
+and upload limits described in `docs/compliance.md`. Same rules as Phase 1:
+paste each file into the Supabase SQL editor **in order**, and do not continue
+until it prints its success `NOTICE`.
+
+Every Phase 2 migration ends with its own `DO $$ ... raise exception ... $$`
+assertion, so **each migration file is its own gate**: if it runs to the end
+and prints `Migration NN PASSED`, the gate passed. The extra checks in Gate
+P2-6 exercise behavior that a catalog query cannot prove.
+
+**No SQL placeholders in Phase 2.** None of the five files needs editing
+before pasting. The placeholders that remain are in the privacy notice text
+(`src/components/legal/PrivacyPolicyContent.tsx`: clinic address, contact
+email, contact phone, Supabase region) and must be filled before production —
+see the checklist in `docs/compliance.md`.
+
+## Before you start
+
+1. Phase 1 is applied and its post-deploy checks pass.
+2. A frontend build from this branch is ready to deploy. **Step P2-2 changes
+   the signature of `request_appointment`**: the moment it runs, the frontend
+   currently deployed can no longer book anonymously ("function not found")
+   until the new build is live. Run P2-2 and deploy the frontend together.
+3. Have a doctor session and a patient session available for Gate P2-6.
+
+> **Phase 1 Gate 7 is superseded.** It checks
+> `request_appointment(text,text,text,text,uuid,timestamptz,text,text)`, which
+> step P2-2 deliberately drops. If you ever re-run Gate 7, change that
+> signature to the 10-argument form
+> `(text,text,text,text,uuid,timestamptz,text,text,text,text)`.
+
+## Step P2-1 — Audit trail
+
+Paste `supabase/migrations/20260922180700_audit_log.sql`.
+
+Expected: `Migration 08 PASSED: audit_log is append-only, staff-readable, and wired to 5 tables.`
+
+*Protects against:* an audit log that staff, or anyone holding an API key,
+could edit or erase; and clinical tables changing without leaving a trace.
+
+## Step P2-2 — Consent record ⚠️ deploy the frontend now
+
+Paste `supabase/migrations/20260922180800_consents.sql`, then deploy the new
+frontend immediately.
+
+Expected: `Migration 09 PASSED: consents table installed, request_appointment requires notice version 2026-09-23.`
+
+*Protects against:* the old consent-less overload of `request_appointment`
+staying callable by `anon`, which would let any script create a clinical record
+without the patient ever accepting the privacy notice.
+
+> The server accepts only the version returned by
+> `public.privacy_notice_version()`, which must equal `PRIVACY_NOTICE_VERSION`
+> in `src/lib/legal/privacyNotice.ts`. When the notice text changes, bump both
+> in the same release.
+
+## Step P2-3 — Clinical note integrity
+
+Paste `supabase/migrations/20260922180900_clinical_integrity.sql`.
+
+Expected: `Migration 10 PASSED: notes and prescriptions freeze on finalization, addenda are append-only.`
+
+*Protects against:* a finalized note being silently rewritten. NOM-004
+num. 5.11 forbids alterations; corrections must be addenda.
+
+### Step P2-3b — (optional, IRREVERSIBLE) finalize historical notes
+
+Notes written before Phase 2 are **not** frozen. The block below freezes every
+note and prescription whose appointment is already `completed`. **It cannot be
+undone** — afterwards those notes accept only addenda. Record the decision:
+
+| Date | Who decided | Rows finalized |
+| --- | --- | --- |
+| | | |
+
+```sql
+do $$
+declare
+  v_notes integer;
+  v_rx    integer;
+begin
+  update public.clinical_notes cn
+     set finalized_at = now()
+   where cn.finalized_at is null
+     and exists (select 1 from public.appointments a
+                 where a.id = cn.appointment_id and a.status = 'completed');
+  get diagnostics v_notes = row_count;
+
+  update public.prescriptions pr
+     set finalized_at = now()
+   where pr.finalized_at is null
+     and exists (select 1 from public.appointments a
+                 where a.id = pr.appointment_id and a.status = 'completed');
+  get diagnostics v_rx = row_count;
+
+  raise notice 'Back-fill done: % notes and % prescriptions finalized.', v_notes, v_rx;
+end $$;
+```
+
+## Step P2-4 — ARCO rights
+
+Paste `supabase/migrations/20260922181000_arco_rights.sql`.
+
+Expected: `Migration 11 PASSED: ARCO RPCs installed, retention = 5 years.`
+
+*Protects against:* ARCO requests being writable directly through the API, and
+anonymization inside the NOM-004 retention window.
+
+## Step P2-5 — Upload limits
+
+Paste `supabase/migrations/20260922181100_storage_limits.sql`.
+
+Expected: `Migration 12 PASSED: clinical_records limited to 10 MB and PDF/JPEG/PNG/HEIC.`
+
+*Protects against:* arbitrary file types (HTML, executables) and very large
+files landing in the clinical bucket.
+
+## Gate P2-6 — behavior checks (after all five steps)
+
+### P2-6a — the audit log really refuses deletes
+
+*The migration checks that the trigger exists; this proves it fires. If the
+delete ever succeeded, the final `raise` aborts the whole block, so the row is
+rolled back either way.*
+
+```sql
+do $$
+declare
+  v_id      bigint;
+  v_blocked boolean := false;
+begin
+  select id into v_id from public.audit_log order by id desc limit 1;
+  if v_id is null then
+    raise notice 'Gate P2-6a SKIPPED: audit_log is empty. Book one test appointment and re-run.';
+    return;
+  end if;
+
+  begin
+    delete from public.audit_log where id = v_id;
+  exception when others then
+    v_blocked := true;
+  end;
+
+  if not v_blocked then
+    raise exception 'FAILED: an audit_log row could be deleted. The append-only trigger is not firing.'
+      using errcode = 'P0001';
+  end if;
+
+  raise notice 'Gate P2-6a PASSED: audit_log refused DELETE.';
+end $$;
+```
+
+### P2-6b — a finalized note cannot be edited
+
+Run after the doctor has finished one consultation with the new frontend (or
+after step P2-3b). Same rollback guarantee as P2-6a.
+
+```sql
+do $$
+declare
+  v_id      uuid;
+  v_blocked boolean := false;
+begin
+  select id into v_id from public.clinical_notes where finalized_at is not null limit 1;
+  if v_id is null then
+    raise notice 'Gate P2-6b SKIPPED: no finalized note yet. Finish one consultation and re-run.';
+    return;
+  end if;
+
+  begin
+    update public.clinical_notes set plan = coalesce(plan, '') || ' ' where id = v_id;
+  exception when others then
+    v_blocked := true;
+  end;
+
+  if not v_blocked then
+    raise exception 'FAILED: finalized note % was editable.', v_id using errcode = 'P0001';
+  end if;
+
+  raise notice 'Gate P2-6b PASSED: finalized note % refused the edit.', v_id;
+end $$;
+```
+
+### P2-6c — consent is recorded with every anonymous booking
+
+Book one appointment from the public site while logged out, then:
+
+```sql
+do $$
+declare
+  v_recent integer;
+begin
+  select count(*) into v_recent
+  from public.consents
+  where accepted_at > now() - interval '15 minutes'
+    and version = public.privacy_notice_version();
+
+  if v_recent = 0 then
+    raise exception 'FAILED: no consent row in the last 15 minutes. Is the new frontend deployed?'
+      using errcode = 'P0001';
+  end if;
+
+  raise notice 'Gate P2-6c PASSED: % recent consent row(s) with the current notice version.', v_recent;
+end $$;
+```
+
+### P2-6d — manual checks in the app
+
+1. **Doctor:** finish a consultation, then open the same patient from the
+   Directorio de Pacientes. The note shows "Nota cerrada el ..." and the
+   "Agregar una corrección" form. Save an addendum; it appears under the note.
+2. **Doctor:** the "Recetas e Indicaciones" tab shows "Registro informativo
+   del expediente. No es una receta médica oficial."
+3. **Patient:** "Mis Medicamentos" shows the same notice, always at the top of the modal.
+4. **Patient:** "Estudios" first explains that uploads join the record and
+   cannot be deleted by the patient. A `.docx`, or any file over 10 MB, is
+   refused with a Spanish message before uploading.
+5. **Patient:** "Descargar mis datos" downloads a JSON file; Admin → "Bitácora"
+   shows "El paciente descargó una copia de sus datos."
+6. **Patient:** send a request from "Pedir un cambio sobre mis datos"; Admin →
+   "Solicitudes ARCO" lists it with its due date. Resolve it; the patient sees
+   the answer in the portal.
+7. **Doctor:** on a cancellation request, "Anonimizar expediente" for a
+   patient seen within the last 5 years is refused with the date from which it
+   becomes possible.
+
+## Phase 2 behavior changes
+
+1. **"Finalizar Consulta" freezes the note and the prescription.** Corrections
+   are addenda, added from the patient's record in the Directorio de
+   Pacientes. The back arrow in the consultation screen only saves a draft and
+   never finalizes (gap G4, fixed).
+2. **Anonymous booking requires the current privacy notice version.** A
+   browser holding an old build gets "El Aviso de Privacidad se actualizó.
+   Recarga la página...".
+3. **Uploads are limited** to PDF, JPEG, PNG and HEIC up to 10 MB, for staff
+   too.
+4. **Uploads are registered in `patient_files`**, so they appear in the audit
+   trail.
+5. Patient uploads are allowed: Phase 1 migration 04 already grants patients
+   INSERT into their own folder. Item 1 of the Phase 1 "Known behavior
+   changes" list is out of date on that point.
+
+## Rollback notes
+
+- Steps P2-1, P2-3, P2-4 and P2-5 only add objects; the app keeps working
+  without them except for the features they back.
+- Step P2-2 cannot be rolled back independently of the frontend: the new
+  frontend calls the 10-argument RPC. To roll back, redeploy the previous
+  frontend AND re-run the `request_appointment` section of
+  `20260922180500_booking_rpcs.sql`.
+- Consents, addenda and audit rows are append-only by design; there is no
+  supported way to remove them.
+
+---
+
+# Phase 3 — Verified booking
+
+Retires anonymous booking. "Agendar Cita" now verifies the phone with an OTP
+**before** anything else, and only then asks the server whether that number
+already has a clinical record. Returning patients skip the registration form;
+new patients register through `register_me()`, which reads the phone from the
+session, never from the browser. Every booking goes through
+`request_my_appointment()` and carries an optional "Motivo de la consulta".
+
+> ⚠️ **OTP provider.** Until a paid Twilio account is configured in Supabase
+> Auth, **only the Supabase test phone numbers can complete the OTP step**.
+> With this phase applied, online booking therefore works end to end **only
+> for those numbers**; any other visitor receives no code and cannot book.
+> Configure Twilio before announcing online booking to patients, and delete
+> the test numbers before production (see `docs/compliance.md`, section 8).
+
+## Before you start
+
+1. Phase 2 is applied and every Phase 2 gate passed.
+2. A frontend build from this branch is ready to deploy. **This step drops
+   `request_appointment`**: the moment it runs, the public booking page of the
+   frontend currently deployed stops working ("function not found") until the
+   new build is live. Run it and deploy the frontend together.
+   The patient portal keeps working with an old bundle: `p_reason` defaults to
+   `NULL`, so a two-argument call to `request_my_appointment` still resolves.
+3. A Supabase test phone number (or a working SMS/WhatsApp provider) for the
+   manual checks.
+
+> **Phase 1 Gate 7 and Phase 2 step P2-2 are superseded.** Gate 7 checks the
+> anonymous `request_appointment` and `request_my_appointment(uuid,timestamptz)`;
+> this step drops the first and replaces the second with
+> `request_my_appointment(uuid,timestamptz,text)`. Do not re-run Gate 7 or
+> P2-6c after this step; Gate P3-1 below replaces them.
+
+## Step P3-1 — Verified booking
+
+Paste `supabase/migrations/20260922181200_verified_booking.sql`, then deploy
+the new frontend immediately.
+
+Expected: `Migration 13 PASSED: anonymous booking retired, verified booking RPCs installed for notice version 2026-09-23.`
+
+The migration ends with its own `DO $$ ... raise exception ... $$` gate, which
+fails the run unless:
+
+- no function named `request_appointment` exists;
+- exactly one `request_my_appointment` exists, it takes `p_reason`, takes the
+  booking advisory lock and still enforces the per-patient pending cap;
+- `get_my_booking_profile()`, `accept_privacy_notice(text,text)`,
+  `register_me(text,text,text,text,integer,text,text)` and
+  `request_my_appointment(uuid,timestamptz,text)` are executable by
+  `authenticated`, NOT by `anon`, and are `SECURITY DEFINER` with a pinned
+  `search_path`;
+- `register_me` has no phone argument;
+- the internal helpers `has_current_consent(uuid)` and
+  `assert_current_notice_version(text)` are not executable through the API;
+- `appointments.reason` exists and `export_my_data()` includes it.
+
+*Protects against:* anonymous creation of patients and appointments (the
+booking-spam vector); consent tied to a phone nobody proved to own (gap G1);
+and the booking page acting as a "is this phone a patient?" oracle.
+
+| RPC | Grant | What it does |
+| --- | --- | --- |
+| `get_my_booking_profile()` | `authenticated` | One row: `is_registered`, `first_name`, `needs_consent` for the caller's verified phone. |
+| `accept_privacy_notice(p_privacy_notice_version, p_user_agent)` | `authenticated` | Records consent for a returning patient. No-op if the current version is already accepted. |
+| `register_me(p_first_name, p_last_name, p_email, p_referred_by, p_dob_year, p_privacy_notice_version, p_user_agent)` | `authenticated` | Creates the caller's patient row and consent row atomically. Returns the existing id untouched if the phone already has a record. |
+| `request_my_appointment(p_service_id, p_start_time, p_reason)` | `authenticated` | The only booking path. `p_reason` is optional, max 1000 characters. |
+
+## Gate P3-2 — manual checks in the app
+
+1. **Logged out, new number (test phone):** "Agendar Cita" → the toast says
+   "Te enviamos un código de verificación." → enter the code → the
+   registration form appears (no "Motivo de la consulta" on it) → service →
+   date/time with "Motivo de la consulta (Opcional)" above "Confirmar Cita" →
+   success. "Ir a mi Perfil" opens `/dashboard` directly.
+2. **Logged out, returning number:** after the code the visitor goes straight
+   to the services with "¡Hola de nuevo, …!". If that patient has no consent
+   for the current notice, only the consent checkbox is shown first.
+3. **Already signed in as a patient:** opening `/` skips the phone step.
+4. **Doctor:** the request inbox shows the reason under the service.
+5. **"Entrar a mi Portal"** still logs in and lands on `/dashboard`.
+6. **Consent evidence:** after steps 1 and 2 (with consent), this returns at
+   least one row per booking visitor:
+
+```sql
+select c.patient_id, c.version, c.accepted_at
+from public.consents c
+where c.accepted_at > now() - interval '15 minutes'
+order by c.accepted_at desc;
+```
+
+## Anti-spam after Phase 3
+
+`anon` can no longer write anything, so the clinic-wide ceilings of Phase 1 no
+longer guard a public endpoint. What still applies:
+
+- `booking_limit_pending_per_patient()` in `request_my_appointment`;
+- `booking_limit_new_patients_per_hour()` in `register_me`;
+- Supabase Auth's own OTP rate limits (and CAPTCHA, if enabled), which do
+  cover the OTP endpoints.
+
+`assert_public_booking_capacity()` and `booking_limit_pending_clinic_wide()`
+are no longer called by any path. They are left in place so Phase 1 Gate 7b
+still runs; they can be removed in a later clean-up.
+
+## Phase 3 behavior changes
+
+1. Booking requires a verified phone. Nothing is revealed about a number until
+   its owner enters the code.
+2. The reason for the visit is stored per appointment (`appointments.reason`)
+   instead of once in `patients.notes` at registration.
+3. The birth year from the registration form is now stored, as January 1st of
+   that year in `patients.dob` (the anonymous RPC used to discard it).
+4. "Agendar otra cita" on the success screen starts at the service, since the
+   visitor is still signed in.
+
+## Rollback notes
+
+- Rolling back requires the previous frontend AND re-running the
+  `request_appointment` section of `20260922180800_consents.sql` and the
+  `request_my_appointment` section of `20260922180500_booking_rpcs.sql`
+  (drop the three-argument version first).
+- `appointments.reason` can stay; the previous frontend ignores it.
+
+---
+
+## Migration 14 — Clinical notes are staff-only
+
+Paste `supabase/migrations/20260922181300_clinical_notes_staff_only.sql`. It
+ends with its own gate and must print:
+
+`Migration 14 PASSED: clinical notes and addenda are staff-only; the patient export no longer includes them.`
+
+What it changes:
+
+- Drops `clinical_notes_select_own` and `clinical_note_addenda_select_own`, so a
+  patient session can no longer read SOAP notes or their addenda through the API.
+- Redefines `export_my_data()` without the `clinical_notes` key.
+- A patient asks for a clinical summary through the portal request form
+  (request type `access`, shown as "Resumen clínico"); the doctor answers it
+  from Admin → "Solicitudes ARCO" (NOM-004-SSA3-2012, 5.5).
+
+No patient screen read those tables, so nothing in the portal breaks.
+Prescriptions stay visible to the patient in "Mis Medicamentos".

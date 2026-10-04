@@ -33,6 +33,7 @@ import {
   fetchPatientHistory,
   saveSoapNote,
   savePrescription,
+  finalizeConsultation,
   type PatientClinicalHistory,
   type MedicationItem,
   type SoapNote,
@@ -42,6 +43,13 @@ import {
   getPatientFiles,
   type ClinicalFile,
 } from "../../../lib/services/storageService";
+import {
+  CLINICAL_UPLOAD_ACCEPT,
+  CLINICAL_UPLOAD_RULES_TEXT,
+  validateClinicalFile,
+} from "../../../lib/files/clinicalUploadRules";
+import { PrescriptionDisclaimer } from "../../../components/legal/PrescriptionDisclaimer";
+import { NoteAddenda } from "./NoteAddenda";
 
 interface ConsultationWorkspaceProps {
   appointment?: DashboardAppointment;
@@ -143,7 +151,9 @@ export const ConsultationWorkspace = ({
     loadWorkspaceData();
   }, [targetId, isReviewMode]);
 
-  const handleFinishClick = async () => {
+  // The back arrow saves a draft; only "Finalizar Consulta" freezes the note.
+  // Finalizing is irreversible (NOM-004), so it must never happen by accident.
+  const saveConsultation = async (finalize: boolean) => {
     setIsSaving(true);
     if (isReviewMode) {
       if (patient && globalNotes !== (patient.notes || "")) {
@@ -183,6 +193,15 @@ export const ConsultationWorkspace = ({
           updatePatientNotes(appointment.patientId, globalNotes),
         ]);
 
+        if (!finalize) {
+          toast.success("Borrador guardado. Puedes continuar la consulta después.");
+          onClose();
+          return;
+        }
+
+        // Freezes the note and prescription (NOM-004). Keep this a single call.
+        await finalizeConsultation(appointment.id);
+
         if (onFinishConsultation) {
           onFinishConsultation(appointment.id);
         } else {
@@ -191,10 +210,17 @@ export const ConsultationWorkspace = ({
       }
     } catch (err: unknown) {
       console.error("Error guardando consulta:", err);
-      toast.error("Hubo un error al guardar la consulta.");
+      toast.error(
+        err instanceof Error && err.message
+          ? err.message
+          : "Hubo un error al guardar la consulta.",
+      );
       setIsSaving(false);
     }
   };
+
+  const handleFinishClick = () => saveConsultation(true);
+  const handleBackClick = () => saveConsultation(false);
 
   const handleAddPrescription = () => {
     if (newMedication.nombre) {
@@ -207,12 +233,22 @@ export const ConsultationWorkspace = ({
   const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     if (!e.target.files || e.target.files.length === 0) return;
 
+    const selectedFiles = Array.from(e.target.files);
+    const invalidMessage = selectedFiles
+      .map(validateClinicalFile)
+      .find((message) => message !== null);
+    if (invalidMessage) {
+      toast.error(invalidMessage, { duration: 8000 });
+      e.target.value = "";
+      return;
+    }
+
     setIsUploadingFile(true);
     const loadingToast = toast.loading("Subiendo archivos...");
 
     try {
-      const uploadPromises = Array.from(e.target.files).map((file) =>
-        uploadPatientFile(targetId, file),
+      const uploadPromises = selectedFiles.map((file) =>
+        uploadPatientFile(targetId, file, "doctor"),
       );
       await Promise.all(uploadPromises);
 
@@ -269,8 +305,9 @@ export const ConsultationWorkspace = ({
       <div className="bg-white border-b border-slate-200 px-6 py-3 sticky top-0 z-40 shadow-sm flex items-center justify-between shrink-0">
         <div className="flex items-center gap-4">
           <button
-            onClick={handleFinishClick}
+            onClick={handleBackClick}
             disabled={isSaving}
+            aria-label="Guardar borrador y volver"
             className="p-2 rounded-xl hover:bg-slate-100 text-brand-gray transition-colors cursor-pointer shrink-0 disabled:opacity-50"
           >
             <ArrowLeft className="w-5 h-5" />
@@ -537,6 +574,24 @@ export const ConsultationWorkspace = ({
                           />
                         </div>
                       </div>
+                      <NoteAddenda
+                        key={viewingHistoricalNote.id}
+                        note={viewingHistoricalNote}
+                        onAdded={(addendum) => {
+                          const withAddendum = (n: SoapNote): SoapNote =>
+                            n.id === addendum.noteId
+                              ? { ...n, addenda: [...n.addenda, addendum] }
+                              : n;
+                          setViewingHistoricalNote((prev) =>
+                            prev ? withAddendum(prev) : prev,
+                          );
+                          setHistory((prev) =>
+                            prev
+                              ? { ...prev, notes: prev.notes.map(withAddendum) }
+                              : prev,
+                          );
+                        }}
+                      />
                     </>
                   ) : (
                     <div className="text-center py-20 bg-slate-50 rounded-2xl border border-dashed border-slate-200 my-auto">
@@ -645,6 +700,8 @@ export const ConsultationWorkspace = ({
                   )}
                 </div>
 
+                <PrescriptionDisclaimer />
+
                 {localPrescriptions.length > 0 ||
                 (history?.prescriptions && history.prescriptions.length > 0) ? (
                   <div className="space-y-4">
@@ -720,7 +777,7 @@ export const ConsultationWorkspace = ({
                   <input
                     type="file"
                     multiple
-                    accept="image/*,.pdf"
+                    accept={CLINICAL_UPLOAD_ACCEPT}
                     className="hidden"
                     onChange={handleFileUpload}
                     disabled={isUploadingFile}
@@ -738,7 +795,7 @@ export const ConsultationWorkspace = ({
                       : "Sube fotos o estudios a este expediente"}
                   </p>
                   <p className="text-sm text-brand-gray mt-1">
-                    Soporta JPG, PNG, PDF
+                    {CLINICAL_UPLOAD_RULES_TEXT}
                   </p>
                 </label>
 

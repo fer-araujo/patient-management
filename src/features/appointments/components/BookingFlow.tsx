@@ -1,67 +1,170 @@
-import { useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { Activity, ShieldCheck, Sparkles } from "lucide-react";
+import { Activity, Loader2, ShieldCheck, Sparkles } from "lucide-react";
 import toast from "react-hot-toast";
 
 import { PatientPhoneLogin } from "../../auth/components/PatientPhoneLogin";
-import { PatientRegistration } from "../../auth/components/PatientRegistration";
+import {
+  PatientRegistration,
+  type PatientRegistrationData,
+} from "../../auth/components/PatientRegistration";
+import { PrivacyConsentStep } from "../../auth/components/PrivacyConsentStep";
+import { useAuthRole, isStaffRole } from "../../auth/useAuthRole";
 import { ServiceSelector } from "./ServiceSelector";
 import { DateTimeSelector } from "./DateTimeSelector";
 import { BookingSuccess } from "./BookingSuccess";
 import { Badge } from "../../../components/ui/Badge";
-import { createPublicPatientAndAppointment } from "../../../lib/services/patientBookingService";
+import {
+  acceptPrivacyNotice,
+  createMyAppointment,
+  fetchMyBookingProfile,
+  registerMe,
+  type MyBookingProfile,
+} from "../../../lib/services/patientBookingService";
+import { uploadPatientFile } from "../../../lib/services/storageService";
 
 interface BookingFlowProps {
   onComplete: () => void;
 }
 
-interface PatientRegistrationData {
-  fullName: string;
-  email: string;
-  birthYear: string;
-  reason: string;
-  referredBy: string;
-  termsAccepted: boolean;
-}
-
 interface BookingState {
-  code: string;
-  number: string;
-  patientData: PatientRegistrationData | null;
   serviceId: string;
-  serviceName?: string; // <--- AÑADIDO
+  serviceName?: string;
   date: string;
   time: string;
 }
 
+const EMPTY_BOOKING: BookingState = {
+  serviceId: "",
+  serviceName: "Consulta Médica", // Valor por defecto
+  date: "",
+  time: "",
+};
+
+const errorMessage = (error: unknown, fallback: string): string =>
+  error instanceof Error && error.message ? error.message : fallback;
+
+/**
+ * Public booking. Steps:
+ *   1. Phone + OTP. The code is always sent; nothing about the number is
+ *      revealed until the visitor proves they own it.
+ *   2. New patient: registration form. Returning patient without consent for
+ *      the current notice: consent checkbox only. Otherwise skipped.
+ *   3. Service. 4. Date, time and reason. 5. Success.
+ * A visitor who arrives with an active non-staff session starts at step 2.
+ */
 export const BookingFlow = ({ onComplete }: BookingFlowProps) => {
   const [currentStep, setCurrentStep] = useState<1 | 2 | 3 | 4 | 5>(1);
-
-  const [bookingData, setBookingData] = useState<BookingState>({
-    code: "+52",
-    number: "",
-    patientData: null,
-    serviceId: "",
-    serviceName: "Consulta Médica", // Valor por defecto
-    date: "",
-    time: "",
-  });
-
+  const [bookingData, setBookingData] = useState<BookingState>(EMPTY_BOOKING);
+  const [profile, setProfile] = useState<MyBookingProfile | null>(null);
+  const [isResolvingProfile, setIsResolvingProfile] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
 
-  const handleNewPatientPhoneSubmit = (code: string, number: string) => {
-    setBookingData((prev) => ({ ...prev, code, number }));
-    setCurrentStep(2);
+  const { session, role, loading: isAuthLoading } = useAuthRole();
+  const initialSessionChecked = useRef(false);
+
+  // Runs only with a verified session: the answer describes the caller's own
+  // phone, so telling them whether it is registered leaks nothing.
+  const startVerifiedBooking = useCallback(async () => {
+    setIsResolvingProfile(true);
+    try {
+      const myProfile = await fetchMyBookingProfile();
+      setProfile(myProfile);
+
+      if (myProfile.isRegistered && !myProfile.needsConsent) {
+        toast.success(
+          myProfile.firstName
+            ? `¡Hola de nuevo, ${myProfile.firstName}!`
+            : "¡Hola de nuevo!",
+        );
+        setCurrentStep(3);
+      } else {
+        setCurrentStep(2);
+      }
+    } catch (error: unknown) {
+      console.error(error);
+      toast.error(errorMessage(error, "No pudimos cargar tu información."));
+      setCurrentStep(1);
+    } finally {
+      setIsResolvingProfile(false);
+    }
+  }, []);
+
+  // A visitor who is already signed in as a patient skips the phone step.
+  // Checked once, on the first resolved auth state; later sign-ins (the OTP
+  // step itself) are handled by onBookingVerified.
+  useEffect(() => {
+    if (isAuthLoading || initialSessionChecked.current) return;
+    initialSessionChecked.current = true;
+
+    if (session && !isStaffRole(role)) {
+      void startVerifiedBooking();
+    }
+  }, [isAuthLoading, session, role, startVerifiedBooking]);
+
+  const handleRegistrationSubmit = async (data: PatientRegistrationData) => {
+    if (isSubmitting) return;
+
+    setIsSubmitting(true);
+    const loadingToast = toast.loading("Creando tu expediente...");
+
+    try {
+      const patientId = await registerMe(data);
+
+      // The optional study goes up only once the record exists. A failed
+      // upload must not block the booking: the patient can retry from the
+      // portal.
+      if (data.file) {
+        try {
+          await uploadPatientFile(patientId, data.file, "patient");
+        } catch (uploadError) {
+          console.error(uploadError);
+          toast.error(
+            "Tu expediente se creó, pero no pudimos subir tu archivo. Puedes subirlo después desde tu portal.",
+            { duration: 8000 },
+          );
+        }
+      }
+
+      setProfile({
+        isRegistered: true,
+        firstName: data.fullName.trim().split(/\s+/)[0] || null,
+        needsConsent: false,
+      });
+      toast.success("Expediente creado correctamente.", { id: loadingToast });
+      setCurrentStep(3);
+    } catch (error: unknown) {
+      console.error(error);
+      toast.error(errorMessage(error, "No se pudo crear tu expediente."), {
+        id: loadingToast,
+      });
+    } finally {
+      setIsSubmitting(false);
+    }
   };
 
-  const handleLoginSuccess = (code: string, number: string) => {
-    console.log("Login exitoso:", code, number);
-    onComplete();
-  };
+  const handleConsentSubmit = async (privacyNoticeVersion: string) => {
+    if (isSubmitting) return;
 
-  const handleRegistrationSubmit = (data: PatientRegistrationData) => {
-    setBookingData((prev) => ({ ...prev, patientData: data }));
-    setCurrentStep(3);
+    setIsSubmitting(true);
+    const loadingToast = toast.loading("Registrando tu aceptación...");
+
+    try {
+      await acceptPrivacyNotice(privacyNoticeVersion);
+      setProfile((prev) => (prev ? { ...prev, needsConsent: false } : prev));
+      toast.success("¡Gracias! Ya puedes agendar tu cita.", {
+        id: loadingToast,
+      });
+      setCurrentStep(3);
+    } catch (error: unknown) {
+      console.error(error);
+      toast.error(
+        errorMessage(error, "No se pudo registrar tu aceptación."),
+        { id: loadingToast },
+      );
+    } finally {
+      setIsSubmitting(false);
+    }
   };
 
   // Preparamos el handle para aceptar el nombre del servicio si el selector se lo envía
@@ -74,94 +177,112 @@ export const BookingFlow = ({ onComplete }: BookingFlowProps) => {
     setCurrentStep(4);
   };
 
-  const handleDateTimeSubmit = async (date: string, time: string) => {
+  const handleDateTimeSubmit = async (
+    date: string,
+    time: string,
+    reason: string,
+  ) => {
     if (isSubmitting) return;
 
     setIsSubmitting(true);
     const loadingToast = toast.loading("Procesando tu solicitud de cita...");
 
     try {
-      await createPublicPatientAndAppointment({
-        phone: bookingData.code + bookingData.number,
-        serviceId: bookingData.serviceId,
-        date,
-        time,
-        fullName: bookingData.patientData?.fullName || "Paciente Desconocido",
-        email: bookingData.patientData?.email || "",
-        reason: bookingData.patientData?.reason || "",
-        referredBy: bookingData.patientData?.referredBy || "",
-      });
+      await createMyAppointment(bookingData.serviceId, date, time, reason);
 
       setBookingData((prev) => ({ ...prev, date, time }));
       toast.success("¡Solicitud enviada correctamente!", { id: loadingToast });
       setCurrentStep(5);
     } catch (error: unknown) {
       console.error(error);
-      toast.error(
-        (error as Error).message || "Hubo un error al procesar tu cita.",
-        { id: loadingToast },
-      );
+      toast.error(errorMessage(error, "Hubo un error al procesar tu cita."), {
+        id: loadingToast,
+      });
     } finally {
       setIsSubmitting(false);
     }
   };
 
-  const handleGoHome = () => {
-    setCurrentStep(1);
-    setBookingData({
-      code: "+52",
-      number: "",
-      patientData: null,
-      serviceId: "",
-      serviceName: "Consulta Médica",
-      date: "",
-      time: "",
-    });
+  // The visitor is still verified, so another booking starts at the service.
+  const handleBookAnother = () => {
+    setBookingData(EMPTY_BOOKING);
+    setCurrentStep(3);
   };
 
   return (
     <div className="min-h-screen w-full bg-white flex flex-col lg:flex-row font-sans antialiased selection:bg-brand-primary/20 overflow-hidden relative">
       <div className="w-full lg:w-[45%] flex flex-col justify-center px-8 sm:px-16 lg:pl-12 xl:pl-50 lg:pr-8 xl:pr-12 py-12 relative z-20 bg-white overflow-y-auto">
         <AnimatePresence mode="wait">
-          {currentStep === 1 && (
+          {isResolvingProfile && (
+            <motion.div
+              key="resolving"
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              className="flex flex-col items-center justify-center py-20 w-full"
+            >
+              <Loader2 className="w-10 h-10 animate-spin text-brand-primary mb-4" />
+              <p className="text-brand-gray font-medium">
+                Cargando tu información...
+              </p>
+            </motion.div>
+          )}
+
+          {!isResolvingProfile && currentStep === 1 && (
             <PatientPhoneLogin
               key="step1"
-              onSubmitNewPatient={handleNewPatientPhoneSubmit}
-              onLoginSuccess={handleLoginSuccess}
+              onBookingVerified={() => void startVerifiedBooking()}
+              onLoginSuccess={onComplete}
             />
           )}
 
-          {currentStep === 2 && (
-            <PatientRegistration
-              key="step2"
-              onBack={() => setCurrentStep(1)}
-              onSubmit={handleRegistrationSubmit}
-            />
-          )}
+          {!isResolvingProfile &&
+            currentStep === 2 &&
+            profile?.isRegistered && (
+              <PrivacyConsentStep
+                key="step2-consent"
+                firstName={profile.firstName}
+                isSubmitting={isSubmitting}
+                onBack={() => setCurrentStep(1)}
+                onSubmit={handleConsentSubmit}
+              />
+            )}
 
-          {currentStep === 3 && (
+          {!isResolvingProfile &&
+            currentStep === 2 &&
+            !profile?.isRegistered && (
+              <PatientRegistration
+                key="step2"
+                isSubmitting={isSubmitting}
+                onBack={() => setCurrentStep(1)}
+                onSubmit={handleRegistrationSubmit}
+              />
+            )}
+
+          {!isResolvingProfile && currentStep === 3 && (
             <ServiceSelector
               key="step3"
-              onBack={() => setCurrentStep(2)}
+              onBack={() => setCurrentStep(1)}
               onSelect={handleServiceSelect}
             />
           )}
 
-          {currentStep === 4 && (
+          {!isResolvingProfile && currentStep === 4 && (
             <DateTimeSelector
               key="step4"
               serviceId={bookingData.serviceId}
+              showReasonField={true}
               onBack={() => setCurrentStep(3)}
               onSubmit={handleDateTimeSubmit}
             />
           )}
 
-          {currentStep === 5 && (
+          {!isResolvingProfile && currentStep === 5 && (
             <BookingSuccess
               key="step5"
               bookingData={bookingData}
               onGoToDashboard={onComplete}
-              onGoHome={handleGoHome}
+              onGoHome={handleBookAnother}
             />
           )}
         </AnimatePresence>

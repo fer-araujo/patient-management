@@ -266,9 +266,21 @@ export const InboxTab = ({
       sortable: true,
       className: "w-[25%]",
       cell: (row) => (
-        <span className="text-sm font-bold text-brand-primary bg-brand-light/30 px-3 py-1.5 rounded-lg inline-block">
-          {row.service}
-        </span>
+        <div className="flex flex-col items-start">
+          <span className="text-sm font-bold text-brand-primary bg-brand-light/30 px-3 py-1.5 rounded-lg inline-block">
+            {row.service}
+          </span>
+          {row.reason && (
+            // Clamped so a long reason cannot stretch the row; the full text
+            // is in the tooltip.
+            <p
+              title={row.reason}
+              className="text-sm text-brand-gray font-medium mt-1 line-clamp-2 break-words"
+            >
+              {row.reason}
+            </p>
+          )}
+        </div>
       ),
     },
     {

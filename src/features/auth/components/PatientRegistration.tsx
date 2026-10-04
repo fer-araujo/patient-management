@@ -3,54 +3,78 @@ import {
   HeartPulse,
   ArrowLeft,
   Upload,
-  Check,
-  FileText,
-  ShieldCheck,
   Users, // <-- Añadimos este icono
 } from "lucide-react";
 import { motion } from "framer-motion";
 import { Button } from "../../../components/ui/Button";
 import { Input } from "../../../components/ui/Input";
-import { Modal } from "../../../components/ui/Modal";
-import { PrivacyPolicyContent } from "../../../components/legal/PrivacyPolicyContent";
-import { TermsAndConditionsContent } from "../../../components/legal/TermsAndConditionsContent";
+import {
+  PrivacyConsentCheckbox,
+  PrivacyConsentModals,
+  type LegalDocument,
+} from "../../../components/legal/PrivacyConsent";
+import { PRIVACY_NOTICE_VERSION } from "../../../lib/legal/privacyNotice";
+import toast from "react-hot-toast";
+import {
+  CLINICAL_UPLOAD_ACCEPT,
+  validateClinicalFile,
+} from "../../../lib/files/clinicalUploadRules";
 
-interface Props {
-  onBack: () => void;
-  onSubmit: (data: {
-    fullName: string;
-    birthYear: string;
-    email: string;
-    reason: string;
-    referredBy: string;
-    termsAccepted: boolean;
-  }) => void;
+export interface PatientRegistrationData {
+  fullName: string;
+  birthYear: string;
+  email: string;
+  referredBy: string;
+  termsAccepted: boolean;
+  privacyNoticeVersion: string;
+  /** Optional study uploaded right after the patient record is created. */
+  file: File | null;
 }
 
-export const PatientRegistration = ({ onBack, onSubmit }: Props) => {
+interface Props {
+  isSubmitting?: boolean;
+  onBack: () => void;
+  onSubmit: (data: PatientRegistrationData) => void;
+}
+
+export const PatientRegistration = ({
+  isSubmitting = false,
+  onBack,
+  onSubmit,
+}: Props) => {
   const [formData, setFormData] = useState({
     fullName: "",
     birthYear: "",
     email: "",
-    reason: "",
     referredBy: "",
     termsAccepted: false,
   });
-  const [fileName, setFileName] = useState<string | null>(null);
-  const [activeModal, setActiveModal] = useState<"privacy" | "terms" | null>(
-    null,
-  );
+  const [file, setFile] = useState<File | null>(null);
+  const [activeModal, setActiveModal] = useState<LegalDocument | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (file) setFileName(file.name);
+    const selected = e.target.files?.[0];
+    if (!selected) return;
+    const problem = validateClinicalFile(selected);
+    if (problem) {
+      toast.error(problem);
+      e.target.value = "";
+      return;
+    }
+    setFile(selected);
   };
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!formData.termsAccepted) return;
-    onSubmit(formData);
+    if (!formData.termsAccepted || isSubmitting) return;
+    // The version travels with the submission so the server records exactly
+    // which notice was on screen when the box was ticked.
+    onSubmit({
+      ...formData,
+      file,
+      privacyNoticeVersion: PRIVACY_NOTICE_VERSION,
+    });
   };
 
   return (
@@ -84,8 +108,8 @@ export const PatientRegistration = ({ onBack, onSubmit }: Props) => {
         </h1>
 
         <p className="text-base xl:text-lg text-brand-gray/80 font-medium mb-6 max-w-md leading-relaxed">
-          Vemos que es tu primera vez con nosotros. Completa estos datos para
-          crear tu expediente clínico.
+          Completa estos datos para crear tu expediente y agendar tu
+          cita.
         </p>
 
         <form onSubmit={handleSubmit} className="space-y-4 xl:space-y-5">
@@ -160,21 +184,6 @@ export const PatientRegistration = ({ onBack, onSubmit }: Props) => {
             </div>
           </div>
 
-          <div className="flex flex-col gap-1.5">
-            <label className="text-brand-dark font-medium text-base xl:text-lg text-left tracking-normal ml-1">
-              Motivo de la consulta
-            </label>
-            <textarea
-              placeholder="Describa brevemente su malestar o tratamiento..."
-              value={formData.reason}
-              onChange={(e) =>
-                setFormData({ ...formData, reason: e.target.value })
-              }
-              required
-              className="w-full px-4 py-3 border-2 border-brand-light rounded-xl text-base xl:text-lg text-brand-dark bg-white focus:border-brand-primary focus:ring-2 focus:ring-brand-primary/20 outline-none transition-all resize-none h-20"
-            />
-          </div>
-
           <div className="flex flex-col gap-2">
             <label className="text-brand-dark font-medium text-base xl:text-lg text-left tracking-normal ml-1">
               Estudios o Fotos (Opcional)
@@ -185,73 +194,30 @@ export const PatientRegistration = ({ onBack, onSubmit }: Props) => {
             >
               <input
                 type="file"
-                accept="image/*, application/pdf"
+                accept={CLINICAL_UPLOAD_ACCEPT}
                 className="hidden"
                 ref={fileInputRef}
                 onChange={handleFileUpload}
               />
               <Upload className="w-6 h-6 text-brand-primary mb-2" />
               <p className="text-sm font-bold text-brand-dark">
-                {fileName ? fileName : "Toca aquí para subir o tomar foto"}
+                {file ? file.name : "Toca aquí para subir o tomar foto"}
               </p>
               <p className="text-xs text-brand-gray font-medium mt-1">
-                {fileName ? "Archivo adjunto" : "JPG, PNG o PDF"}
+                {file ? "Archivo adjunto" : "JPG, PNG o PDF"}
               </p>
             </div>
           </div>
 
-          <label className="flex items-start gap-3 cursor-pointer group mt-2">
-            <div className="relative flex items-center justify-center shrink-0 mt-0.75">
-              <input
-                type="checkbox"
-                className="sr-only"
-                checked={formData.termsAccepted}
-                onChange={(e) =>
-                  setFormData({ ...formData, termsAccepted: e.target.checked })
-                }
-              />
-              <div
-                className={`w-5 h-5 rounded border-2 transition-colors flex items-center justify-center ${formData.termsAccepted ? "bg-brand-primary border-brand-primary" : "bg-white border-brand-light"}`}
-              >
-                {formData.termsAccepted && (
-                  <motion.div
-                    initial={{ scale: 0 }}
-                    animate={{ scale: 1 }}
-                    transition={{ duration: 0.2 }}
-                  >
-                    <Check className="w-3.5 h-3.5 text-white" strokeWidth={4} />
-                  </motion.div>
-                )}
-              </div>
-            </div>
-            <span className="text-[13px] text-brand-gray font-medium leading-relaxed">
-              He leído y acepto el{" "}
-              <button
-                type="button"
-                onClick={(e) => {
-                  e.preventDefault();
-                  e.stopPropagation();
-                  setActiveModal("privacy");
-                }}
-                className="text-brand-primary font-bold cursor-pointer hover:underline"
-              >
-                Aviso de Privacidad
-              </button>{" "}
-              y los{" "}
-              <button
-                type="button"
-                onClick={(e) => {
-                  e.preventDefault();
-                  e.stopPropagation();
-                  setActiveModal("terms");
-                }}
-                className="text-brand-primary font-bold cursor-pointer hover:underline"
-              >
-                Términos y Condiciones
-              </button>{" "}
-              de la clínica.
-            </span>
-          </label>
+          {/* Express consent for sensitive (health) data - LFPDPPP art. 8.
+              Required: the submit button stays disabled until it is ticked. */}
+          <PrivacyConsentCheckbox
+            checked={formData.termsAccepted}
+            onChange={(termsAccepted) =>
+              setFormData({ ...formData, termsAccepted })
+            }
+            onOpenDocument={setActiveModal}
+          />
 
           <div className="pt-2">
             <Button
@@ -259,8 +225,8 @@ export const PatientRegistration = ({ onBack, onSubmit }: Props) => {
               disabled={
                 !formData.fullName ||
                 formData.birthYear.length < 4 ||
-                !formData.reason ||
-                !formData.termsAccepted
+                !formData.termsAccepted ||
+                isSubmitting
               }
               className="w-full sm:w-fit px-10 py-3 rounded-full text-lg disabled:opacity-50 transition-all cursor-pointer"
             >
@@ -270,23 +236,10 @@ export const PatientRegistration = ({ onBack, onSubmit }: Props) => {
         </form>
       </motion.div>
 
-      <Modal
-        isOpen={activeModal === "privacy"}
+      <PrivacyConsentModals
+        openDocument={activeModal}
         onClose={() => setActiveModal(null)}
-        title="Aviso de Privacidad"
-        icon={<ShieldCheck className="w-6 h-6 text-brand-primary" />}
-      >
-        <PrivacyPolicyContent />
-      </Modal>
-
-      <Modal
-        isOpen={activeModal === "terms"}
-        onClose={() => setActiveModal(null)}
-        title="Términos y Condiciones de Uso"
-        icon={<FileText className="w-6 h-6 text-brand-primary" />}
-      >
-        <TermsAndConditionsContent />
-      </Modal>
+      />
     </>
   );
 };

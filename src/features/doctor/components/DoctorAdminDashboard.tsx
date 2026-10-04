@@ -1,11 +1,19 @@
 import { useState } from "react";
-import { Stethoscope, Package, CircleDollarSign } from "lucide-react";
+import {
+  Stethoscope,
+  Package,
+  CircleDollarSign,
+  ShieldCheck,
+  History,
+} from "lucide-react";
 import { CatalogTab } from "./tabs/CatalogTab";
 import { InventoryTab } from "./tabs/InventoryTab";
+import { ArcoRequestsTab } from "./tabs/ArcoRequestsTab";
+import { AuditLogTab } from "./tabs/AuditLogTab";
 
 export const DoctorAdminDashboard = () => {
   const [activeTab, setActiveTab] = useState<
-    "catalog" | "inventory" | "finances"
+    "catalog" | "inventory" | "finances" | "arco" | "audit"
   >("catalog");
 
   return (
@@ -49,6 +57,28 @@ export const DoctorAdminDashboard = () => {
           >
             <CircleDollarSign className="w-4 h-4" /> Finanzas y Métricas
           </button>
+
+          <button
+            onClick={() => setActiveTab("arco")}
+            className={`flex items-center gap-2 px-6 py-3 min-h-12 rounded-full text-base font-bold transition-all cursor-pointer whitespace-nowrap ${
+              activeTab === "arco"
+                ? "bg-brand-dark text-white shadow-md"
+                : "bg-slate-100 text-slate-800 hover:bg-slate-200"
+            }`}
+          >
+            <ShieldCheck className="w-5 h-5" /> Solicitudes ARCO
+          </button>
+
+          <button
+            onClick={() => setActiveTab("audit")}
+            className={`flex items-center gap-2 px-6 py-3 min-h-12 rounded-full text-base font-bold transition-all cursor-pointer whitespace-nowrap ${
+              activeTab === "audit"
+                ? "bg-brand-dark text-white shadow-md"
+                : "bg-slate-100 text-slate-800 hover:bg-slate-200"
+            }`}
+          >
+            <History className="w-5 h-5" /> Bitácora
+          </button>
         </div>
       </div>
 
@@ -57,6 +87,10 @@ export const DoctorAdminDashboard = () => {
         {activeTab === "catalog" && <CatalogTab />}
 
         {activeTab === "inventory" && <InventoryTab />}
+
+        {activeTab === "arco" && <ArcoRequestsTab />}
+
+        {activeTab === "audit" && <AuditLogTab />}
 
         {activeTab === "finances" && (
           <div className="bg-white rounded-2xl border border-slate-200 p-8 text-center text-brand-gray">

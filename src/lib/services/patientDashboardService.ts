@@ -47,6 +47,10 @@ interface RawJsonbMedication {
   dosage?: string;
   daysLeft?: string;
   duration?: string;
+  // Shape written by the consultation workspace (soapService.MedicationItem).
+  nombre?: string;
+  dosis?: string;
+  indicaciones?: string;
 }
 
 // 1. OBTENER EL PERFIL DEL PACIENTE LOGUEADO
@@ -181,9 +185,18 @@ export const fetchMyCarePlan = async (
   return medsArray.map((med, index) => ({
     id: med.id ?? index.toString(),
     type: med.type ?? "med",
-    name: med.name ?? med.medicationName ?? "Tratamiento / Medicamento",
+    name:
+      med.name ??
+      med.medicationName ??
+      ([med.nombre, med.dosis ? `(${med.dosis})` : ""]
+        .filter(Boolean)
+        .join(" ") ||
+        "Tratamiento / Medicamento"),
     instruction:
-      med.instruction ?? med.dosage ?? "Ver indicaciones de la doctora",
+      med.instruction ??
+      med.dosage ??
+      med.indicaciones ??
+      "Ver indicaciones de la doctora",
     daysLeft: med.daysLeft ?? med.duration ?? "Continuo",
   }));
 };
