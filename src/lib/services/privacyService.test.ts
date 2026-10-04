@@ -116,7 +116,7 @@ describe("ARCO request lists", () => {
   it("throws a Spanish message on failure", async () => {
     supabaseMock.onFrom("arco_requests", { error: { message: "denied" } });
     await expect(fetchArcoRequests()).rejects.toThrow(
-      "No se pudieron cargar las solicitudes ARCO.",
+      "No se pudieron cargar las solicitudes.",
     );
   });
 });

@@ -1,4 +1,5 @@
 import { supabase } from "../supabase";
+import { normalizeToE164 } from "../phone";
 
 // 1. INTERFAZ ESTRICTA PARA LA RESPUESTA DE LA BD (CERO ANYS)
 interface RawAppointmentData {
@@ -138,5 +139,151 @@ export const createPatient = async (
       throw new Error("Ya existe un paciente con ese número de teléfono.");
     }
     throw new Error("Error al crear el paciente.");
+  }
+};
+
+// 7. PERSONAL DATA (staff edit, e.g. an ARCO rectification request)
+
+export const PATIENT_GENDERS = ["Femenino", "Masculino", "Otro"] as const;
+
+/** Stored with an ASCII minus; the form shows a typographic one. */
+export const BLOOD_TYPES = ["O+", "O-", "A+", "A-", "B+", "B-", "AB+", "AB-"] as const;
+
+/** The editable personal-data columns of public.patients. */
+export interface PatientDetailsFields {
+  first_name: string;
+  last_name: string | null;
+  phone: string;
+  email: string | null;
+  gender: string | null;
+  dob: string | null;
+  blood_type: string | null;
+  allergies: string | null;
+  chronic_conditions: string | null;
+}
+
+export interface PatientDetails
+  extends Omit<PatientDetailsFields, "first_name" | "phone"> {
+  id: string;
+  first_name: string | null;
+  phone: string | null;
+  anonymized_at: string | null;
+}
+
+export const ANONYMIZED_PATIENT_MESSAGE =
+  "Este expediente fue anonimizado. Sus datos ya no se pueden editar.";
+
+const PATIENT_DETAILS_COLUMNS =
+  "id, first_name, last_name, phone, email, gender, dob, blood_type, allergies, chronic_conditions, anonymized_at";
+
+/** Older rows may carry a typographic minus or lowercase ("o−"). */
+const normalizeBloodType = (value: string | null): string | null => {
+  if (!value) return null;
+  return value.trim().toUpperCase().replace(/\u2212/g, "-") || null;
+};
+
+export const fetchPatientDetails = async (
+  id: string,
+): Promise<PatientDetails> => {
+  const { data, error } = await supabase
+    .from("patients")
+    .select(PATIENT_DETAILS_COLUMNS)
+    .eq("id", id)
+    .maybeSingle<PatientDetails>();
+
+  if (error) {
+    // Only the code: the message may echo personal data.
+    console.error("[patientService] fetchPatientDetails failed:", error.code);
+    throw new Error("No se pudieron cargar los datos del paciente.");
+  }
+  if (!data) throw new Error("No encontramos a este paciente.");
+  return { ...data, blood_type: normalizeBloodType(data.blood_type) };
+};
+
+const optionalText = (value: string | null | undefined): string | null => {
+  const trimmed = (value ?? "").trim();
+  return trimmed === "" ? null : trimmed;
+};
+
+const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+const DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
+
+/**
+ * Builds the update payload from the allowed columns only, so a caller can
+ * never write status, notes, anonymized_at or any other column through here.
+ */
+const toPatientDetailsPayload = (
+  fields: PatientDetailsFields,
+): PatientDetailsFields => {
+  const firstName = optionalText(fields.first_name);
+  if (!firstName) throw new Error("Escribe el nombre del paciente.");
+
+  const phone = normalizeToE164(fields.phone);
+  if (!phone) throw new Error("Ingresa un teléfono válido a 10 dígitos.");
+
+  const email = optionalText(fields.email);
+  if (email && !EMAIL_PATTERN.test(email)) {
+    throw new Error("Revisa el correo electrónico.");
+  }
+
+  const gender = optionalText(fields.gender);
+  if (gender && !(PATIENT_GENDERS as readonly string[]).includes(gender)) {
+    throw new Error("Elige un género de la lista.");
+  }
+
+  const bloodType = normalizeBloodType(optionalText(fields.blood_type));
+  if (bloodType && !(BLOOD_TYPES as readonly string[]).includes(bloodType)) {
+    throw new Error("Elige un tipo de sangre de la lista.");
+  }
+
+  const dob = optionalText(fields.dob);
+  if (dob && !DATE_PATTERN.test(dob)) {
+    throw new Error("Revisa la fecha de nacimiento.");
+  }
+
+  return {
+    first_name: firstName,
+    // Empty string instead of NULL: the patient list renders
+    // `${first_name} ${last_name}` and would otherwise show "null".
+    last_name: optionalText(fields.last_name) ?? "",
+    phone,
+    email,
+    gender,
+    dob,
+    blood_type: bloodType,
+    allergies: optionalText(fields.allergies),
+    chronic_conditions: optionalText(fields.chronic_conditions),
+  };
+};
+
+/**
+ * Staff correction of a patient's personal data (RLS: patients_staff_all).
+ * The audit_log trigger on public.patients records which columns changed.
+ * An anonymized record is never updated: the filter on anonymized_at makes
+ * the refusal atomic, and zero updated rows means it was anonymized.
+ */
+export const updatePatientDetails = async (
+  id: string,
+  fields: PatientDetailsFields,
+): Promise<void> => {
+  const payload = toPatientDetailsPayload(fields);
+
+  const { data, error } = await supabase
+    .from("patients")
+    .update(payload)
+    .eq("id", id)
+    .is("anonymized_at", null)
+    .select("id");
+
+  if (error) {
+    // 23505 = unique_violation on the normalized-phone index (migration 15).
+    if (error.code === "23505") {
+      throw new Error("Ya existe un paciente con ese número de teléfono.");
+    }
+    console.error("[patientService] updatePatientDetails failed:", error.code);
+    throw new Error("No se pudieron guardar los datos del paciente.");
+  }
+  if (!data || data.length === 0) {
+    throw new Error(ANONYMIZED_PATIENT_MESSAGE);
   }
 };

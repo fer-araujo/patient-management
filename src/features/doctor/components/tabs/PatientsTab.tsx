@@ -9,6 +9,7 @@ import {
   Archive,
   FileText,
   UserPlus,
+  UserPen,
 } from "lucide-react";
 import { Button } from "../../../../components/ui/Button";
 import { DataGrid, type ColumnDef } from "../../../../components/ui/DataGrid";
@@ -20,6 +21,7 @@ import {
   type DashboardPatient,
 } from "../../../../lib/services/patientService";
 import { ConsultationWorkspace } from "../ConsultationWorkspace";
+import { EditPatientModal } from "../modals/EditPatientModal";
 import { toast } from "react-hot-toast/headless";
 
 export const PatientsTab = () => {
@@ -38,6 +40,7 @@ export const PatientsTab = () => {
     useState<DashboardPatient | null>(null);
   const [selectedPatientProfile, setSelectedPatientProfile] =
     useState<DashboardPatient | null>(null);
+  const [patientToEditId, setPatientToEditId] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
 
   const [isNewPatientModalOpen, setIsNewPatientModalOpen] = useState(false);
@@ -187,6 +190,13 @@ export const PatientsTab = () => {
             title="Ver Expediente"
           >
             <FileText className="w-5 h-5" strokeWidth={2.5} />
+          </button>
+          <button
+            onClick={() => setPatientToEditId(row.id)}
+            className="flex items-center justify-center w-10 h-10 bg-brand-light/20 text-brand-primary hover:bg-brand-primary hover:text-white rounded-xl transition-all border border-brand-primary/20 hover:border-brand-primary shadow-sm cursor-pointer shrink-0"
+            title="Editar datos"
+          >
+            <UserPen className="w-5 h-5" strokeWidth={2.5} />
           </button>
           {row.status === "active" && (
             <>
@@ -476,6 +486,13 @@ export const PatientsTab = () => {
           </div>
         </form>
       </Modal>
+
+      <EditPatientModal
+        isOpen={!!patientToEditId}
+        patientId={patientToEditId}
+        onClose={() => setPatientToEditId(null)}
+        onSaved={loadData}
+      />
 
       <Modal
         isOpen={!!patientToBlock}

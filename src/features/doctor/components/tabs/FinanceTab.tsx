@@ -48,7 +48,15 @@ const formatDay = (timestamp: string) =>
     })
     .replace(/\./g, "");
 
-export const FinanceTab = () => {
+interface FinanceTabProps {
+  /**
+   * Show the patient's name next to each charge. Only for the doctor; an admin
+   * sees the amount and the service, never who was treated.
+   */
+  showPatientNames?: boolean;
+}
+
+export const FinanceTab = ({ showPatientNames = false }: FinanceTabProps) => {
   const [period, setPeriod] = useState<FinancePeriod>("this_month");
   const [summary, setSummary] = useState<FinanceSummary | null>(null);
   const [monthly, setMonthly] = useState<MonthlyFinance[]>([]);
@@ -63,7 +71,10 @@ export const FinanceTab = () => {
     const chartFrom = `${range.from.slice(0, 4)}-01-01`;
 
     Promise.all([
-      getFinanceSummary(range.from, range.to),
+      getFinanceSummary(range.from, range.to, {
+        includePatientNames: showPatientNames,
+      }),
+      // Only its monthly totals are used, so no names are ever requested.
       chartFrom === range.from
         ? null
         : getFinanceSummary(chartFrom, range.to),
@@ -85,7 +96,7 @@ export const FinanceTab = () => {
     return () => {
       cancelled = true;
     };
-  }, [period]);
+  }, [period, showPatientNames]);
 
   const handlePeriodChange = (value: string) => {
     if (value === period) return;

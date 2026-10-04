@@ -173,7 +173,7 @@ export const fetchArcoRequests = async (): Promise<ArcoRequest[]> => {
     .order("created_at", { ascending: false })
     .returns<RawArcoRequest[]>();
 
-  if (error) throw new Error("No se pudieron cargar las solicitudes ARCO.");
+  if (error) throw new Error("No se pudieron cargar las solicitudes.");
   return (data || []).map(mapArcoRequest);
 };
 
@@ -207,9 +207,13 @@ export const anonymizePatient = async (
 
 export const AUDIT_PAGE_SIZE = 30;
 
+/** Most recent entries the Bitácora loads at once (the table pages them). */
+export const AUDIT_MAX_ENTRIES = 500;
+
 export const fetchAuditLog = async (
   patientId: string | null,
   page: number,
+  pageSize: number = AUDIT_PAGE_SIZE,
 ): Promise<AuditEntry[]> => {
   let query = supabase
     .from("audit_log")
@@ -221,7 +225,7 @@ export const fetchAuditLog = async (
 
   const { data, error } = await query
     .order("occurred_at", { ascending: false })
-    .range(page * AUDIT_PAGE_SIZE, (page + 1) * AUDIT_PAGE_SIZE - 1)
+    .range(page * pageSize, (page + 1) * pageSize - 1)
     .returns<RawAuditEntry[]>();
   if (error) throw new Error("No se pudo cargar la bitácora.");
 

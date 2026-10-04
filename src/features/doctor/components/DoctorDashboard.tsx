@@ -5,10 +5,20 @@ import {
   updateAppointmentStatus,
   type DashboardAppointment,
 } from "../../../lib/services/clinicService";
-import { Inbox, CalendarDays, FileText, Loader2 } from "lucide-react";
+import {
+  Inbox,
+  CalendarDays,
+  FileText,
+  Loader2,
+  ShieldCheck,
+  History,
+} from "lucide-react";
 import { InboxTab } from "./tabs/InboxTab";
 import { PatientsTab } from "./tabs/PatientsTab";
 import { CalendarTab } from "./tabs/CalendarTab";
+import { ArcoRequestsTab } from "./tabs/ArcoRequestsTab";
+import { AuditLogTab } from "./tabs/AuditLogTab";
+import { fetchArcoRequests } from "../../../lib/services/privacyService";
 import { ConsultationWorkspace } from "./ConsultationWorkspace";
 import {
   fetchBlockedSlots,
@@ -19,9 +29,26 @@ import { CalendarProvider } from "../context/CalendarProvider";
 export const DoctorDashboard = () => {
   const [appointments, setAppointments] = useState<DashboardAppointment[]>([]);
   const [isLoading, setIsLoading] = useState(true);
-  const [activeTab, setActiveTab] = useState<"inbox" | "patients" | "calendar">(
-    "inbox",
-  );
+  const [activeTab, setActiveTab] = useState<
+    "inbox" | "patients" | "calendar" | "arco" | "audit"
+  >("inbox");
+  // ARCO requests carry a legal deadline, so the pending count is always on
+  // the tab. Refreshed on every tab change so resolving one updates it.
+  const [pendingArco, setPendingArco] = useState(0);
+
+  useEffect(() => {
+    fetchArcoRequests()
+      .then((requests) =>
+        setPendingArco(
+          requests.filter(
+            (r) => r.status === "received" || r.status === "in_progress",
+          ).length,
+        ),
+      )
+      .catch((error: unknown) =>
+        console.error("[DoctorDashboard] Error al cargar solicitudes ARCO:", error),
+      );
+  }, [activeTab]);
   const [activeConsultation, setActiveConsultation] =
     useState<DashboardAppointment | null>(null);
   const [blockedSlots, setBlockedSlots] = useState<DashboardBlockedSlot[]>([]);
@@ -102,7 +129,7 @@ export const DoctorDashboard = () => {
             onClick={() => setActiveTab("inbox")}
             className={`flex items-center gap-2 px-6 py-3 rounded-full text-sm font-bold transition-all cursor-pointer whitespace-nowrap ${activeTab === "inbox" ? "bg-brand-primary text-white shadow-md" : "bg-slate-100 text-brand-gray hover:bg-slate-200 hover:text-brand-dark"}`}
           >
-            <Inbox className="w-4 h-4" /> Solicitudes y Citas
+            <Inbox className="w-4 h-4" /> Agenda
           </button>
           <button
             onClick={() => setActiveTab("patients")}
@@ -114,7 +141,27 @@ export const DoctorDashboard = () => {
             onClick={() => setActiveTab("calendar")}
             className={`flex items-center gap-2 px-6 py-3 rounded-full text-sm font-bold transition-all cursor-pointer whitespace-nowrap ${activeTab === "calendar" ? "bg-brand-primary text-white shadow-md" : "bg-slate-100 text-brand-gray hover:bg-slate-200 hover:text-brand-dark"}`}
           >
-            <CalendarDays className="w-4 h-4" /> Mi Agenda
+            <CalendarDays className="w-4 h-4" /> Calendario
+          </button>
+          <button
+            onClick={() => setActiveTab("arco")}
+            className={`flex items-center gap-2 px-6 py-3 rounded-full text-sm font-bold transition-all cursor-pointer whitespace-nowrap ${activeTab === "arco" ? "bg-brand-primary text-white shadow-md" : "bg-slate-100 text-brand-gray hover:bg-slate-200 hover:text-brand-dark"}`}
+          >
+            <ShieldCheck className="w-4 h-4" /> Solicitudes
+            {pendingArco > 0 && (
+              <span
+                className="text-[10px] font-bold text-amber-600 bg-amber-50 px-2 py-0.5 rounded-md"
+                title="Solicitudes pendientes de respuesta"
+              >
+                {pendingArco}
+              </span>
+            )}
+          </button>
+          <button
+            onClick={() => setActiveTab("audit")}
+            className={`flex items-center gap-2 px-6 py-3 rounded-full text-sm font-bold transition-all cursor-pointer whitespace-nowrap ${activeTab === "audit" ? "bg-brand-primary text-white shadow-md" : "bg-slate-100 text-brand-gray hover:bg-slate-200 hover:text-brand-dark"}`}
+          >
+            <History className="w-4 h-4" /> Bitácora
           </button>
         </div>
       </div>
@@ -129,6 +176,8 @@ export const DoctorDashboard = () => {
             />
           )}
           {activeTab === "patients" && <PatientsTab />}
+          {activeTab === "arco" && <ArcoRequestsTab />}
+          {activeTab === "audit" && <AuditLogTab />}
           {activeTab === "calendar" && (
             <CalendarTab
               appointments={appointments}

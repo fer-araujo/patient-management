@@ -7,7 +7,12 @@ import {
   Navigate,
 } from "react-router-dom";
 import toast from "react-hot-toast";
-import { useAuthRole, isStaffRole } from "./features/auth/useAuthRole";
+import {
+  useAuthRole,
+  isStaffRole,
+  isDoctorRole,
+  isBusinessRole,
+} from "./features/auth/useAuthRole";
 
 import { BookingFlow } from "./features/appointments/components/BookingFlow";
 import { PatientDashboard } from "./features/patients/components/PatientDashboard";
@@ -27,16 +32,37 @@ import { DoctorAdminDashboard } from "./features/doctor/components/DoctorAdminDa
 // Access is decided by the profiles.role of the current session, never by the
 // URL. A phone-OTP patient session is authenticated but is NOT staff, so it is
 // bounced out of /doctor/* instead of rendering the clinical dashboards.
-function DoctorProtectedRoute({ children }: { children: React.ReactNode }) {
+//
+// `area` picks who may enter:
+//   clinical -> Centro Clínico, the doctor only. An admin is sent to
+//               Administración, the only area it may open.
+//   business -> Administración, the doctor or an admin.
+type StaffArea = "clinical" | "business";
+
+function DoctorProtectedRoute({
+  area,
+  children,
+}: {
+  area: StaffArea;
+  children: React.ReactNode;
+}) {
   const { session, role, loading } = useAuthRole();
   const isStaff = isStaffRole(role);
+  const isAllowed = area === "clinical" ? isDoctorRole(role) : isBusinessRole(role);
   const isDeniedStaffArea = !loading && !!session && !isStaff;
+  const isAdminInClinicalArea = !loading && !!session && isStaff && !isAllowed;
 
   useEffect(() => {
     if (isDeniedStaffArea) {
       toast.error("Tu cuenta no tiene acceso al área médica.");
     }
   }, [isDeniedStaffArea]);
+
+  useEffect(() => {
+    if (isAdminInClinicalArea) {
+      toast.error("Tu cuenta solo tiene acceso a Administración.");
+    }
+  }, [isAdminInClinicalArea]);
 
   if (loading)
     return (
@@ -50,6 +76,9 @@ function DoctorProtectedRoute({ children }: { children: React.ReactNode }) {
 
   // Signed in, but not staff.
   if (!isStaff) return <Navigate to="/dashboard" replace />;
+
+  // Staff, but not for this area (an admin in Centro Clínico).
+  if (!isAllowed) return <Navigate to="/doctor/admin" replace />;
 
   return <>{children}</>;
 }
@@ -127,7 +156,7 @@ function AppRoutes() {
       <Route
         path="/doctor/dashboard"
         element={
-          <DoctorProtectedRoute>
+          <DoctorProtectedRoute area="clinical">
             <DashboardLayout>
               <DoctorDashboard />
             </DashboardLayout>
@@ -138,7 +167,7 @@ function AppRoutes() {
       <Route
         path="/doctor/admin"
         element={
-          <DoctorProtectedRoute>
+          <DoctorProtectedRoute area="business">
             <DashboardLayout>
               <DoctorAdminDashboard />
             </DashboardLayout>

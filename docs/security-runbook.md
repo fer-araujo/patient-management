@@ -1362,3 +1362,95 @@ without a method is refused; staff cannot insert or delete payments directly;
 every write is audited; a patient reads zero payments and cannot call
 `record_payment()`; `anon` reads nothing and cannot call it; the table rejects
 inconsistent rows and a second payment for the same appointment.
+
+---
+
+# Role separation — doctor vs. admin
+
+## Migration 18 — Separate the doctor and admin roles
+
+**File:** `supabase/migrations/20260922181700_role_separation.sql`. Idempotent;
+paste it into the SQL editor after migration 17.
+
+- Expected: one notice starting with `Migration 18 PASSED`.
+- `Migration 18 ABORTED: no profile has role doctor…` means nothing changed:
+  promote the doctor first (migration 03), then run it again. Without a doctor
+  the clinic would be locked out of its clinical data.
+- A failure raises `Migration 18 FAILED: …` naming the broken rule.
+
+What it changes:
+
+- `public.is_staff()` now means **clinical staff = `doctor` only**. Every
+  policy and RPC that already called it (patients, appointments, clinical
+  notes and addenda, prescriptions, patient files, the `clinical_records`
+  bucket, ARCO requests, consents, audit log, other profiles, clinic
+  settings, blocked slots, role changes, `record_payment`,
+  `finalize_consultation`, `resolve_arco_request`, `anonymize_patient`)
+  excludes `admin` without being rewritten.
+- New `public.is_business_staff()` = `doctor` or `admin`. It is used ONLY by
+  `services_staff_all`, `inventory_staff_all`,
+  `inventory_movements_select_staff`, `payments_select_staff` and inside
+  `adjust_stock()`. `register_me()` also uses it, so neither staff role can
+  register itself as a patient. The gate refuses any other use.
+- An admin reading Finanzas gets amounts and the service, never the patient:
+  `patients` is not readable, so the name embed comes back empty. The
+  frontend does not even request it for an admin.
+
+**Deploy order:** run the migration, then deploy the frontend (admins are
+redirected from Centro Clínico to Administración). Nobody holds `admin` yet,
+so the order is not critical today.
+
+**Rollback:** re-run `20260922180100_role_helpers.sql` (restores `is_staff()`
+for doctor and admin), then migrations 04, 16 and 17 to restore the business
+policies and `adjust_stock()`. `is_business_staff()` can stay; nothing else
+calls it after that.
+
+## Roles check — `supabase/tests/roles_check.sql`
+
+**Run:** paste the whole file into the SQL editor after migration 18. It runs
+inside `begin; … rollback;` with throwaway doctor, admin and patient users and
+disables the `whatsapp_notifications` trigger inside the transaction, so
+nothing is committed or sent.
+
+- Expected: one notice starting with `ROLES CHECK PASSED`.
+- A failure raises `ROLES CHECK FAILED: …` naming the broken rule.
+
+It proves: the doctor reads and writes every clinical and business table and
+calls `record_payment`, `finalize_consultation`, `resolve_arco_request` and
+`adjust_stock`; the admin reads inventory, movements, every service and
+payment amounts, adjusts stock and edits the catalog, but reads zero rows of
+patients, appointments, notes, addenda, prescriptions, files, ARCO requests,
+consents, audit log, clinic settings, blocked slots, `clinical_records`
+objects and other profiles, sees no patient name next to a payment, cannot
+write patients or appointments, cannot promote itself, and cannot call
+`record_payment`, `finalize_consultation`, `resolve_arco_request`,
+`anonymize_patient` or `export_my_data`; patients and `anon` are not business
+staff.
+
+## Creating an admin account (later)
+
+There is no admin user today. When administrative staff joins, create the
+account from the **SQL editor only — never from the app** (the app has no
+role screen on purpose, and `profiles_block_role_escalation` refuses role
+changes from any session that is not the doctor):
+
+1. Supabase dashboard → Authentication → Users → **Add user** with the
+   person's email and a password (email login, no phone).
+2. In the SQL editor:
+
+   ```sql
+   update public.profiles
+      set role = 'admin'
+    where id = (select id from auth.users where lower(email) = lower('person@example.com'));
+   -- expected: UPDATE 1
+   select role from public.profiles
+    where id = (select id from auth.users where lower(email) = lower('person@example.com'));
+   -- expected: admin
+   ```
+
+3. Sign in as that person: the header shows only "Administración", and
+   `/doctor/dashboard` redirects to `/doctor/admin`.
+
+To revoke access, set the role back to `patient` (or delete the auth user).
+Never set `doctor` on anyone but the doctor: `doctor` sees every clinical
+record.

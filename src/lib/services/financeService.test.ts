@@ -259,7 +259,9 @@ describe("getFinanceSummary", () => {
     supabaseMock.onFrom("payments", { data: payments });
     supabaseMock.onFrom("inventory_movements", { data: purchases });
 
-    const { movements } = await getFinanceSummary("2026-09-01", "2026-10-01");
+    const { movements } = await getFinanceSummary("2026-09-01", "2026-10-01", {
+      includePatientNames: true,
+    });
 
     expect(movements.map((m) => [m.id, m.kind, m.amount])).toEqual([
       ["m2", "purchase", -400],
@@ -271,6 +273,55 @@ describe("getFinanceSummary", () => {
     ]);
     expect(movements.find((m) => m.id === "p1")?.concept).toBe("Toxina · Ana Pérez");
     expect(movements.find((m) => m.id === "m1")?.concept).toBe("Jeringas (10)");
+  });
+
+  it("asks for the patient's name only when the doctor's view needs it", async () => {
+    await getFinanceSummary("2026-09-01", "2026-10-01", { includePatientNames: true });
+    await getFinanceSummary("2026-09-01", "2026-10-01");
+
+    const [doctorQuery, defaultQuery] = supabaseMock.queries("payments");
+    expect(String(doctorQuery.args("select")?.[0])).toContain("patients ( first_name, last_name )");
+    // Privacy by default: without the option the patients embed is not requested.
+    expect(String(defaultQuery.args("select")?.[0])).not.toContain("patients");
+    expect(String(defaultQuery.args("select")?.[0])).toContain("services ( name )");
+  });
+
+  it("builds admin movements from amount and service only, never a patient name", async () => {
+    // Even if a row carried a patient (it cannot under RLS), it is not shown.
+    supabaseMock.onFrom("payments", { data: payments });
+    supabaseMock.onFrom("inventory_movements", { data: purchases });
+
+    const summary = await getFinanceSummary("2026-09-01", "2026-10-01");
+
+    const concepts = summary.movements.map((m) => m.concept);
+    expect(concepts).toContain("Toxina");
+    expect(concepts).toContain("Valoración");
+    expect(concepts).toContain("Servicio eliminado");
+    for (const name of ["Ana", "Pérez", "Luis", "Gómez", "Eva", "Ruiz"]) {
+      expect(concepts.join(" ")).not.toContain(name);
+    }
+    // Amounts and totals are unchanged.
+    expect(summary.income).toBe(1300);
+    expect(summary.movements.find((m) => m.id === "p1")?.amount).toBe(800);
+  });
+
+  it("degrades to the service alone when the patients embed comes back null", async () => {
+    supabaseMock.onFrom("payments", {
+      data: [
+        {
+          id: "p9", status: "paid", amount_charged: "5500.00", list_price: "5500.00",
+          created_at: "2026-09-10T16:00:00+00:00",
+          services: { name: "Hilos Tensores" }, patients: null,
+        },
+      ],
+    });
+
+    const { movements } = await getFinanceSummary("2026-09-01", "2026-10-01", {
+      includePatientNames: true,
+    });
+
+    expect(movements[0].concept).toBe("Hilos Tensores");
+    expect(movements[0].amount).toBe(5500);
   });
 
   it("fails with a readable message when a query fails", async () => {

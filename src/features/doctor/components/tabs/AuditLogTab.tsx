@@ -1,7 +1,9 @@
 import { useEffect, useMemo, useState } from "react";
 import { History, Loader2 } from "lucide-react";
+import { Dropdown } from "../../../../components/ui/Dropdown";
+import { DataGrid, type ColumnDef } from "../../../../components/ui/DataGrid";
 import {
-  AUDIT_PAGE_SIZE,
+  AUDIT_MAX_ENTRIES,
   fetchAuditLog,
   type AuditEntry,
 } from "../../../../lib/services/privacyService";
@@ -18,7 +20,7 @@ const TABLE_LABELS: Record<string, string> = {
   patient_files: "un archivo del expediente",
   clinical_note_addenda: "una adenda",
   consents: "un consentimiento",
-  arco_requests: "una solicitud ARCO",
+  arco_requests: "una solicitud de datos personales",
   payments: "un cobro",
 };
 
@@ -60,16 +62,23 @@ const COLUMN_LABELS: Record<string, string> = {
   allergies: "alergias",
   chronic_conditions: "enfermedades crónicas",
   blood_type: "tipo de sangre",
+  gender: "género",
+  referred_by: "referido por",
+  anonymized_at: "anonimización",
 };
 
-const describeEntry = (entry: AuditEntry): string => {
-  const who = ROLE_LABELS[entry.actorRole] ?? `Rol "${entry.actorRole}"`;
-  if (entry.action === "FINALIZE") return `${who} cerró la consulta (nota e indicaciones).`;
-  if (entry.action === "EXPORT") return `${who} descargó una copia de sus datos.`;
-  if (entry.action === "ANONYMIZE") return `${who} anonimizó el expediente.`;
+const actorLabel = (entry: AuditEntry): string =>
+  ROLE_LABELS[entry.actorRole] ?? `Rol "${entry.actorRole}"`;
+
+const capitalize = (text: string) => text.charAt(0).toUpperCase() + text.slice(1);
+
+const actionLabel = (entry: AuditEntry): string => {
+  if (entry.action === "FINALIZE") return "Cerró la consulta (nota e indicaciones)";
+  if (entry.action === "EXPORT") return "Descargó una copia de sus datos";
+  if (entry.action === "ANONYMIZE") return "Anonimizó el expediente";
   const verb = ACTION_LABELS[entry.action] ?? entry.action;
   const what = TABLE_LABELS[entry.tableName] ?? entry.tableName;
-  return `${who} ${verb} ${what}.`;
+  return capitalize(`${verb} ${what}`);
 };
 
 const formatDateTime = (iso: string): string =>
@@ -89,8 +98,9 @@ export const AuditLogTab = () => {
   const [patients, setPatients] = useState<DashboardPatient[]>([]);
   const [patientId, setPatientId] = useState<string>("");
   const [entries, setEntries] = useState<AuditEntry[]>([]);
-  const [page, setPage] = useState(0);
-  const [hasMore, setHasMore] = useState(false);
+  // True when the load hit AUDIT_MAX_ENTRIES: older entries exist, reachable
+  // by filtering by patient.
+  const [isCapped, setIsCapped] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -101,12 +111,12 @@ export const AuditLogTab = () => {
 
   useEffect(() => {
     let active = true;
-    Promise.all([fetchPatients(), fetchAuditLog(null, 0)])
+    Promise.all([fetchPatients(), fetchAuditLog(null, 0, AUDIT_MAX_ENTRIES)])
       .then(([patientRows, auditRows]) => {
         if (!active) return;
         setPatients(patientRows);
         setEntries(auditRows);
-        setHasMore(auditRows.length === AUDIT_PAGE_SIZE);
+        setIsCapped(auditRows.length === AUDIT_MAX_ENTRIES);
       })
       .catch((err: unknown) => {
         if (active)
@@ -120,14 +130,17 @@ export const AuditLogTab = () => {
     };
   }, []);
 
-  const loadPage = async (targetPatient: string, targetPage: number) => {
+  const loadEntries = async (targetPatient: string) => {
     setIsLoading(true);
     setError(null);
     try {
-      const rows = await fetchAuditLog(targetPatient || null, targetPage);
-      setEntries((prev) => (targetPage === 0 ? rows : [...prev, ...rows]));
-      setPage(targetPage);
-      setHasMore(rows.length === AUDIT_PAGE_SIZE);
+      const rows = await fetchAuditLog(
+        targetPatient || null,
+        0,
+        AUDIT_MAX_ENTRIES,
+      );
+      setEntries(rows);
+      setIsCapped(rows.length === AUDIT_MAX_ENTRIES);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Error al cargar.");
     } finally {
@@ -137,39 +150,70 @@ export const AuditLogTab = () => {
 
   const handlePatientChange = (value: string) => {
     setPatientId(value);
-    loadPage(value, 0);
+    loadEntries(value);
   };
+
+  const columns: ColumnDef<AuditEntry>[] = [
+    {
+      header: "Fecha",
+      cell: (e) => (
+        <span className="text-sm text-brand-gray whitespace-nowrap">
+          {formatDateTime(e.occurredAt)}
+        </span>
+      ),
+    },
+    {
+      header: "Quién",
+      cell: (e) => (
+        <span className="text-sm font-bold text-brand-dark">{actorLabel(e)}</span>
+      ),
+    },
+    {
+      header: "Acción",
+      cell: (e) => (
+        <span className="text-sm text-brand-dark">{actionLabel(e)}</span>
+      ),
+    },
+    {
+      header: "Paciente",
+      cell: (e) => (
+        <span className="text-sm text-brand-dark">
+          {e.patientId
+            ? (patientNames.get(e.patientId) ?? "Expediente sin nombre visible")
+            : "—"}
+        </span>
+      ),
+    },
+    {
+      header: "Cambios",
+      cell: (e) => (
+        <span className="text-sm text-brand-gray">
+          {e.action === "UPDATE" && e.changedColumns.length > 0
+            ? e.changedColumns.map((c) => COLUMN_LABELS[c] ?? c).join(", ")
+            : "—"}
+        </span>
+      ),
+    },
+  ];
 
   return (
     <div className="space-y-6">
-      <div className="bg-white border border-slate-200 rounded-3xl p-6 shadow-[0_8px_30px_rgb(0,0,0,0.04)] flex flex-col sm:flex-row sm:items-center gap-4">
-        <div className="flex items-center gap-4 flex-1">
-          <div className="w-14 h-14 bg-brand-light/40 text-brand-primary rounded-2xl flex items-center justify-center shrink-0">
-            <History className="w-7 h-7" />
-          </div>
-          <div>
-            <p className="text-sm font-bold text-brand-gray uppercase tracking-wider mb-1">
-              Bitácora de cambios
-            </p>
-            <p className="text-xs text-brand-gray">
-              Quién creó, cambió o consultó el expediente. No muestra contenido
-              clínico.
-            </p>
-          </div>
-        </div>
-        <select
-          aria-label="Ver movimientos de"
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+        <p className="text-xs text-brand-gray flex items-center gap-2">
+          <History className="w-4 h-4 text-brand-primary shrink-0" />
+          Registro permanente de quién creó, cambió o consultó el expediente.
+          No muestra contenido clínico.
+        </p>
+        <Dropdown
+          className="w-full sm:w-64"
           value={patientId}
-          onChange={(e) => handlePatientChange(e.target.value)}
-          className="sm:w-64 px-4 py-2.5 border-2 border-brand-light rounded-xl text-sm text-brand-dark bg-white focus:border-brand-primary focus:ring-2 focus:ring-brand-primary/20 outline-none transition-all cursor-pointer"
-        >
-          <option value="">Todos los pacientes</option>
-          {patients.map((p) => (
-            <option key={p.id} value={p.id}>
-              {p.name}
-            </option>
-          ))}
-        </select>
+          onChange={handlePatientChange}
+          searchable
+          options={[
+            { label: "Todos los pacientes", value: "" },
+            ...patients.map((p) => ({ label: p.name, value: p.id })),
+          ]}
+        />
       </div>
 
       {error && (
@@ -188,38 +232,14 @@ export const AuditLogTab = () => {
       )}
 
       {entries.length > 0 && (
-        <ul className="bg-white border border-slate-200 rounded-3xl shadow-[0_8px_30px_rgb(0,0,0,0.04)] divide-y divide-slate-100 overflow-hidden">
-          {entries.map((entry) => (
-            <li
-              key={entry.id}
-              className="px-5 py-3 flex flex-col sm:flex-row sm:items-start gap-1 sm:gap-4"
-            >
-              <p className="text-xs font-semibold text-brand-gray sm:w-36 shrink-0 pt-0.5">
-                {formatDateTime(entry.occurredAt)}
-              </p>
-              <div className="min-w-0">
-                <p className="text-sm font-semibold text-brand-dark">
-                  {describeEntry(entry)}
-                </p>
-                {entry.patientId && (
-                  <p className="text-xs text-brand-gray">
-                    Paciente:{" "}
-                    {patientNames.get(entry.patientId) ??
-                      "Expediente sin nombre visible"}
-                  </p>
-                )}
-                {entry.action === "UPDATE" && entry.changedColumns.length > 0 && (
-                  <p className="text-xs text-brand-gray">
-                    Cambió:{" "}
-                    {entry.changedColumns
-                      .map((c) => COLUMN_LABELS[c] ?? c)
-                      .join(", ")}
-                  </p>
-                )}
-              </div>
-            </li>
-          ))}
-        </ul>
+        <div className="bg-white border border-slate-200 rounded-3xl shadow-[0_8px_30px_rgb(0,0,0,0.04)] overflow-hidden">
+          <DataGrid
+            data={entries}
+            columns={columns}
+            keyExtractor={(e) => e.id}
+            itemsPerPage={10}
+          />
+        </div>
       )}
 
       {isLoading && (
@@ -231,14 +251,11 @@ export const AuditLogTab = () => {
         </div>
       )}
 
-      {hasMore && !isLoading && (
-        <button
-          type="button"
-          onClick={() => loadPage(patientId, page + 1)}
-          className="w-full rounded-xl border border-slate-200 bg-slate-50 py-2.5 text-sm font-bold text-slate-600 hover:bg-slate-100 hover:text-brand-dark transition-colors cursor-pointer"
-        >
-          Ver movimientos anteriores
-        </button>
+      {isCapped && !isLoading && (
+        <p className="text-xs text-brand-gray text-center">
+          Se muestran los {AUDIT_MAX_ENTRIES} movimientos más recientes. Filtra
+          por paciente para ver movimientos anteriores.
+        </p>
       )}
     </div>
   );

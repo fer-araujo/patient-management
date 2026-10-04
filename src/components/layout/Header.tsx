@@ -2,7 +2,11 @@ import { HeartPulse, LogOut, Settings, LayoutDashboard } from "lucide-react";
 import { useNavigate, useLocation } from "react-router-dom";
 import toast from "react-hot-toast";
 import { supabase } from "../../lib/supabase";
-import { useAuthRole, isStaffRole } from "../../features/auth/useAuthRole";
+import {
+  useAuthRole,
+  isStaffRole,
+  isDoctorRole,
+} from "../../features/auth/useAuthRole";
 
 export const Header = () => {
   const navigate = useNavigate();
@@ -12,10 +16,14 @@ export const Header = () => {
   // Staff controls are gated by the session role, never by the URL: a patient
   // who navigates to a /doctor path must not see clinic administration links.
   const isStaff = isStaffRole(role);
+  // Only the doctor may open Centro Clínico; an admin account only ever gets
+  // the Administración entry.
+  const canOpenClinical = isDoctorRole(role);
 
   // Which of the two staff views is active is a presentation concern, so it is
   // still derived from the current path.
   const isAdminView = location.pathname.includes("/admin");
+  const showClinicalEntry = canOpenClinical && isAdminView;
 
   const handleLogout = async () => {
     try {
@@ -46,7 +54,7 @@ export const Header = () => {
         {/* 2. LOS BOTONES DE ADMIN SOLO SE RENDERIZAN SI LA CUENTA ES DEL EQUIPO MÉDICO */}
         {isStaff && (
           <>
-            {isAdminView ? (
+            {showClinicalEntry ? (
               <button
                 onClick={() => navigate("/doctor/dashboard")}
                 className="flex items-center gap-2 px-3 py-2 sm:px-4 bg-brand-primary/10 text-brand-primary hover:bg-brand-primary hover:text-white rounded-xl transition-all cursor-pointer font-bold text-sm group"
