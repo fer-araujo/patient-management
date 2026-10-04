@@ -126,7 +126,10 @@ export const DatePicker = ({
     if (dateStr < todayStr) return true; // NUNCA agendar en el pasado
     if (minDate && dateStr < minDate) return true;
     if (maxDate && dateStr > maxDate) return true;
-    if (isDateDisabled && isDateDisabled(dateStr)) return true; // Validación custom (ej. vacaciones de la Dra)
+
+    // Si pasaron la función custom (como en el paciente)
+    if (isDateDisabled && isDateDisabled(dateStr)) return true;
+
     return false;
   };
 
@@ -197,7 +200,7 @@ export const DatePicker = ({
               </div>
 
               <div className="grid grid-cols-7 gap-1 mb-2">
-                {DAY_NAMES.map((d,i) => (
+                {DAY_NAMES.map((d, i) => (
                   <div
                     key={`${d}-${i}`}
                     className="text-center text-[11px] font-bold text-brand-gray/70 uppercase"

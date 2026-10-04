@@ -20,6 +20,7 @@ interface PatientRegistrationData {
   email: string;
   birthYear: string;
   reason: string;
+  referredBy: string;
   termsAccepted: boolean;
 }
 
@@ -88,6 +89,7 @@ export const BookingFlow = ({ onComplete }: BookingFlowProps) => {
         fullName: bookingData.patientData?.fullName || "Paciente Desconocido",
         email: bookingData.patientData?.email || "",
         reason: bookingData.patientData?.reason || "",
+        referredBy: bookingData.patientData?.referredBy || "",
       });
 
       setBookingData((prev) => ({ ...prev, date, time }));

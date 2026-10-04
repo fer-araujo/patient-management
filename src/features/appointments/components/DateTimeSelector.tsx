@@ -13,21 +13,23 @@ import {
 import { Button } from "../../../components/ui/Button";
 import { DatePicker } from "../../../components/ui/DatePicker";
 import { fetchActiveServices } from "../../../lib/services/catalogService";
+// Patient-facing screens only ever see opaque busy ranges and the opening
+// hours; they never read the appointment, block or settings tables.
 import {
-  fetchDoctorAppointments,
-  type DashboardAppointment,
-} from "../../../lib/services/clinicService";
-import {
-  fetchBlockedSlots,
-  type DashboardBlockedSlot,
-} from "../../../lib/services/blockedSlotsService";
+  fetchPublicAvailability,
+  fetchPublicSchedule,
+  type BusyRange,
+} from "../../../lib/services/availabilityService";
 import { type WeeklySchedule } from "../../../lib/services/settingsService";
 import {
-  getAvailableTimeOptions,
+  getAvailableTimeOptionsFromBusy,
   filterFutureTimesOnly,
 } from "../../doctor/utils/calendarUtils";
 
 const SHORT_DAY_NAMES = ["Dom", "Lun", "Mar", "Mié", "Jue", "Vie", "Sáb"];
+
+/** How far ahead the booking calendar may be browsed. */
+const AVAILABILITY_WINDOW_DAYS = 120;
 
 interface Props {
   serviceId: string;
@@ -37,6 +39,26 @@ interface Props {
   onBack: () => void;
   onSubmit: (date: string, time: string) => void;
 }
+
+// FIX: Sacamos la función del componente para que no se re-cree y sea más pura
+const getSmartStartDate = (schedule: WeeklySchedule) => {
+  const now = new Date();
+  if (
+    now.getHours() >= 17 ||
+    (now.getHours() === 17 && now.getMinutes() >= 30)
+  ) {
+    now.setDate(now.getDate() + 1);
+  }
+
+  for (let i = 0; i < 7; i++) {
+    const dayOfWeek = now.getDay() as keyof WeeklySchedule;
+    if (schedule[dayOfWeek]?.isOpen) {
+      break;
+    }
+    now.setDate(now.getDate() + 1);
+  }
+  return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
+};
 
 export const DateTimeSelector = ({
   serviceId,
@@ -48,65 +70,39 @@ export const DateTimeSelector = ({
 }: Props) => {
   const [isLoading, setIsLoading] = useState(true);
   const [serviceDuration, setServiceDuration] = useState<number>(60);
-  const [appointments, setAppointments] = useState<DashboardAppointment[]>([]);
-  const [blockedSlots, setBlockedSlots] = useState<DashboardBlockedSlot[]>([]);
+  const [busyRanges, setBusyRanges] = useState<BusyRange[]>([]);
 
-  const [workingSchedule] = useState<WeeklySchedule>({
+  // Dejamos este estado como "Fallback" por si falla la red, pero se sobreescribirá
+  const [workingSchedule, setWorkingSchedule] = useState<WeeklySchedule>({
     1: { isOpen: true, start: "09:00 AM", end: "06:00 PM" },
     2: { isOpen: true, start: "09:00 AM", end: "06:00 PM" },
     3: { isOpen: true, start: "09:00 AM", end: "06:00 PM" },
     4: { isOpen: true, start: "09:00 AM", end: "06:00 PM" },
     5: { isOpen: true, start: "09:00 AM", end: "06:00 PM" },
     6: { isOpen: true, start: "09:00 AM", end: "02:00 PM" },
-    0: { isOpen: false, start: "09:00 AM", end: "06:00 PM" }, // DOMINGO CERRADO
+    0: { isOpen: false, start: "09:00 AM", end: "06:00 PM" },
   });
 
-  // FIX: Lógica Inteligente de Fecha Inicial
-  const getSmartStartDate = (schedule: WeeklySchedule) => {
-    const now = new Date();
-    // Si ya es tarde, pasamos al siguiente día
-    if (
-      now.getHours() >= 17 ||
-      (now.getHours() === 17 && now.getMinutes() >= 30)
-    ) {
-      now.setDate(now.getDate() + 1);
-    }
-
-    // Buscamos el próximo día que SÍ esté abierto en el workingSchedule
-    for (let i = 0; i < 7; i++) {
-      const dayOfWeek = now.getDay() as keyof WeeklySchedule;
-      if (schedule[dayOfWeek]?.isOpen) {
-        break; // Encontramos un día válido, salimos del loop
-      }
-      now.setDate(now.getDate() + 1); // Brincamos al siguiente si está cerrado
-    }
-
-    return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
-  };
-
-  const smartStartStr = useMemo(
-    () => getSmartStartDate(workingSchedule),
-    [workingSchedule],
-  );
-
-  const [selectedDay, setSelectedDay] = useState<string | null>(
-    initialDate || smartStartStr,
-  );
+  // Iniciamos las fechas vacías para no hacer un render prematuro con datos falsos
+  const [selectedDay, setSelectedDay] = useState<string | null>(null);
   const [selectedTime, setSelectedTime] = useState<string | null>(
     initialTime || null,
   );
   const [isCalendarOpen, setIsCalendarOpen] = useState(false);
-  const [visibleStartDate, setVisibleStartDate] = useState<string>(
-    initialDate || smartStartStr,
-  );
+  const [visibleStartDate, setVisibleStartDate] = useState<string>("");
 
   useEffect(() => {
     const loadAgendaData = async () => {
       try {
-        const [servicesData, apptsData, blocksData] = await Promise.all([
+        const rangeStart = new Date();
+        rangeStart.setHours(0, 0, 0, 0);
+        const rangeEnd = new Date(rangeStart);
+        rangeEnd.setDate(rangeEnd.getDate() + AVAILABILITY_WINDOW_DAYS);
+
+        const [servicesData, busyData, scheduleData] = await Promise.all([
           fetchActiveServices(),
-          fetchDoctorAppointments(),
-          fetchBlockedSlots(),
+          fetchPublicAvailability(rangeStart, rangeEnd),
+          fetchPublicSchedule(),
         ]);
 
         const selectedService = servicesData.find((s) => s.id === serviceId);
@@ -114,27 +110,39 @@ export const DateTimeSelector = ({
           setServiceDuration(selectedService.durationMins);
         }
 
-        setAppointments(apptsData);
-        setBlockedSlots(blocksData);
+        setBusyRanges(busyData);
+
+        // FIX: Si la BD nos regresa datos, sobreescribimos la mentira hardcodeada
+        const finalSchedule = scheduleData || workingSchedule;
+        if (scheduleData) setWorkingSchedule(scheduleData);
+
+        // AHORA SÍ calculamos la fecha inteligente basada en los horarios REALES
+        const realSmartStart = getSmartStartDate(finalSchedule);
+        setSelectedDay(initialDate || realSmartStart);
+        setVisibleStartDate(initialDate || realSmartStart);
       } catch (error) {
         console.error("Error al cargar la agenda:", error);
       } finally {
-        setIsLoading(false);
+        setIsLoading(false); // Quitamos el loader hasta que TODA la verdad esté calculada
       }
     };
     loadAgendaData();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [serviceId]);
 
-  // FIX: Carrusel Inteligente que brinca domingos (o días cerrados)
+  const isDateDisabled = (dateStr: string) => {
+    const date = new Date(dateStr);
+    return !workingSchedule[date.getDay()].isOpen;
+  };
+
   const visibleDays = useMemo(() => {
+    if (!visibleStartDate) return []; // Seguro contra renders prematuros
     const days = [];
     const currentDate = new Date(`${visibleStartDate}T12:00:00`);
 
-    // Ciclo while para obtener exactamente 5 días útiles
     while (days.length < 5) {
       const dayOfWeek = currentDate.getDay() as keyof WeeklySchedule;
-
-      // Solo agregamos el botón si el esquema dice que la doctora trabaja ese día
+      // Esto ahora saltará el Viernes si la doctora lo cerró en su panel
       if (workingSchedule[dayOfWeek]?.isOpen) {
         days.push({
           id: currentDate.toISOString().split("T")[0],
@@ -142,7 +150,7 @@ export const DateTimeSelector = ({
           dayNumber: String(currentDate.getDate()),
         });
       }
-      currentDate.setDate(currentDate.getDate() + 1); // Avanzamos un día y repetimos
+      currentDate.setDate(currentDate.getDate() + 1);
     }
     return days;
   }, [visibleStartDate, workingSchedule]);
@@ -150,24 +158,19 @@ export const DateTimeSelector = ({
   const availableTimesForSelectedDay = useMemo(() => {
     if (!selectedDay || isLoading || !workingSchedule) return [];
 
-    // 1. Obtenemos TODOS los huecos matemáticos posibles
-    const options = getAvailableTimeOptions(
+    const options = getAvailableTimeOptionsFromBusy(
       selectedDay,
-      appointments,
-      blockedSlots,
+      busyRanges,
       workingSchedule,
       serviceDuration,
     );
 
     const allTimes12h = options.map((opt) => opt.value);
-
-    // 2. Filtramos el pasado usando la nueva utilidad limpia
     return filterFutureTimesOnly(allTimes12h, selectedDay);
   }, [
     selectedDay,
     isLoading,
-    appointments,
-    blockedSlots,
+    busyRanges,
     workingSchedule,
     serviceDuration,
   ]);
@@ -199,8 +202,6 @@ export const DateTimeSelector = ({
   const handleModalDateSelect = (date: string) => {
     setSelectedDay(date);
     setSelectedTime(null);
-
-    // Al elegir una fecha del modal, la establecemos como el nuevo inicio del carrusel
     setVisibleStartDate(date);
   };
 
@@ -213,9 +214,13 @@ export const DateTimeSelector = ({
     show: { opacity: 1, y: 0, transition: { duration: 0.3, ease: "easeOut" } },
   };
 
-  const currentMonthName = new Date(
-    `${visibleStartDate}T12:00:00`,
-  ).toLocaleDateString("es-MX", { month: "long", year: "numeric" });
+  // Previene crash si visibleStartDate aún no existe
+  const currentMonthName = visibleStartDate
+    ? new Date(`${visibleStartDate}T12:00:00`).toLocaleDateString("es-MX", {
+        month: "long",
+        year: "numeric",
+      })
+    : "";
 
   if (isLoading) {
     return (
@@ -228,6 +233,7 @@ export const DateTimeSelector = ({
     );
   }
 
+  // ... (EL RESTO DEL JSX SE MANTIENE EXACTAMENTE IGUAL) ...
   return (
     <>
       <motion.div
@@ -431,12 +437,14 @@ export const DateTimeSelector = ({
         </form>
       </motion.div>
 
+      {/* Como isDateDisabled ya lee el estado `workingSchedule` actualizado, bloqueará correctamente el DatePicker */}
       <DatePicker
         isOpen={isCalendarOpen}
         onClose={() => setIsCalendarOpen(false)}
         selectedDate={selectedDay}
-        minDate={smartStartStr}
+        minDate={visibleStartDate} // Usamos visibleStartDate como mínimo para no permitir viajar al pasado
         onSelectDate={handleModalDateSelect}
+        isDateDisabled={isDateDisabled}
       />
     </>
   );

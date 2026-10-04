@@ -1,5 +1,6 @@
 import type { DashboardAppointment } from "../../../lib/services/clinicService";
 import type { DashboardBlockedSlot } from "../../../lib/services/blockedSlotsService";
+import type { BusyRange } from "../../../lib/services/availabilityService";
 import type { WeeklySchedule } from "../../../lib/services/settingsService";
 
 export const HOUR_HEIGHT = 100;
@@ -123,21 +124,21 @@ export const getGridHoursRange = (
   return { start: min, end: max };
 };
 
-// TIPADO ESTRICTO EN TODOS LOS PARÁMETROS
-export const getAvailableTimeOptions = (
+/**
+ * The 15-minute candidate grid for one day, bounded by the clinic's opening
+ * hours. Shared by both availability calculations below.
+ */
+const buildDayCandidates = (
   isoDate: string,
-  appointments: DashboardAppointment[],
-  blockedSlots: DashboardBlockedSlot[],
   workingSchedule: WeeklySchedule,
-  requiredDurationMins: number = 30,
-): { label: string; value: string }[] => {
-  if (!isoDate) return [];
+): { options: string[]; startDec: number; endDec: number } | null => {
+  if (!isoDate) return null;
   const [y, m, d] = isoDate.split("-").map(Number);
   const targetDateObj = new Date(y, m - 1, d);
 
   const daySchedule =
     workingSchedule[targetDateObj.getDay() as keyof WeeklySchedule];
-  if (!daySchedule || !daySchedule.isOpen) return [];
+  if (!daySchedule || !daySchedule.isOpen) return null;
 
   const startDec = timeToDecimal(daySchedule.start);
   const endDec = timeToDecimal(daySchedule.end);
@@ -155,6 +156,65 @@ export const getAvailableTimeOptions = (
       }
     }
   }
+
+  return { options, startDec, endDec };
+};
+
+/**
+ * Availability for the PUBLIC and patient-facing booking screens.
+ *
+ * Works from the opaque busy ranges returned by the get_availability RPC, so
+ * the browser never has to receive the appointment list to render a calendar.
+ * Comparison is done on absolute instants rather than on formatted date
+ * strings, which also removes the locale-dependent matching the staff variant
+ * below still relies on.
+ */
+export const getAvailableTimeOptionsFromBusy = (
+  isoDate: string,
+  busyRanges: BusyRange[],
+  workingSchedule: WeeklySchedule,
+  requiredDurationMins: number = 30,
+): { label: string; value: string }[] => {
+  const candidates = buildDayCandidates(isoDate, workingSchedule);
+  if (!candidates) return [];
+
+  const [y, m, d] = isoDate.split("-").map(Number);
+
+  return candidates.options
+    .filter((timeStr) => {
+      const slotStartDec = timeToDecimal(timeStr);
+      if (slotStartDec + requiredDurationMins / 60 > candidates.endDec) {
+        return false;
+      }
+
+      const { hours, minutes } = extractHoursMinutes(timeStr);
+      const slotStart = new Date(y, m - 1, d, hours, minutes);
+      const slotEnd = new Date(slotStart.getTime() + requiredDurationMins * 60000);
+
+      return !busyRanges.some(
+        (range) => slotStart < range.end && slotEnd > range.start,
+      );
+    })
+    .map((t) => ({ label: t, value: t }));
+};
+
+/**
+ * Availability for the STAFF calendar, which already holds the full appointment
+ * and block lists in memory.
+ */
+export const getAvailableTimeOptions = (
+  isoDate: string,
+  appointments: DashboardAppointment[],
+  blockedSlots: DashboardBlockedSlot[],
+  workingSchedule: WeeklySchedule,
+  requiredDurationMins: number = 30,
+): { label: string; value: string }[] => {
+  const candidates = buildDayCandidates(isoDate, workingSchedule);
+  if (!candidates) return [];
+
+  const { options, endDec } = candidates;
+  const [y, m, d] = isoDate.split("-").map(Number);
+  const targetDateObj = new Date(y, m - 1, d);
 
   const visualDateStr = targetDateObj
     .toLocaleDateString("es-MX", {

@@ -22,14 +22,12 @@ export const MonthlyView = ({
   onBlockClick,
   onEmptySlotClick,
 }: MonthlyViewProps) => {
-  // 1. EXTRAEMOS EL HORARIO DEL CONTEXTO (No por props)
   const { baseDate, workingSchedule } = useCalendar();
 
   const currentYear = baseDate.getFullYear();
   const currentMonth = baseDate.getMonth();
   const daysInMonth = new Date(currentYear, currentMonth + 1, 0).getDate();
 
-  // 2. MAGIA UI: Calculamos qué día de la semana cae el día 1 para dejar espacios en blanco
   const firstDayOfMonth = new Date(currentYear, currentMonth, 1).getDay();
   const BLANK_DAYS = Array.from(
     { length: firstDayOfMonth },
@@ -41,8 +39,8 @@ export const MonthlyView = ({
   todayDate.setHours(0, 0, 0, 0);
 
   return (
-    <div className="bg-white border border-slate-200 rounded-3xl shadow-[0_8px_30px_rgb(0,0,0,0.04)] overflow-hidden h-187.5 flex flex-col">
-      <div className="grid grid-cols-7 border-b border-slate-200 bg-slate-50/80">
+    <div className="bg-white border border-slate-200 rounded-3xl shadow-[0_8px_30px_rgb(0,0,0,0.04)] overflow-hidden min-h-150 flex flex-col">
+      <div className="grid grid-cols-7 border-b border-slate-200 bg-slate-50/80 shrink-0">
         {DAYS_OF_WEEK.map((day) => (
           <div
             key={day}
@@ -56,7 +54,6 @@ export const MonthlyView = ({
       </div>
 
       <div className="flex-1 grid grid-cols-7 grid-rows-5 bg-slate-100 gap-px">
-        {/* Celdas vacías para alinear el día 1 con su día de la semana correcto */}
         {BLANK_DAYS.map((blank) => (
           <div key={blank} className="bg-slate-50/50"></div>
         ))}
@@ -65,7 +62,6 @@ export const MonthlyView = ({
           const cellDate = new Date(currentYear, currentMonth, day);
           const dayOfWeek = cellDate.getDay() as keyof WeeklySchedule;
 
-          // 3. REGLA DE NEGOCIO: Evaluamos si el día está cerrado en el JSON
           const daySchedule = workingSchedule[dayOfWeek];
           const isClosed = !daySchedule?.isOpen;
 
@@ -81,6 +77,7 @@ export const MonthlyView = ({
             })
             .replace(/\./g, "")
             .toLowerCase();
+
           const daysApps = appointments.filter(
             (a) => a.date.toLowerCase() === dateStr,
           );
@@ -98,23 +95,23 @@ export const MonthlyView = ({
               key={day}
               onClick={() => {
                 if (!isUnavailable) {
-                  // Si hacen clic en un día libre del mes, sugerimos dinámicamente la hora de apertura de ESE día
                   const suggestedTime = daySchedule?.start || "09:00 AM";
                   onEmptySlotClick(dateStr, suggestedTime);
                 }
               }}
-              className={`p-2 sm:p-3 flex flex-col transition-colors relative group border-b border-slate-100
-                ${isUnavailable ? "bg-slate-50 cursor-not-allowed" : "bg-white hover:bg-slate-50 cursor-pointer"}`}
+              // FIX: Bug 4 (Fondo gris oscuro si cerrado) y Bug 6 (min-h-0 vital)
+              className={`p-2 flex flex-col transition-colors relative group border-b border-r border-slate-100 min-h-28 overflow-hidden
+                ${isUnavailable ? "bg-slate-50/60 cursor-not-allowed" : "bg-white hover:bg-slate-50 cursor-pointer"}`}
             >
               {!isUnavailable && (
-                <div className="absolute top-2 right-2 opacity-0 group-hover:opacity-100 transition-opacity z-10">
+                <div className="absolute top-2 right-2 opacity-0 group-hover:opacity-100 transition-opacity z-10 hidden sm:block">
                   <span className="text-[10px] font-bold text-brand-primary bg-brand-light/30 px-2 py-1 rounded shadow-sm">
                     + Agendar
                   </span>
                 </div>
               )}
 
-              <div className="flex justify-between items-start mb-2">
+              <div className="flex justify-between items-start mb-1 shrink-0">
                 <span
                   className={`text-sm font-bold w-7 h-7 flex items-center justify-center rounded-full 
                   ${isToday ? "bg-brand-primary text-white shadow-sm" : isUnavailable ? "text-slate-400" : "text-brand-dark"}`}
@@ -122,7 +119,6 @@ export const MonthlyView = ({
                   {day}
                 </span>
 
-                {/* 4. Indicador visual de que la clínica está cerrada ese día */}
                 {isClosed && !isPast && (
                   <span className="text-[9px] font-bold text-slate-400 uppercase tracking-widest mt-1">
                     Cerrado
@@ -130,10 +126,9 @@ export const MonthlyView = ({
                 )}
               </div>
 
-              <div className="flex-1 space-y-1 overflow-hidden">
-                {allEvents.map((event, idx) => {
-                  if (idx > 2) return null;
-
+              {/* FIX: Bug 6 (Contenedor scrolleable interno) */}
+              <div className="flex-1 overflow-y-auto hide-scrollbar space-y-1 ">
+                {allEvents.map((event) => {
                   if (event.type === "block") {
                     const block = event.data as DashboardBlockedSlot;
                     return (
@@ -167,11 +162,6 @@ export const MonthlyView = ({
                     );
                   }
                 })}
-                {allEvents.length > 3 && (
-                  <p className="text-[10px] font-bold text-brand-primary pl-1 pt-1">
-                    +{allEvents.length - 3} más
-                  </p>
-                )}
               </div>
             </div>
           );

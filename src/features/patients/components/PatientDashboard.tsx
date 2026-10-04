@@ -28,7 +28,7 @@ import {
   type PatientAppointment,
   type CarePlanItem,
 } from "../../../lib/services/patientDashboardService";
-import { cancelAppointment } from "../../../lib/services/clinicService";
+import { cancelMyAppointment } from "../../../lib/services/patientBookingService";
 import {
   uploadPatientFile,
   getPatientFiles,
@@ -180,7 +180,7 @@ export const PatientDashboard = () => {
   const handleConfirmCancel = async () => {
     if (!appointmentToCancel) return;
     try {
-      await cancelAppointment(appointmentToCancel.id, "Cancelada por paciente");
+      await cancelMyAppointment(appointmentToCancel.id, "Cancelada por paciente");
       setCancelState("success");
       setAppointments((prev) =>
         prev.map((a) =>
@@ -196,7 +196,7 @@ export const PatientDashboard = () => {
         `[PatientDashboard] Error al cancelar la cita ID ${appointmentToCancel.id}:`,
         error,
       );
-      toast.error("No se pudo cancelar la cita.");
+      toast.error((error as Error).message || "No se pudo cancelar la cita.");
       setCancelState("closed");
     }
   };
