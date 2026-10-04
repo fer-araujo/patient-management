@@ -43,7 +43,42 @@ interface FormState {
   bloodType: string;
   allergies: string;
   chronicConditions: string;
+  address: string;
+  familyHistory: string;
+  personalPathologicalHistory: string;
+  nonPathologicalHistory: string;
+  currentIllness: string;
 }
+
+type HistoryField =
+  | "familyHistory"
+  | "personalPathologicalHistory"
+  | "nonPathologicalHistory"
+  | "currentIllness";
+
+/** Clinical history (NOM-004 6.1), in the order of the historia clínica. */
+const HISTORY_FIELDS: { key: HistoryField; label: string; placeholder: string }[] = [
+  {
+    key: "familyHistory",
+    label: "Heredofamiliares",
+    placeholder: "Ej. Negados",
+  },
+  {
+    key: "personalPathologicalHistory",
+    label: "Personales patológicos",
+    placeholder: "Ej. Negados",
+  },
+  {
+    key: "nonPathologicalHistory",
+    label: "Personales no patológicos",
+    placeholder: "Ej. Negados",
+  },
+  {
+    key: "currentIllness",
+    label: "Padecimiento actual",
+    placeholder: "Ej. Negados",
+  },
+];
 
 const toFormState = (p: PatientDetails): FormState => {
   const { countryCode, nationalNumber } = splitStoredPhone(p.phone);
@@ -58,6 +93,11 @@ const toFormState = (p: PatientDetails): FormState => {
     bloodType: p.blood_type ?? "",
     allergies: p.allergies ?? "",
     chronicConditions: p.chronic_conditions ?? "",
+    address: p.address ?? "",
+    familyHistory: p.family_history ?? "",
+    personalPathologicalHistory: p.personal_pathological_history ?? "",
+    nonPathologicalHistory: p.non_pathological_history ?? "",
+    currentIllness: p.current_illness ?? "",
   };
 };
 
@@ -209,6 +249,11 @@ const EditPatientForm = ({ patientId, onClose, onSaved }: FormProps) => {
         blood_type: form.bloodType,
         allergies: form.allergies,
         chronic_conditions: form.chronicConditions,
+        address: form.address,
+        family_history: form.familyHistory,
+        personal_pathological_history: form.personalPathologicalHistory,
+        non_pathological_history: form.nonPathologicalHistory,
+        current_illness: form.currentIllness,
       });
       toast.success("Datos del paciente actualizados");
       onSaved();
@@ -327,6 +372,16 @@ const EditPatientForm = ({ patientId, onClose, onSaved }: FormProps) => {
         </div>
       </div>
 
+      <Input
+        label="Domicilio"
+        type="text"
+        placeholder="Calle, número, colonia y ciudad"
+        value={form.address}
+        onChange={(e) => set({ address: e.target.value })}
+        containerClassName={`w-full ${compactLabelClasses}`}
+        className={compactInputClasses}
+      />
+
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
         <div className="w-full">
           <label className="text-brand-dark font-bold text-sm mb-2 block">
@@ -371,6 +426,32 @@ const EditPatientForm = ({ patientId, onClose, onSaved }: FormProps) => {
           containerClassName={`w-full ${compactLabelClasses}`}
           className={compactInputClasses}
         />
+      </div>
+
+      <div className="pt-4 mt-2 border-t border-brand-light space-y-4">
+        <h4 className="text-xs font-black text-brand-gray uppercase tracking-widest">
+          Antecedentes
+        </h4>
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+          {HISTORY_FIELDS.map((field) => (
+            <div key={field.key} className="w-full">
+              <label
+                htmlFor={`edit-patient-${field.key}`}
+                className="text-brand-dark font-bold text-sm mb-2 block"
+              >
+                {field.label}
+              </label>
+              <textarea
+                id={`edit-patient-${field.key}`}
+                rows={2}
+                placeholder={field.placeholder}
+                value={form[field.key]}
+                onChange={(e) => set({ [field.key]: e.target.value })}
+                className="w-full px-3 py-2.5 border-2 border-brand-light rounded-lg text-sm text-brand-dark bg-white focus:border-brand-primary focus:ring-2 focus:ring-brand-primary/20 outline-none transition-all resize-none"
+              />
+            </div>
+          ))}
+        </div>
       </div>
 
       <div className="pt-4 mt-2 border-t border-brand-light flex gap-3 justify-end">

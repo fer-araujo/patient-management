@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import toast from "react-hot-toast";
 import { supabaseMock } from "../../../../test/supabaseMock";
 import type { Payment } from "../../../../lib/services/financeService";
 import { ChargeModal } from "./ChargeModal";
@@ -145,5 +146,52 @@ describe("ChargeModal", () => {
     expect(onSaved).not.toHaveBeenCalled();
     expect(onClose).not.toHaveBeenCalled();
     expect(screen.getByText("Cobro de la consulta")).toBeInTheDocument();
+  });
+});
+
+describe("ChargeModal collecting only (onConfirm)", () => {
+  it("hands the answer to onConfirm and never records the payment itself", async () => {
+    const toastSuccess = vi.spyOn(toast, "success");
+    const onConfirm = vi.fn().mockResolvedValue(undefined);
+    const { user, onSaved } = renderModal({ onConfirm });
+
+    await user.click(screen.getByRole("radio", { name: "Efectivo" }));
+    await user.type(screen.getByLabelText("Nota (opcional)"), "Pagó completo");
+    await user.click(saveButton());
+
+    await waitFor(() =>
+      expect(onConfirm).toHaveBeenCalledWith({
+        status: "paid",
+        amount: 800,
+        method: "cash",
+        note: "Pagó completo",
+      }),
+    );
+    expect(supabaseMock.rpcCalls("record_payment")).toHaveLength(0);
+    expect(toastSuccess).not.toHaveBeenCalled();
+    expect(onSaved).not.toHaveBeenCalled();
+  });
+
+  it("shows the rejection, stays open and can be retried", async () => {
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    const toastError = vi.spyOn(toast, "error");
+    const onConfirm = vi
+      .fn()
+      .mockRejectedValueOnce(new Error("No se pudo finalizar la consulta."))
+      .mockResolvedValueOnce(undefined);
+    const { user, onClose } = renderModal({ onConfirm });
+
+    await user.click(screen.getByRole("radio", { name: "Tarjeta" }));
+    await user.click(saveButton());
+
+    await waitFor(() =>
+      expect(toastError).toHaveBeenCalledWith("No se pudo finalizar la consulta."),
+    );
+    expect(onClose).not.toHaveBeenCalled();
+    expect(screen.getByText("Cobro de la consulta")).toBeInTheDocument();
+
+    await waitFor(() => expect(saveButton()).toBeEnabled());
+    await user.click(saveButton());
+    await waitFor(() => expect(onConfirm).toHaveBeenCalledTimes(2));
   });
 });

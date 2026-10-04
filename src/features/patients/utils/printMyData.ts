@@ -65,12 +65,27 @@ const buildDocument = (data: MyDataExport): string => {
       row("Correo", p?.email),
       row("Fecha de nacimiento", p?.dob ? formatDate(p.dob) : null),
       row("Sexo", p?.gender),
+      row("Domicilio", p?.address),
       row("Tipo de sangre", p?.blood_type),
       row("Alergias", p?.allergies),
       row("Padecimientos crónicos", p?.chronic_conditions),
       row("Referido por", p?.referred_by),
       row("Paciente desde", p?.created_at ? formatDate(p.created_at) : null),
     ].join("")}</table>`,
+  );
+
+  // Clinical history (historia clínica, NOM-004 6.1) recorded by the doctor.
+  const historyRows = [
+    row("Heredofamiliares", p?.family_history),
+    row("Personales patológicos", p?.personal_pathological_history),
+    row("Personales no patológicos", p?.non_pathological_history),
+    row("Padecimiento actual", p?.current_illness),
+  ].join("");
+  const clinicalHistory = section(
+    "Antecedentes",
+    historyRows
+      ? `<table>${historyRows}</table>`
+      : empty("No hay antecedentes registrados."),
   );
 
   const appointments = section(
@@ -189,7 +204,7 @@ const buildDocument = (data: MyDataExport): string => {
   </div>
   <button onclick="window.print()">Imprimir o guardar PDF</button>
 </header>
-${profile}${appointments}${clinicalSummary}${medications}${files}${consents}${requests}
+${profile}${clinicalHistory}${appointments}${clinicalSummary}${medications}${files}${consents}${requests}
 </body>
 </html>`;
 };

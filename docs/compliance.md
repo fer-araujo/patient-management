@@ -81,12 +81,13 @@ VERIFIED:** whether any draft modification (PROY-NOM) is in progress in 2026.
 | --- | --- | --- | --- |
 | Keep the record **at least 5 years from the last medical act** | S2 num. 5.4 | Met | `clinical_record_retention()` = 5 years; `anonymize_patient()` refuses inside the window. Last act = latest of completed past appointment, note, addendum, prescription, uploaded file (`last_clinical_act_at`). |
 | Confidentiality; access by written request of patient/representative or authorized physician | S2 num. 5.5, 5.6 | Met (technical) | Phase 1 RLS: patient sees own record only, staff see all. |
-| Every note has date, time, full name and signature (autograph, electronic or digital) of the author | S2 num. 5.10 | **Partial** | `created_at` (date and time) and new `author_id` column (account that wrote it). **No electronic signature** and the author's full name is not printed on the note (G5). |
-| Notes written without "enmendaduras ni tachaduras" | S2 num. 5.11 | Met | Electronic equivalent: once "Finalizar Consulta" runs `finalize_consultation()`, triggers reject any change to the note's clinical fields and any delete, for every role. Corrections go to append-only `clinical_note_addenda`, shown under the note in chronological order (`NoteAddenda.tsx`). Prescriptions freeze with the consultation. |
+| Every note has date, time, full name and signature (autograph, electronic or digital) of the author | S2 num. 5.10 | **Partial** | `created_at` and `author_id`. Since migration 20 the note view shows date **and time** and "Escrita por" with the author's full name (`profiles.first_name/last_name`); addenda show their author too. **No electronic signature and no cédula** on the note (G5). |
+| Notes written without "enmendaduras ni tachaduras" | S2 num. 5.11 | Met | Electronic equivalent: once "Finalizar Consulta" runs `finalize_consultation()`, triggers reject any change to the note's clinical fields (including `prognosis` and `vital_signs` since migration 20) and any delete, for every role. Corrections go to append-only `clinical_note_addenda`, shown under the note in chronological order (`NoteAddenda.tsx`). Prescriptions freeze with the consultation. Since migration 20 the note starts empty (no pre-written text is frozen), vital signs are stored as data instead of abbreviations ("TA") inside the text, and a note cannot be finalized without a diagnosis and a plan (UI and `finalize_consultation()`). |
 | Electronic records are optional ("podrán utilizar medios electrónicos…") subject to applicable law | S2 num. 5.12 | Met | Triggers NOM-024 for the electronic system — see §3. |
-| Patient identification on each note (name, age, sex) | S2 num. 5.9 | Partial | Notes link to the patient row (name, dob, gender) but the note itself does not render age/sex. |
-| Historia clínica minimum contents (interrogatorio, exploración física, resultados, diagnósticos, pronóstico, indicación terapéutica) | S2 num. 6.1 | **Missing** | The app has SOAP notes only; there is no structured historia clínica form (G10). |
-| Nota de evolución: treatment and medical indications, "en el caso de medicamentos, señalando como mínimo la dosis, vía de administración y periodicidad" | S2 num. 6.2 (6.2.1-6.2.6) | Partial | Medication items have name, dose and free-text indications; **route of administration is not a field** (G11). |
+| Patient identification on each note (name, age, sex) | S2 num. 5.9 | Met | Since migration 20 the consultation sidebar and the note view show name, age (from `dob`) and sex (`gender`). A missing value is shown as "sin registrar". |
+| Patient address in the identification data | S2 num. 5.2.3 | Met | `patients.address` (migration 20), edited in "Editar datos del paciente", included in the patient's export and cleared by `anonymize_patient()`. |
+| Historia clínica minimum contents (interrogatorio, exploración física, resultados, diagnósticos, pronóstico, indicación terapéutica) | S2 num. 6.1 | **Partial** | Since migration 20: antecedentes heredofamiliares, personales patológicos, personales no patológicos and padecimiento actual on the patient record (doctor-only write, shown in the consultation sidebar with allergies, chronic conditions and blood type); diagnosis, prognosis and plan on every note. Still no interrogatorio por aparatos y sistemas or structured exploración física (G10). |
+| Nota de evolución: vital signs (6.2.2), diagnosis (6.2.4), prognosis (6.2.5), treatment and medical indications, "en el caso de medicamentos, señalando como mínimo la dosis, vía de administración y periodicidad" (6.2.6) | S2 num. 6.2 (6.2.1-6.2.6) | Partial | Since migration 20: `vital_signs` (blood pressure, oxygenation, weight, height) and `prognosis` on the note, diagnosis and plan required to finalize. Medication items keep name, dose and free-text indications (owner decision); the indications field suggests "Ej. 1 tableta vía oral cada 8 h por 5 días" but **route and duration are not enforced fields** (G11). |
 
 ## 3. NOM-024-SSA3-2012 (electronic health record systems, "SIRES")
 
@@ -184,13 +185,13 @@ Phase 3 (runbook, "Phase 3 — Verified booking"):
 | G2 | High (partly mitigated) | Patients registered before Phase 2 have no `consents` row | No evidence of consent for the existing base | Since Phase 3, a returning patient who books online must accept the current notice first (`accept_privacy_notice`). Patients who never book online still need a signed consent at their next visit |
 | G3 | High (accepted risk) | The online notice omits the controller's address: the practice operates from the doctor's home and she will not publish it. The notice states the address is given when an appointment is confirmed and in the integral notice available on request. Supabase region disclosed: East US (North Virginia), i.e. a cross-border transfer to the United States | Art. 15 fr. I requires identity and address in the notice; omitting it online is a knowingly accepted gap, not compliance. Mitigations: a commercial/virtual office address for notifications would close it | Owner decision, 2026-09-24, with no legal counsel. Keep a printed integral notice (with an address) at the practice |
 | G4 | Fixed | The back arrow in the consultation screen used to call the same handler as "Finalizar Consulta", which would have permanently frozen an unfinished note | — | Fixed: the back arrow saves a draft only (`saveConsultation(false)`); only "Finalizar Consulta" finalizes |
-| G5 | Medium | No electronic signature; author's full name not rendered on the note | NOM-004 5.10, NOM-024 6.6.2 | e.firma (SAT) or an FEA provider for finalized notes; render author name and cédula on the note |
+| G5 | Medium (partly fixed) | No electronic signature and no cédula on the note. The author's full name and the time are rendered since migration 20 | NOM-004 5.10, NOM-024 6.6.2 | e.firma (SAT) or an FEA provider for finalized notes; render the cédula on the note |
 | G6 | Medium | Reads are not audited (who viewed which record) | NOM-024 6.6.1 traceability | Log views through an RPC or edge function; Postgres triggers cannot see SELECTs |
 | G7 | Medium | Database owner can disable triggers and alter the log; no off-site copy | Append-only is only as strong as the owner account | Periodic export of `audit_log` to write-once storage; restrict who holds owner credentials |
 | G8 | Medium | MFA not enforced for staff | NOM-024 6.6.3 recommends additional factors | Enable Supabase Auth MFA (TOTP) for doctor/admin |
 | G9 | Medium | No breach-response procedure | LFPDPPP art. 19 requires immediate notice to titulares | Write an incident runbook: detection, assessment, WhatsApp/email notice template |
-| G10 | Medium | No structured historia clínica | NOM-004 6.1 | Add a first-visit historia clínica form |
-| G11 | Medium | Medication items lack route of administration and duration fields | NOM-004 6.2; RIS art. 30 | Add structured fields to `MedicationItem` |
+| G10 | Medium (partly fixed) | Antecedentes and padecimiento actual exist since migration 20; no interrogatorio por aparatos y sistemas or structured exploración física | NOM-004 6.1 | Add those sections to a first-visit historia clínica form |
+| G11 | Medium (accepted for now) | Medication items lack route of administration and duration fields; the indications placeholder asks for them, nothing enforces them (owner decision: keep free text) | NOM-004 6.2; RIS art. 30 | Add structured fields to `MedicationItem` |
 | G12 | Medium | Administrative/physical security measures, confidentiality agreements, designated data-protection person | LFPDPPP arts. 18, 20, 29 | Written policies; signed confidentiality agreements; formal designation |
 | G13 | Medium | No documented backup and restore test | NOM-024 5.6 | Confirm the Supabase plan's backups / PITR and run a restore drill |
 | G14 | Low | Anonymization is manual; no report of records past retention | LFPDPPP art. 10 | Staff report listing patients whose `last_clinical_act_at` is older than 5 years |
@@ -230,3 +231,25 @@ request; the portal form offers it as "Resumen clínico" (ARCO `access`). The
 export still covers identification data, appointments, prescriptions, files,
 consents and ARCO requests. **Lawyer review:** confirm that the export plus the
 summary-on-request satisfies the LFPDPPP access right (art. 22).
+
+## Addendum — NOM-004 consultation record (migration 20)
+
+`20260927110000_nom004_consultation.sql` adds, on every consultation note,
+`prognosis` and `vital_signs` (frozen on finalization like the SOAP fields),
+requires a diagnosis and a plan to finalize, and adds to the patient record
+`address` and the clinical history (`family_history`,
+`personal_pathological_history`, `non_pathological_history`,
+`current_illness`), writable by the doctor only.
+
+- **Export (owner decision):** "Mis datos" now includes the address and the
+  four antecedentes (printable copy: section "Antecedentes"). SOAP notes stay
+  excluded (migration 14). **Lawyer review:** confirm the patient may receive
+  the antecedentes directly rather than only in the clinical summary.
+- **Anonymization** also clears the address; the antecedentes are clinical
+  content and are kept, like allergies.
+- **Charge and finalization are one transaction:**
+  `finalize_consultation_with_payment()` freezes the consultation and records
+  the charge in one call, so a failure never leaves a charge for an unfinished
+  consultation, or the reverse.
+- **Interrupted consultations** reopen with their saved draft; the editor is
+  locked until the draft is loaded, so nothing typed can overwrite it.

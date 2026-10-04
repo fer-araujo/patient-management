@@ -100,6 +100,8 @@ export const DoctorDashboard = () => {
   if (activeConsultation) {
     return (
       <ConsultationWorkspace
+        // One mount per appointment: no editor state leaks between consultations.
+        key={activeConsultation.id}
         appointment={activeConsultation}
         onClose={() => setActiveConsultation(null)}
         onFinishConsultation={handleFinishConsultation}
