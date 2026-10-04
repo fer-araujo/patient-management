@@ -9,26 +9,47 @@ import {
   AlertTriangle,
   Package,
   PackageX,
+  ShoppingCart,
+  History,
 } from "lucide-react";
 import toast from "react-hot-toast";
 import {
+  adjustStock,
   fetchInventory,
-  updateItemStock,
+  getStockLevel,
   toggleInventoryStatus,
   type InventoryItem,
 } from "../../../../lib/services/inventoryService";
 import { InventoryModal } from "../modals/InventoryModal";
+import { Dropdown } from "../../../../components/ui/Dropdown";
+import type { PurchaseModalMode } from "../modals/PurchaseModal";
+import { PurchaseModal } from "../modals/PurchaseModal";
+import { MovementHistoryModal } from "../modals/MovementHistoryModal";
 import { DataGrid, type ColumnDef } from "../../../../components/ui/DataGrid";
 import { Button } from "../../../../components/ui/Button";
 import { motion } from "framer-motion";
 
-export const InventoryTab = () => {
+type StatusFilter = "active" | "archived" | "all";
+
+interface Props {
+  /** Reports the loaded items, e.g. for the low-stock badge on the tab. */
+  onItemsChange?: (items: InventoryItem[]) => void;
+}
+
+export const InventoryTab = ({ onItemsChange }: Props = {}) => {
   const [items, setItems] = useState<InventoryItem[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState("");
+  const [statusFilter, setStatusFilter] = useState<StatusFilter>("all");
+  const [categoryFilter, setCategoryFilter] = useState("");
 
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [itemToEdit, setItemToEdit] = useState<InventoryItem | null>(null);
+  const [purchaseTarget, setPurchaseTarget] = useState<{
+    item: InventoryItem;
+    mode: PurchaseModalMode;
+  } | null>(null);
+  const [historyItem, setHistoryItem] = useState<InventoryItem | null>(null);
 
   const loadData = async () => {
     setIsLoading(true);
@@ -46,6 +67,10 @@ export const InventoryTab = () => {
   useEffect(() => {
     loadData();
   }, []);
+
+  useEffect(() => {
+    if (!isLoading) onItemsChange?.(items);
+  }, [items, isLoading, onItemsChange]);
 
   const handleToggleStatus = async (item: InventoryItem) => {
     try {
@@ -68,29 +93,44 @@ export const InventoryTab = () => {
     }
   };
 
-  // ⚡ OPTIMISTIC UI: Ajuste de stock sin fricción
-  const handleStockAdjust = async (item: InventoryItem, adjustment: number) => {
-    const newStock = item.stock_quantity + adjustment;
-    if (newStock < 0) return; // No puede haber stock negativo
-
-    // 1. Actualizamos la UI inmediatamente (Optimista)
-    const previousItems = [...items];
-    setItems(
-      items.map((i) =>
-        i.id === item.id ? { ...i, stock_quantity: newStock } : i,
+  const applyStockDelta = (itemId: string, delta: number) =>
+    setItems((current) =>
+      current.map((i) =>
+        i.id === itemId
+          ? { ...i, stock_quantity: i.stock_quantity + delta }
+          : i,
       ),
     );
 
-    // 2. Guardamos en BD silenciosamente
+  // Optimistic "−": one unit used. The UI moves at once and the server
+  // subtracts from its current stock, so quick clicks never overwrite each
+  // other. Increases never go through here: "+" opens the modal, which asks
+  // whether the units were bought so their cost reaches Finanzas.
+  const handleStockUse = async (item: InventoryItem) => {
+    if (item.stock_quantity - 1 < 0) return; // Stock cannot go negative
+
+    applyStockDelta(item.id, -1);
+
     try {
-      await updateItemStock(item.id, newStock);
+      await adjustStock(item.id, -1, "use");
     } catch (error: unknown) {
       console.error("[InventoryTab] Error al actualizar el stock:", error);
-      // 3. Si falla, revertimos y avisamos
-      setItems(previousItems);
-      toast.error("Error de conexión. No se guardó el stock.");
+      // Undo only this click, keeping any other click that did succeed.
+      applyStockDelta(item.id, 1);
+      toast.error(
+        error instanceof Error
+          ? error.message
+          : "Error de conexión. No se guardó el stock.",
+      );
     }
   };
+
+  const handlePurchaseSaved = (itemId: string, newStock: number) =>
+    setItems((current) =>
+      current.map((i) =>
+        i.id === itemId ? { ...i, stock_quantity: newStock } : i,
+      ),
+    );
 
   const openNewModal = () => {
     setItemToEdit(null);
@@ -102,20 +142,30 @@ export const InventoryTab = () => {
     const activeItems = items.filter((i) => i.is_active);
     return {
       total: activeItems.length,
-      lowStock: activeItems.filter(
-        (i) => i.stock_quantity <= i.min_alert_level && i.stock_quantity > 0,
-      ).length,
-      outOfStock: activeItems.filter((i) => i.stock_quantity === 0).length,
+      lowStock: activeItems.filter((i) => getStockLevel(i) === "low").length,
+      outOfStock: activeItems.filter((i) => getStockLevel(i) === "out").length,
     };
   }, [items]);
 
+  const categories = useMemo(
+    () =>
+      [...new Set(items.map((i) => i.category).filter(Boolean))].sort((a, b) =>
+        a.localeCompare(b, "es"),
+      ),
+    [items],
+  );
+
   const filteredData = useMemo(() => {
+    const term = searchTerm.toLowerCase();
     return items.filter(
       (item) =>
-        item.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-        item.category.toLowerCase().includes(searchTerm.toLowerCase()),
+        (statusFilter === "all" ||
+          (statusFilter === "active" ? item.is_active : !item.is_active)) &&
+        (categoryFilter === "" || item.category === categoryFilter) &&
+        ((item.name ?? "").toLowerCase().includes(term) ||
+          (item.category ?? "").toLowerCase().includes(term)),
     );
-  }, [items, searchTerm]);
+  }, [items, searchTerm, statusFilter, categoryFilter]);
 
   // CONFIGURACIÓN DE COLUMNAS
   const columns: ColumnDef<InventoryItem>[] = [
@@ -145,9 +195,9 @@ export const InventoryTab = () => {
       sortable: true,
       className: "w-[25%]",
       cell: (row) => {
-        const isOutOfStock = row.stock_quantity === 0;
-        const isLowStock =
-          row.stock_quantity <= row.min_alert_level && !isOutOfStock;
+        const level = getStockLevel(row);
+        const isOutOfStock = level === "out";
+        const isLowStock = level === "low";
 
         let badgeColor = "text-brand-dark";
         let bgColor = "bg-transparent";
@@ -165,7 +215,12 @@ export const InventoryTab = () => {
         }
 
         return (
-          <div className={`${bgColor} ${!row.is_active && "opacity-50"}`}>
+          <div
+            className={`${bgColor} ${!row.is_active && "opacity-50"}`}
+            title={
+              isOutOfStock ? "Agotado" : isLowStock ? "Stock bajo" : undefined
+            }
+          >
             {(isOutOfStock || isLowStock) && (
               <AlertTriangle className={`w-4 h-4 ${badgeColor}`} />
             )}
@@ -187,16 +242,16 @@ export const InventoryTab = () => {
           className={`flex items-center gap-1 ${!row.is_active && "opacity-50 pointer-events-none"}`}
         >
           <button
-            onClick={() => handleStockAdjust(row, -1)}
-            className="w-8 h-8 flex items-center justify-center rounded-lg bg-slate-50 text-slate-500 hover:bg-slate-200 hover:text-brand-dark transition-colors border border-slate-200 shadow-sm cursor-pointer"
-            title="Restar unidad"
+            onClick={() => handleStockUse(row)}
+            className="w-8 h-8 flex items-center justify-center rounded-lg bg-slate-50 text-slate-500 hover:bg-rose-50 hover:text-rose-500 hover:border-rose-100 transition-colors border border-slate-200 shadow-sm cursor-pointer"
+            title="Restar unidad (uso)"
           >
             <Minus className="w-4 h-4" />
           </button>
           <button
-            onClick={() => handleStockAdjust(row, 1)}
-            className="w-8 h-8 flex items-center justify-center rounded-lg bg-slate-50 text-slate-500 hover:bg-slate-200 hover:text-brand-dark transition-colors border border-slate-200 shadow-sm cursor-pointer"
-            title="Sumar unidad"
+            onClick={() => setPurchaseTarget({ item: row, mode: "add" })}
+            className="w-8 h-8 flex items-center justify-center rounded-lg bg-slate-50 text-slate-500 hover:bg-teal-50 hover:text-teal-600 hover:border-teal-100 transition-colors border border-slate-200 shadow-sm cursor-pointer"
+            title="Agregar unidades"
           >
             <Plus className="w-4 h-4" />
           </button>
@@ -208,6 +263,22 @@ export const InventoryTab = () => {
       className: "w-[20%] text-right",
       cell: (row) => (
         <div className="flex items-center justify-end gap-2">
+          {row.is_active && (
+            <button
+              onClick={() => setPurchaseTarget({ item: row, mode: "purchase" })}
+              className="flex items-center justify-center w-10 h-10 bg-slate-50 text-slate-600 hover:bg-brand-primary hover:text-white rounded-xl transition-all border border-slate-200 hover:border-brand-primary shadow-sm cursor-pointer"
+              title="Registrar compra"
+            >
+              <ShoppingCart className="w-5 h-5" strokeWidth={2.5} />
+            </button>
+          )}
+          <button
+            onClick={() => setHistoryItem(row)}
+            className="flex items-center justify-center w-10 h-10 bg-slate-50 text-slate-600 hover:bg-brand-primary hover:text-white rounded-xl transition-all border border-slate-200 hover:border-brand-primary shadow-sm cursor-pointer"
+            title="Historial"
+          >
+            <History className="w-5 h-5" strokeWidth={2.5} />
+          </button>
           <button
             onClick={() => {
               setItemToEdit(row);
@@ -298,14 +369,35 @@ export const InventoryTab = () => {
 
       {/* BARRA DE BÚSQUEDA Y BOTÓN AÑADIR */}
       <div className="flex flex-col sm:flex-row items-center justify-between gap-4">
-        <div className="relative w-full sm:w-96">
-          <Search className="w-5 h-5 text-brand-gray absolute left-4 top-1/2 -translate-y-1/2" />
-          <input
-            type="text"
-            placeholder="Buscar insumo..."
-            value={searchTerm}
-            onChange={(e) => setSearchTerm(e.target.value)}
-            className="w-full pl-11 pr-4 py-2.5 bg-white border border-slate-200 shadow-[0_2px_10px_rgb(0,0,0,0.02)] rounded-xl text-sm font-medium focus:outline-none focus:border-brand-primary focus:ring-2 focus:ring-brand-primary/20 transition-all"
+        <div className="flex flex-col sm:flex-row items-center gap-4 w-full sm:w-auto">
+          <div className="relative w-full sm:w-96">
+            <Search className="w-5 h-5 text-brand-gray absolute left-4 top-1/2 -translate-y-1/2" />
+            <input
+              type="text"
+              placeholder="Buscar insumo..."
+              value={searchTerm}
+              onChange={(e) => setSearchTerm(e.target.value)}
+              className="w-full pl-11 pr-4 py-2.5 bg-white border border-slate-200 shadow-[0_2px_10px_rgb(0,0,0,0.02)] rounded-xl text-sm font-medium focus:outline-none focus:border-brand-primary focus:ring-2 focus:ring-brand-primary/20 transition-all"
+            />
+          </div>
+          <Dropdown
+            className="w-full sm:w-40"
+            value={statusFilter}
+            onChange={(value) => setStatusFilter(value as StatusFilter)}
+            options={[
+              { label: "Todos", value: "all" },
+              { label: "Activos", value: "active" },
+              { label: "Archivados", value: "archived" },
+            ]}
+          />
+          <Dropdown
+            className="w-full sm:w-56"
+            value={categoryFilter}
+            onChange={setCategoryFilter}
+            options={[
+              { label: "Todas las categorías", value: "" },
+              ...categories.map((c) => ({ label: c, value: c })),
+            ]}
           />
         </div>
         <Button
@@ -331,6 +423,27 @@ export const InventoryTab = () => {
         onClose={() => setIsModalOpen(false)}
         onSaved={loadData}
         itemToEdit={itemToEdit}
+      />
+
+      <PurchaseModal
+        // Remounts on every open so the form starts clean (and "+" starts at 1).
+        key={
+          purchaseTarget
+            ? `${purchaseTarget.item.id}-${purchaseTarget.mode}`
+            : "closed"
+        }
+        isOpen={purchaseTarget !== null}
+        onClose={() => setPurchaseTarget(null)}
+        onSaved={handlePurchaseSaved}
+        item={purchaseTarget?.item ?? null}
+        mode={purchaseTarget?.mode}
+        initialQuantity={purchaseTarget?.mode === "add" ? 1 : undefined}
+      />
+
+      <MovementHistoryModal
+        isOpen={historyItem !== null}
+        onClose={() => setHistoryItem(null)}
+        item={historyItem}
       />
     </motion.div>
   );

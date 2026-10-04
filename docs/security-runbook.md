@@ -1239,3 +1239,70 @@ is no local Docker, so `supabase test db` / pgTAP cannot run; this replaces it.
 `current_patient_id()`, `is_staff()` or `export_my_data()`, and before each
 release. It holds a lock on `appointments` for the duration of the transaction
 (well under a second); run it off-hours.
+
+---
+
+# Phase 4 — Inventory ledger
+
+## Migration 16 — Stock changes go through a ledger
+
+**Why:** the app wrote an absolute stock value computed in the browser, so fast
++/- clicks or two open tabs overwrote each other; `last_restock_date` was
+stamped even when stock went down; and nothing recorded what supplies cost,
+which Phase 5 (Finances) needs as its expense source.
+
+**Run:** paste `supabase/migrations/20260922181500_inventory_movements.sql`.
+
+- If an item has negative stock it stops with `Migration 16 ABORTED`, lists the
+  items and changes NOTHING. Correct their `stock_quantity` and run it again.
+- Otherwise it must print:
+  `Migration 16 PASSED: stock changes only through adjust_stock(), every change is in the append-only inventory_movements ledger, and the ledger matches current stock.`
+
+**What it changes:**
+
+- New `public.inventory_movements`: append-only (no UPDATE/DELETE/TRUNCATE for
+  any role, same guard as `audit_log`), staff can only SELECT it through the
+  API. `quantity` is signed; purchases store `total_cost` and `unit_cost`.
+- New RPC `adjust_stock(item, delta, type, total_cost, note)` (staff only,
+  `authenticated` only). It adds the delta to the CURRENT stock in one atomic
+  UPDATE, refuses negative stock and archived items, stamps
+  `last_restock_date` only for purchases, and writes the movement in the same
+  transaction.
+- Trigger `inventory_guard_stock` refuses any other change to
+  `inventory.stock_quantity`. Name, category, unit, alert level and archive
+  still edit directly.
+- Trigger `inventory_record_initial_stock` records the stock given when an item
+  is created as an "Inventario inicial" movement.
+- Backfill: every existing item gets one "Inventario inicial" movement for its
+  current stock, so the ledger sums to the stock from day one.
+- `inventory.stock_quantity` gets a `>= 0` check.
+
+**Deploy order:** run the migration BEFORE deploying the frontend. The previous
+frontend writes stock directly and its +/- buttons would fail after the
+migration; the new frontend needs `adjust_stock()`.
+
+**Fixing a count from the SQL editor:** prefer the app ("Editar" → Stock
+Actual, recorded as "Ajuste manual"). A raw fix must run in one transaction
+after `select set_config('app.inventory_ledger', 'on', true);` and should be
+paired with a matching `inventory_movements` row, or the ledger will no longer
+match the stock.
+
+**Rollback:** `drop trigger inventory_guard_stock on public.inventory;` restores
+direct stock writes (needed only if the previous frontend is redeployed). Keep
+the ledger table: it holds purchase costs.
+
+## Inventory check — `supabase/tests/inventory_check.sql`
+
+**Run:** paste the whole file into the SQL editor after migration 16. It runs
+inside `begin; … rollback;` with a throwaway doctor and test item, so nothing
+is committed.
+
+- Expected: one notice starting with `INVENTORY CHECK PASSED`.
+- A failure raises `INVENTORY CHECK FAILED: …` naming the broken rule.
+
+It proves: a change from a stale screen adds up instead of overwriting (read 10,
++5, −1 → 14); stock cannot go negative; a direct `UPDATE … stock_quantity` is
+refused while a rename still works; a purchase of 4 for $100 stamps
+`last_restock_date` and records unit cost 25.00; staff cannot insert, update or
+delete movements directly; the ledger sums to the stock; `anon` cannot call
+`adjust_stock()`.
