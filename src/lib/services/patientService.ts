@@ -132,5 +132,11 @@ export const createPatient = async (
     },
   ]);
 
-  if (error) throw new Error("Error al crear el paciente.");
+  if (error) {
+    // 23505 = unique_violation on the normalized-phone index (migration 15).
+    if (error.code === "23505") {
+      throw new Error("Ya existe un paciente con ese número de teléfono.");
+    }
+    throw new Error("Error al crear el paciente.");
+  }
 };
