@@ -16,6 +16,8 @@ interface DropdownProps {
   placeholder?: string;
   searchable?: boolean;
   className?: string;
+  /** id of the visible label, so the trigger and its list get an accessible name. */
+  labelledBy?: string;
 }
 
 export const Dropdown = ({
@@ -25,6 +27,7 @@ export const Dropdown = ({
   placeholder = "Seleccionar...",
   searchable = false,
   className = "",
+  labelledBy,
 }: DropdownProps) => {
   const [isOpen, setIsOpen] = useState(false);
   const [searchTerm, setSearchTerm] = useState("");
@@ -96,6 +99,10 @@ export const Dropdown = ({
       <div className={`relative ${className}`} ref={buttonRef}>
         <div
           onClick={handleToggle}
+          role="combobox"
+          aria-haspopup="listbox"
+          aria-expanded={isOpen}
+          aria-labelledby={labelledBy}
           className="w-full px-4 py-3 bg-white border border-slate-200 rounded-xl text-sm font-medium flex items-center justify-between cursor-pointer focus-within:border-brand-primary focus-within:ring-2 focus-within:ring-brand-primary/20 transition-all"
         >
           <span
@@ -146,7 +153,10 @@ export const Dropdown = ({
                   </div>
                 )}
 
-                <div className="max-h-60 overflow-y-auto p-1 [&::-webkit-scrollbar]:w-1.5 [&::-webkit-scrollbar-track]:bg-transparent [&::-webkit-scrollbar-thumb]:bg-slate-200 [&::-webkit-scrollbar-thumb]:rounded-full hover:[&::-webkit-scrollbar-thumb]:bg-slate-300">
+                <div
+                  role="listbox"
+                  aria-labelledby={labelledBy}
+                  className="max-h-60 overflow-y-auto p-1 [&::-webkit-scrollbar]:w-1.5 [&::-webkit-scrollbar-track]:bg-transparent [&::-webkit-scrollbar-thumb]:bg-slate-200 [&::-webkit-scrollbar-thumb]:rounded-full hover:[&::-webkit-scrollbar-thumb]:bg-slate-300">
                   {filteredOptions.length === 0 ? (
                     <div className="p-3 text-sm text-brand-gray text-center">
                       No hay resultados
@@ -155,6 +165,9 @@ export const Dropdown = ({
                     filteredOptions.map((opt) => (
                       <div
                         key={opt.value}
+                        role="option"
+                        aria-selected={value === opt.value}
+                        aria-disabled={opt.disabled || undefined}
                         onClick={() => {
                           if (opt.disabled) return;
                           onChange(opt.value);

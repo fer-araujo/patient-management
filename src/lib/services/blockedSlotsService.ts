@@ -1,5 +1,9 @@
 import { supabase } from "../supabase";
-import { combineIsoDateAndTime } from "../../features/doctor/utils/calendarUtils";
+import {
+  combineIsoDateAndTime,
+  timeToDecimal,
+} from "../../features/doctor/utils/calendarUtils";
+import { CLINIC_TIME_ZONE } from "../clinicTime";
 
 export interface DashboardBlockedSlot {
   id: string;
@@ -35,6 +39,7 @@ export const fetchBlockedSlots = async (): Promise<DashboardBlockedSlot[]> => {
         day: "2-digit",
         month: "short",
         year: "numeric",
+        timeZone: CLINIC_TIME_ZONE,
       })
       .replace(/\./g, "");
     const startTimeStr = start
@@ -42,6 +47,7 @@ export const fetchBlockedSlots = async (): Promise<DashboardBlockedSlot[]> => {
         hour: "2-digit",
         minute: "2-digit",
         hour12: true,
+        timeZone: CLINIC_TIME_ZONE,
       })
       .toUpperCase();
     const endTimeStr = end
@@ -49,6 +55,7 @@ export const fetchBlockedSlots = async (): Promise<DashboardBlockedSlot[]> => {
         hour: "2-digit",
         minute: "2-digit",
         hour12: true,
+        timeZone: CLINIC_TIME_ZONE,
       })
       .toUpperCase();
 
@@ -63,6 +70,33 @@ export const fetchBlockedSlots = async (): Promise<DashboardBlockedSlot[]> => {
   });
 };
 
+/**
+ * Returns a Spanish message when the block range is invalid, or null. Each day
+ * of the range gets its own row from start time to end time, so the end time
+ * must be later than the start time on every day, not only on the last one.
+ */
+export const validateBlockRange = (
+  isoStartDate: string,
+  startTimeStr: string,
+  isoEndDate: string,
+  endTimeStr: string,
+): string | null => {
+  if (!isoStartDate || !isoEndDate) return "Seleccione las fechas del bloqueo.";
+  // ISO dates (YYYY-MM-DD) compare correctly as plain strings.
+  if (isoEndDate < isoStartDate) {
+    return "La fecha final no puede ser antes de la fecha inicial.";
+  }
+  if (timeToDecimal(endTimeStr) <= timeToDecimal(startTimeStr)) {
+    return "La hora de fin debe ser después de la hora de inicio.";
+  }
+  return null;
+};
+
+const localDate = (isoDate: string): Date => {
+  const [y, m, d] = isoDate.split("-").map(Number);
+  return new Date(y, m - 1, d);
+};
+
 export const createBlockedSlot = async (
   isoStartDate: string,
   startTimeStr: string,
@@ -70,8 +104,16 @@ export const createBlockedSlot = async (
   endTimeStr: string,
   reason: string,
 ) => {
-  const start = new Date(`${isoStartDate}T00:00:00`);
-  const end = new Date(`${isoEndDate}T00:00:00`);
+  const rangeError = validateBlockRange(
+    isoStartDate,
+    startTimeStr,
+    isoEndDate,
+    endTimeStr,
+  );
+  if (rangeError) throw new Error(rangeError);
+
+  const start = localDate(isoStartDate);
+  const end = localDate(isoEndDate);
   const inserts = [];
 
   for (let d = new Date(start); d <= end; d.setDate(d.getDate() + 1)) {
@@ -87,6 +129,9 @@ export const createBlockedSlot = async (
     });
   }
 
+  // An empty insert "succeeds" in PostgREST; never report a block that saved nothing.
+  if (inserts.length === 0) throw new Error("No se pudo bloquear el horario.");
+
   const { error } = await supabase.from("blocked_slots").insert(inserts);
   if (error) throw new Error("No se pudo bloquear el horario.");
 };
@@ -99,6 +144,15 @@ export const updateBlockedSlot = async (
   endTimeStr: string,
   reason: string,
 ) => {
+  // Validate before deleting, or an invalid edit would lose the original block.
+  const rangeError = validateBlockRange(
+    isoStartDate,
+    startTimeStr,
+    isoEndDate,
+    endTimeStr,
+  );
+  if (rangeError) throw new Error(rangeError);
+
   await supabase.from("blocked_slots").delete().eq("id", id);
   await createBlockedSlot(
     isoStartDate,

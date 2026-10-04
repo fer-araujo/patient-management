@@ -8,6 +8,7 @@ import { DateTimeSelector } from "./DateTimeSelector";
 import { BookingSuccess } from "./BookingSuccess";
 import { rescheduleMyAppointment } from "../../../lib/services/patientBookingService";
 import { combineIsoDateAndTime } from "../../doctor/utils/calendarUtils";
+import { toClinicIsoDate } from "../../../lib/clinicTime";
 
 export const RescheduleFlow = () => {
   const navigate = useNavigate();
@@ -18,12 +19,11 @@ export const RescheduleFlow = () => {
 
   // =========================================================================
   // EL ESCUDO ANTI-CICLOS (FIX DEFINITIVO PARA EL CPU)
-  // Convertimos "2026-06-10T23:15:00+00:00" -> "2026-06-10"
+  // "2026-06-11T01:15:00+00:00" -> "2026-06-10": the clinic's calendar date,
+  // not the UTC one (an evening appointment is already "tomorrow" in UTC).
   // =========================================================================
   const safeDate =
-    typeof currentDate === "string" && currentDate.includes("T")
-      ? currentDate.split("T")[0]
-      : currentDate;
+    typeof currentDate === "string" ? toClinicIsoDate(currentDate) : currentDate;
 
   const [step, setStep] = useState<1 | 2>(1);
   const [isSubmitting, setIsSubmitting] = useState(false);

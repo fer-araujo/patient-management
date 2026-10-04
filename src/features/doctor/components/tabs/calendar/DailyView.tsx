@@ -8,9 +8,11 @@ import {
   timeToPixels,
   getServiceColors,
   isTimeSlotInPast,
+  isTimeStrInPast,
   HOUR_HEIGHT,
   getGridHoursRange,
 } from "../../../utils/calendarUtils";
+import { PendingBadge } from "./PendingBadge";
 
 interface DailyViewProps {
   appointments: DashboardAppointment[];
@@ -141,8 +143,7 @@ export const DailyView = ({
 
               {/* BLOQUEOS DE AGENDA */}
               {daysBlocks.map((block) => {
-                const blockHour = parseHour24(block.startTime);
-                const isPast = isTimeSlotInPast(baseDate, blockHour);
+                const isPast = isTimeStrInPast(baseDate, block.startTime);
                 const topPosition = timeToPixels(block.startTime, startHour);
                 const heightPixels = (block.durationMins / 60) * HOUR_HEIGHT;
                 const isSmall = block.durationMins <= 45;
@@ -175,8 +176,7 @@ export const DailyView = ({
 
               {/* CITAS MÉDICAS */}
               {daysAppointments.map((app) => {
-                const appHour = parseHour24(app.time);
-                const isPast = isTimeSlotInPast(baseDate, appHour);
+                const isPast = isTimeStrInPast(baseDate, app.time);
                 const topPosition = timeToPixels(app.time, startHour);
                 const heightPixels = (app.durationMins / 60) * HOUR_HEIGHT;
                 const isSmall = app.durationMins <= 45;
@@ -197,6 +197,7 @@ export const DailyView = ({
                         >
                           {app.patientName}
                         </h4>
+                        {app.status === "pending" && <PendingBadge />}
                         {!isSmall && (
                           <div className="flex items-center gap-1 text-[10px] font-bold opacity-90 bg-white/60 px-1.5 py-0.5 rounded-md shrink-0">
                             <Clock className="w-3 h-3" /> {app.time}

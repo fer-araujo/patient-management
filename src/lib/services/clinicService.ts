@@ -1,4 +1,5 @@
 import { combineVisualDateAndTime } from "../../features/doctor/utils/calendarUtils";
+import { formatClinicShortDate, formatClinicTime12h } from "../clinicTime";
 import { supabase } from "../supabase";
 
 export interface DashboardAppointment {
@@ -16,6 +17,8 @@ export interface DashboardAppointment {
   reason: string | null;
   /** Catalog price of the service, used to pre-fill the charge. */
   servicePrice?: number | null;
+  /** patients.status; an "archived" patient cannot be booked by the staff. */
+  patientStatus?: "active" | "blocked" | "archived" | null;
 }
 
 // INTERFAZ ESTRICTA PARA SUPABASE (CERO 'any')
@@ -25,7 +28,12 @@ interface RawAppointmentData {
   status: "pending" | "confirmed" | "completed" | "cancelled" | "rejected";
   patient_id: string;
   reason: string | null;
-  patients: { first_name: string; last_name: string; phone: string } | null;
+  patients: {
+    first_name: string;
+    last_name: string;
+    phone: string;
+    status: "active" | "blocked" | "archived" | null;
+  } | null;
   services: {
     name: string;
     duration_mins: number;
@@ -48,7 +56,8 @@ export const fetchDoctorAppointments = async (): Promise<
       patients (
         first_name,
         last_name,
-        phone
+        phone,
+        status
       ),
       services (
         name,
@@ -68,21 +77,11 @@ export const fetchDoctorAppointments = async (): Promise<
   if (!data) return [];
 
   return data.map((apt) => {
+    // Clinic wall clock, so the calendar grid, past-slot checks and
+    // availability (all in clinic time) agree whatever the browser zone.
     const startDate = new Date(apt.start_time);
-
-    const formattedDate = startDate
-      .toLocaleDateString("es-MX", {
-        day: "2-digit",
-        month: "short",
-        year: "numeric",
-      })
-      .replace(/\./g, "");
-
-    const h = startDate.getHours();
-    const m = String(startDate.getMinutes()).padStart(2, "0");
-    const ampm = h >= 12 ? "PM" : "AM";
-    const h12 = h % 12 || 12; // Convierte formato 24h a 12h
-    const cleanTime = `${String(h12).padStart(2, "0")}:${m} ${ampm}`;
+    const formattedDate = formatClinicShortDate(startDate);
+    const cleanTime = formatClinicTime12h(startDate);
 
     const firstName = apt.patients?.first_name || "Paciente";
     const lastName = apt.patients?.last_name || "Desconocido";
@@ -106,6 +105,7 @@ export const fetchDoctorAppointments = async (): Promise<
         apt.services?.price === null || apt.services?.price === undefined
           ? null
           : Number(apt.services.price),
+      patientStatus: apt.patients?.status ?? null,
     };
   });
 };
@@ -129,6 +129,10 @@ export const updateAppointmentStatus = async (
   }
 };
 
+/** Slot conflicts raised on purpose by the booking RPCs carry code P0001 and a Spanish message. */
+const rpcError = (error: { code?: string; message: string }, fallback: string) =>
+  new Error(error.code === "P0001" ? error.message : fallback);
+
 // 3. CREAR NUEVA CITA (Agendar)
 export const createAppointment = async (
   patientId: string,
@@ -147,37 +151,36 @@ export const createAppointment = async (
   // Usamos el nuevo traductor que respeta tu zona horaria
   const utcIsoDateTime = combineVisualDateAndTime(dateStr, timeStr);
 
-  const { error } = await supabase.from("appointments").insert({
-    patient_id: patientId,
-    service_id: srv.id,
-    start_time: utcIsoDateTime,
-    status: "confirmed",
+  // staff_create_appointment runs the same locked overlap check as patient
+  // bookings, so two bookings can never take the same slot at once.
+  const { error } = await supabase.rpc("staff_create_appointment", {
+    p_patient_id: patientId,
+    p_service_id: srv.id,
+    p_start_time: utcIsoDateTime,
   });
 
   if (error) {
     console.error("Error al crear cita:", error.message);
-    throw new Error("No se pudo agendar la cita.");
+    throw rpcError(error, "No se pudo agendar la cita.");
   }
 };
 
 // 4. REPROGRAMAR CITA (staff)
 // Patients use rescheduleMyAppointment in patientBookingService instead: RLS
-// gives them no UPDATE privilege on appointments.
+// gives them no UPDATE privilege on appointments. The RPC checks the new slot
+// (ignoring the appointment itself) and sets the status back to "pending".
 export const rescheduleAppointment = async (
   id: string,
   isoDateTime: string,
 ) => {
-  const { error } = await supabase
-    .from("appointments")
-    .update({
-      start_time: isoDateTime,
-      status: "pending",
-    }) // AHORA SE QUEDA PENDIENTE
-    .eq("id", id);
+  const { error } = await supabase.rpc("staff_reschedule_appointment", {
+    p_appointment_id: id,
+    p_start_time: isoDateTime,
+  });
 
   if (error) {
     console.error("Error al reprogramar:", error.message);
-    throw new Error("No se pudo reprogramar la cita.");
+    throw rpcError(error, "No se pudo reprogramar la cita.");
   }
 };
 

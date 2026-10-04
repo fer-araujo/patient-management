@@ -20,6 +20,10 @@
 --   * The whatsapp_notifications trigger is disabled INSIDE the transaction
 --     (DDL is transactional in Postgres), so the test appointments can never
 --     send a WhatsApp message. The ROLLBACK re-enables it automatically.
+--   * The appointments_prevent_overlap trigger (migration 19) is disabled the
+--     same way, so the fixture appointments, which sit at fixed offsets from
+--     now(), cannot fail because a real appointment or blocked slot overlaps
+--     them. staff_booking_check.sql covers that trigger.
 --   * The script refuses to run if any other enabled trigger on the touched
 --     tables looks like an outbound HTTP call.
 --   * ALTER TABLE ... DISABLE TRIGGER holds a lock on public.appointments until
@@ -42,6 +46,14 @@ begin
       and tgname = 'whatsapp_notifications'
   ) then
     execute 'alter table public.appointments disable trigger whatsapp_notifications';
+  end if;
+
+  if exists (
+    select 1 from pg_trigger
+    where tgrelid = 'public.appointments'::regclass
+      and tgname = 'appointments_prevent_overlap'
+  ) then
+    execute 'alter table public.appointments disable trigger appointments_prevent_overlap';
   end if;
 
   if exists (

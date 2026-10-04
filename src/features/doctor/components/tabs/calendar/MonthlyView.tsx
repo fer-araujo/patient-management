@@ -4,6 +4,7 @@ import type { DashboardBlockedSlot } from "../../../../../lib/services/blockedSl
 import type { WeeklySchedule } from "../../../../../lib/services/settingsService";
 import { useCalendar } from "../../../hooks/useCalendar";
 import { getServiceColors } from "../../../utils/calendarUtils";
+import { PendingBadge } from "./PendingBadge";
 
 const DAYS_OF_WEEK = ["Dom", "Lun", "Mar", "Mié", "Jue", "Vie", "Sáb"];
 
@@ -157,6 +158,11 @@ export const MonthlyView = ({
                         className={`text-[10px] font-bold px-1.5 py-1 rounded truncate transition-all cursor-pointer border
                           ${getServiceColors(app.service, isPast)} ${!isPast && "hover:shadow-sm hover:scale-[1.02]"}`}
                       >
+                        {app.status === "pending" && (
+                          <span className="mr-1 inline-block align-middle">
+                            <PendingBadge />
+                          </span>
+                        )}
                         {app.time} - {app.patientName.split(" ")[0]}
                       </div>
                     );

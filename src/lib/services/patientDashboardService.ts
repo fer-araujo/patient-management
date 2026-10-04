@@ -1,5 +1,6 @@
 import { supabase } from "../supabase";
 import { getPatientFiles } from "./storageService";
+import { formatClinicShortDate, formatClinicTime12h } from "../clinicTime";
 
 export interface PatientProfile {
   id: string;
@@ -124,20 +125,9 @@ export const fetchMyAppointments = async (
   return data.map((apt: RawPatientAppointment) => {
     const startDate = new Date(apt.start_time);
 
-    // Formateamos visualmente para el Dashboard
-    const formattedDate = startDate
-      .toLocaleDateString("es-MX", {
-        day: "2-digit",
-        month: "short",
-        year: "numeric",
-      })
-      .replace(/\./g, "");
-
-    const h = startDate.getHours();
-    const m = String(startDate.getMinutes()).padStart(2, "0");
-    const ampm = h >= 12 ? "PM" : "AM";
-    const h12 = h % 12 || 12;
-    const cleanTime = `${String(h12).padStart(2, "0")}:${m} ${ampm}`;
+    // Shown on the clinic's wall clock, whatever zone the patient browses from.
+    const formattedDate = formatClinicShortDate(startDate);
+    const cleanTime = formatClinicTime12h(startDate);
 
     return {
       id: apt.id,

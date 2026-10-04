@@ -2,6 +2,11 @@ import type { DashboardAppointment } from "../../../lib/services/clinicService";
 import type { DashboardBlockedSlot } from "../../../lib/services/blockedSlotsService";
 import type { BusyRange } from "../../../lib/services/availabilityService";
 import type { WeeklySchedule } from "../../../lib/services/settingsService";
+import {
+  clinicWallTimeToUtc,
+  localDateToIso,
+  nowInClinic,
+} from "../../../lib/clinicTime";
 
 export const HOUR_HEIGHT = 100;
 
@@ -48,26 +53,25 @@ export const getServiceColors = (service: string, isPast: boolean): string => {
   return isPast ? `${colors} opacity-60` : colors;
 };
 
-export const isTimeSlotInPast = (dateObj: Date, hour24: number): boolean => {
-  const now = new Date();
-  const currentHour = now.getHours();
-  const targetMidnight = new Date(
-    dateObj.getFullYear(),
-    dateObj.getMonth(),
-    dateObj.getDate(),
-  );
-  const todayMidnight = new Date(
-    now.getFullYear(),
-    now.getMonth(),
-    now.getDate(),
-  );
-  if (targetMidnight < todayMidnight) return true;
-  if (
-    targetMidnight.getTime() === todayMidnight.getTime() &&
-    hour24 <= currentHour
-  )
-    return true;
-  return false;
+/**
+ * Whether a slot starting at `hour24:minutes` clinic time on the calendar date
+ * of `dateObj` (its local date components) has already started, to the
+ * minute. For a whole-hour cell (minutes = 0) this is the same as "the hour
+ * has begun".
+ */
+export const isTimeSlotInPast = (
+  dateObj: Date,
+  hour24: number,
+  minutes: number = 0,
+): boolean => {
+  const slotStart = clinicWallTimeToUtc(localDateToIso(dateObj), hour24, minutes);
+  return slotStart.getTime() <= Date.now();
+};
+
+/** isTimeSlotInPast for a "hh:mm AM/PM" start time. */
+export const isTimeStrInPast = (dateObj: Date, timeStr: string): boolean => {
+  const { hours, minutes } = extractHoursMinutes(timeStr);
+  return isTimeSlotInPast(dateObj, hours, minutes);
 };
 
 export const parseVisualDateToISO = (visualDate: string): string => {
@@ -89,14 +93,16 @@ export const parseVisualDateToISO = (visualDate: string): string => {
   return `${year}-${months[monthStr] || "01"}-${day.padStart(2, "0")}`;
 };
 
+/**
+ * UTC ISO string for a clinic wall-clock date and time. Always interpreted in
+ * the clinic's zone, whatever zone the browser is in.
+ */
 export const combineIsoDateAndTime = (
   isoDate: string,
   timeStr: string,
 ): string => {
-  const [year, month, day] = isoDate.split("-").map(Number);
   const { hours, minutes } = extractHoursMinutes(timeStr);
-  const localDate = new Date(year, month - 1, day, hours, minutes);
-  return localDate.toISOString();
+  return clinicWallTimeToUtc(isoDate, hours, minutes).toISOString();
 };
 
 export const combineVisualDateAndTime = (
@@ -178,8 +184,6 @@ export const getAvailableTimeOptionsFromBusy = (
   const candidates = buildDayCandidates(isoDate, workingSchedule);
   if (!candidates) return [];
 
-  const [y, m, d] = isoDate.split("-").map(Number);
-
   return candidates.options
     .filter((timeStr) => {
       const slotStartDec = timeToDecimal(timeStr);
@@ -188,7 +192,7 @@ export const getAvailableTimeOptionsFromBusy = (
       }
 
       const { hours, minutes } = extractHoursMinutes(timeStr);
-      const slotStart = new Date(y, m - 1, d, hours, minutes);
+      const slotStart = clinicWallTimeToUtc(isoDate, hours, minutes);
       const slotEnd = new Date(slotStart.getTime() + requiredDurationMins * 60000);
 
       return !busyRanges.some(
@@ -199,8 +203,18 @@ export const getAvailableTimeOptionsFromBusy = (
 };
 
 /**
+ * Whether an appointment holds its calendar slot. Must match the busy rule of
+ * assert_slot_free() and get_availability() in the database: every status
+ * except 'cancelled' and 'rejected'. A rescheduled appointment goes back to
+ * 'pending' and must keep blocking its new time.
+ */
+export const holdsSlot = (status: DashboardAppointment["status"]): boolean =>
+  status !== "cancelled" && status !== "rejected";
+
+/**
  * Availability for the STAFF calendar, which already holds the full appointment
- * and block lists in memory.
+ * and block lists in memory. `excludeAppointmentId` lets a reschedule ignore the
+ * appointment being moved, so its current slot never collides with itself.
  */
 export const getAvailableTimeOptions = (
   isoDate: string,
@@ -208,6 +222,7 @@ export const getAvailableTimeOptions = (
   blockedSlots: DashboardBlockedSlot[],
   workingSchedule: WeeklySchedule,
   requiredDurationMins: number = 30,
+  excludeAppointmentId?: string,
 ): { label: string; value: string }[] => {
   const candidates = buildDayCandidates(isoDate, workingSchedule);
   if (!candidates) return [];
@@ -225,7 +240,10 @@ export const getAvailableTimeOptions = (
     .replace(/\./g, "")
     .toLowerCase();
   const appsToday = appointments.filter(
-    (a) => a.date.toLowerCase() === visualDateStr && a.status === "confirmed",
+    (a) =>
+      a.date.toLowerCase() === visualDateStr &&
+      holdsSlot(a.status) &&
+      a.id !== excludeAppointmentId,
   );
   const blocksToday = blockedSlots.filter(
     (b) => b.date.toLowerCase() === visualDateStr,
@@ -254,18 +272,74 @@ export const getAvailableTimeOptions = (
     .map((t) => ({ label: t, value: t }));
 };
 
+/**
+ * Staff availability without the slots that already started today: a slot is
+ * offered only when its start is after now, to the minute (the server's
+ * assert_slot_free() applies the same "start > now()" rule).
+ */
+export const getBookableTimeOptions = (
+  isoDate: string,
+  appointments: DashboardAppointment[],
+  blockedSlots: DashboardBlockedSlot[],
+  workingSchedule: WeeklySchedule,
+  requiredDurationMins: number = 30,
+  excludeAppointmentId?: string,
+): { label: string; value: string }[] => {
+  if (!isoDate) return [];
+  const [y, m, d] = isoDate.split("-").map(Number);
+  const dateObj = new Date(y, m - 1, d);
+  return getAvailableTimeOptions(
+    isoDate,
+    appointments,
+    blockedSlots,
+    workingSchedule,
+    requiredDurationMins,
+    excludeAppointmentId,
+  ).filter((opt) => !isTimeStrInPast(dateObj, opt.value));
+};
+
+/**
+ * First day the patient booking screen opens on: the clinic's today, or
+ * tomorrow from 5:00 PM clinic time on, moved forward to the next open day.
+ * The day is walked as a UTC date purely as a calendar cursor.
+ */
+export const getSmartStartDate = (
+  schedule: WeeklySchedule,
+  now: Date = new Date(),
+): string => {
+  const clinicNow = nowInClinic(now);
+  const day = new Date(
+    Date.UTC(clinicNow.year, clinicNow.month - 1, clinicNow.day),
+  );
+  if (clinicNow.hours >= 17) {
+    day.setUTCDate(day.getUTCDate() + 1);
+  }
+
+  for (let i = 0; i < 7; i++) {
+    const dayOfWeek = day.getUTCDay() as keyof WeeklySchedule;
+    if (schedule[dayOfWeek]?.isOpen) {
+      break;
+    }
+    day.setUTCDate(day.getUTCDate() + 1);
+  }
+  return day.toISOString().slice(0, 10);
+};
+
+/**
+ * Patient-facing "not too soon" filter: on the clinic's today, keeps only the
+ * slots at least one hour ahead of the clinic's current time.
+ */
 export const filterFutureTimesOnly = (
   times12h: string[],
   dateIso: string,
 ): string[] => {
-  const now = new Date();
-  const todayIso = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
+  const now = nowInClinic();
 
   // Si la fecha no es hoy, todos los horarios son futuros y válidos
-  if (dateIso !== todayIso) return times12h;
+  if (dateIso !== now.isoDate) return times12h;
 
-  const currentHour = now.getHours();
-  const currentMinute = now.getMinutes();
+  const currentHour = now.hours;
+  const currentMinute = now.minutes;
 
   return times12h.filter((timeStr) => {
     // Usamos tu utilidad existente que ya es perfecta manejando AM/PM

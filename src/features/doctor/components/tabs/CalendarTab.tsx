@@ -25,6 +25,7 @@ import {
   deleteBlockedSlot,
   createBlockedSlot,
   updateBlockedSlot,
+  validateBlockRange,
   type DashboardBlockedSlot,
 } from "../../../../lib/services/blockedSlotsService";
 import {
@@ -44,7 +45,7 @@ import { MonthlyView } from "./calendar/MonthlyView";
 import {
   combineIsoDateAndTime,
   parseVisualDateToISO,
-  getAvailableTimeOptions,
+  getBookableTimeOptions,
 } from "../../utils/calendarUtils";
 import toast from "react-hot-toast";
 
@@ -52,6 +53,9 @@ const getISODate = () => {
   const d = new Date();
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
 };
+
+/** Default length used to list free times before a service is chosen. */
+const DEFAULT_SLOT_MINS = 30;
 
 interface CalendarTabProps {
   appointments: DashboardAppointment[];
@@ -76,16 +80,29 @@ export const CalendarTab = ({
     setWorkingSchedule,
   } = useCalendar();
 
-  const confirmedAppointments = useMemo(
-    () => appointments.filter((app) => app.status === "confirmed"),
+  // Pending appointments (e.g. just rescheduled) stay visible: they hold their slot.
+  const calendarAppointments = useMemo(
+    () =>
+      appointments.filter(
+        (app) => app.status === "confirmed" || app.status === "pending",
+      ),
     [appointments],
   );
 
+  const isClosedDay = (isoDate: string) => {
+    const [y, m, d] = isoDate.split("-").map(Number);
+    const day =
+      workingSchedule[new Date(y, m - 1, d).getDay() as keyof WeeklySchedule];
+    return !day?.isOpen;
+  };
+
   const patientOptions = useMemo(() => {
     const patientMap = new Map<string, string>();
-    appointments.forEach((app) =>
-      patientMap.set(app.patientId, app.patientName),
-    );
+    // An archived record is inactive: it must be reactivated from the patient
+    // directory before it can be booked (the server refuses it as well).
+    appointments
+      .filter((app) => app.patientStatus !== "archived")
+      .forEach((app) => patientMap.set(app.patientId, app.patientName));
     const uniquePatients = Array.from(patientMap.entries()).map(
       ([value, label]) => ({ label, value }),
     );
@@ -196,6 +213,7 @@ export const CalendarTab = ({
 
   const [selectedPatient, setSelectedPatient] = useState("");
   const [selectedService, setSelectedService] = useState("");
+  const [scheduleTime, setScheduleTime] = useState("");
   const [blockStartDate, setBlockStartDate] = useState("");
   const [blockEndDate, setBlockEndDate] = useState("");
   const [blockStartTime, setBlockStartTime] = useState("09:00 AM");
@@ -210,12 +228,13 @@ export const CalendarTab = ({
 
   const rescheduleOptions = useMemo(() => {
     if (!rescheduleDate || !selectedAppointment) return [];
-    return getAvailableTimeOptions(
+    return getBookableTimeOptions(
       rescheduleDate,
       appointments,
       blockedSlots,
       workingSchedule,
       selectedAppointment.durationMins,
+      selectedAppointment.id,
     );
   }, [
     rescheduleDate,
@@ -225,6 +244,23 @@ export const CalendarTab = ({
     selectedAppointment,
   ]);
 
+  const scheduleDurationMins =
+    appointments.find((app) => app.service === selectedService)
+      ?.durationMins ?? DEFAULT_SLOT_MINS;
+
+  const getScheduleOptions = (visualDate: string, durationMins: number) =>
+    getBookableTimeOptions(
+      parseVisualDateToISO(visualDate),
+      appointments,
+      blockedSlots,
+      workingSchedule,
+      durationMins,
+    );
+
+  const scheduleOptions = actionModal
+    ? getScheduleOptions(actionModal.date, scheduleDurationMins)
+    : [];
+
   // Cuando abran el modal, copiamos el horario actual al borrador
   useEffect(() => {
     if (settingsModalOpen) {
@@ -233,17 +269,39 @@ export const CalendarTab = ({
   }, [settingsModalOpen, workingSchedule]);
 
   useEffect(() => {
-    if (
-      rescheduleOptions.length > 0 &&
-      !rescheduleOptions.find((opt) => opt.value === rescheduleTime)
-    ) {
-      setRescheduleTime(rescheduleOptions[0].value);
+    if (!rescheduleOptions.find((opt) => opt.value === rescheduleTime)) {
+      // No free time (closed day, fully booked, or all past): leave it empty
+      // so the confirm button stays disabled.
+      setRescheduleTime(rescheduleOptions[0]?.value ?? "");
     }
   }, [rescheduleOptions, rescheduleTime]);
+
+  /** "Agendar Cita" always starts empty: no patient or service from a previous booking. */
+  const resetScheduleForm = () => {
+    setSelectedPatient("");
+    setSelectedService("");
+    setScheduleTime("");
+  };
+
+  const closeActionModal = () => {
+    setActionModal(null);
+    setEditingBlockId(null);
+    resetScheduleForm();
+  };
 
   const handleOpenActionModal = (dateStr: string, timeStr: string) => {
     setActionModal({ date: dateStr, time: timeStr });
     setActionTab("schedule");
+    setSelectedPatient("");
+    setSelectedService("");
+    // Preselect the clicked time only when it is really free; otherwise the
+    // doctor has to pick one from the list. No service is chosen yet, so the
+    // default slot length applies.
+    const isClickedTimeFree = getScheduleOptions(
+      dateStr,
+      DEFAULT_SLOT_MINS,
+    ).some((opt) => opt.value === timeStr);
+    setScheduleTime(isClickedTimeFree ? timeStr : "");
     const isoDate = parseVisualDateToISO(dateStr);
     setBlockStartDate(isoDate);
     setBlockEndDate(isoDate);
@@ -258,23 +316,32 @@ export const CalendarTab = ({
   };
 
   const handleScheduleAppointment = async () => {
-    if (!actionModal || !selectedPatient || !selectedService) return;
+    if (!actionModal || !selectedPatient || !selectedService || !scheduleTime)
+      return;
+    // The list can change after the time was picked (new data, longer
+    // service): never book a time that now overlaps something else.
+    if (!scheduleOptions.some((opt) => opt.value === scheduleTime)) {
+      toast.error("Ese horario ya está ocupado. Elija otra hora.");
+      return;
+    }
     try {
       setIsSubmitting(true);
       await createAppointment(
         selectedPatient,
         selectedService,
         actionModal.date,
-        actionModal.time,
+        scheduleTime,
       );
       await onDataChange();
-      setActionModal(null);
+      closeActionModal();
     } catch (err: unknown) {
       console.error(
         "Error al agendar:",
         err instanceof Error ? err.message : err,
       );
-      toast.error("Error al agendar cita.");
+      toast.error(
+        err instanceof Error ? err.message : "Error al agendar cita.",
+      );
     } finally {
       setIsSubmitting(false);
     }
@@ -300,8 +367,12 @@ export const CalendarTab = ({
     }
   };
 
+  const isRescheduleTimeValid = rescheduleOptions.some(
+    (opt) => opt.value === rescheduleTime,
+  );
+
   const handleConfirmRescheduleAppt = async () => {
-    if (!selectedAppointment || !rescheduleTime) return;
+    if (!selectedAppointment || !isRescheduleTimeValid) return;
     try {
       setIsSubmitting(true);
       const utcIsoDateTime = combineIsoDateAndTime(
@@ -317,13 +388,23 @@ export const CalendarTab = ({
         "Error al reprogramar:",
         err instanceof Error ? err.message : err,
       );
-      toast.error("Error al reprogramar.");
+      toast.error(err instanceof Error ? err.message : "Error al reprogramar.");
     } finally {
       setIsSubmitting(false);
     }
   };
 
   const handleSaveBlock = async () => {
+    const rangeError = validateBlockRange(
+      blockStartDate,
+      blockStartTime,
+      blockEndDate,
+      blockEndTime,
+    );
+    if (rangeError) {
+      toast.error(rangeError);
+      return;
+    }
     try {
       setIsSubmitting(true);
       if (editingBlockId) {
@@ -345,8 +426,7 @@ export const CalendarTab = ({
         );
       }
       await onDataChange();
-      setActionModal(null);
-      setEditingBlockId(null);
+      closeActionModal();
     } catch (err: unknown) {
       console.error(
         "Error al bloquear:",
@@ -483,7 +563,7 @@ export const CalendarTab = ({
             exit={{ opacity: 0 }}
           >
             <DailyView
-              appointments={confirmedAppointments}
+              appointments={calendarAppointments}
               blockedSlots={blockedSlots}
               onAppointmentClick={openAppointment}
               onBlockClick={setSelectedBlock}
@@ -499,7 +579,7 @@ export const CalendarTab = ({
             exit={{ opacity: 0 }}
           >
             <WeeklyView
-              appointments={confirmedAppointments}
+              appointments={calendarAppointments}
               blockedSlots={blockedSlots}
               onAppointmentClick={openAppointment}
               onBlockClick={setSelectedBlock}
@@ -515,7 +595,7 @@ export const CalendarTab = ({
             exit={{ opacity: 0 }}
           >
             <MonthlyView
-              appointments={confirmedAppointments}
+              appointments={calendarAppointments}
               blockedSlots={blockedSlots}
               onAppointmentClick={openAppointment}
               onBlockClick={setSelectedBlock}
@@ -692,10 +772,11 @@ export const CalendarTab = ({
               <>
                 <div className="grid grid-cols-2 gap-3 relative z-50">
                   <div>
-                    <label className="text-brand-dark font-bold text-sm mb-2 block">
+                    <label htmlFor="resch-date" className="text-brand-dark font-bold text-sm mb-2 block">
                       Nueva Fecha
                     </label>
                     <button
+                      id="resch-date"
                       onClick={() => setIsReschPickerOpen(!isReschPickerOpen)}
                       className="w-full px-4 py-3 bg-white border border-slate-200 rounded-xl text-sm font-medium text-left focus:ring-2 focus:ring-brand-primary/20 transition-all flex items-center justify-between group cursor-pointer"
                     >
@@ -714,6 +795,7 @@ export const CalendarTab = ({
                         onClose={() => setIsReschPickerOpen(false)}
                         selectedDate={rescheduleDate}
                         minDate={getISODate()}
+                        isDateDisabled={isClosedDay}
                         onSelectDate={(d) => {
                           setRescheduleDate(d);
                           setIsReschPickerOpen(false);
@@ -722,10 +804,11 @@ export const CalendarTab = ({
                     </div>
                   </div>
                   <div>
-                    <label className="text-brand-dark font-bold text-sm mb-2 block">
+                    <label id="resch-time-label" className="text-brand-dark font-bold text-sm mb-2 block">
                       Nueva Hora
                     </label>
                     <Dropdown
+                      labelledBy="resch-time-label"
                       options={
                         rescheduleOptions.length > 0
                           ? rescheduleOptions
@@ -753,7 +836,7 @@ export const CalendarTab = ({
                   </Button>
                   <Button
                     onClick={handleConfirmRescheduleAppt}
-                    disabled={isSubmitting || !rescheduleTime}
+                    disabled={isSubmitting || !isRescheduleTimeValid}
                     className="flex-1 py-3.5 rounded-xl bg-amber-500 hover:bg-amber-600 text-white border-none shadow-md disabled:opacity-50"
                   >
                     {isSubmitting ? "Guardando..." : "Confirmar Reprogramación"}
@@ -780,10 +863,7 @@ export const CalendarTab = ({
 
       <Modal
         isOpen={!!actionModal}
-        onClose={() => {
-          setActionModal(null);
-          setEditingBlockId(null);
-        }}
+        onClose={closeActionModal}
         title={editingBlockId ? "Editar Bloqueo" : "Gestión de Agenda"}
         icon={
           editingBlockId ? (
@@ -820,18 +900,17 @@ export const CalendarTab = ({
                 className="space-y-4"
               >
                 <div className="bg-brand-light/20 border border-brand-light/50 rounded-xl p-3 flex justify-between items-center text-sm">
-                  <span className="text-brand-gray font-medium">
-                    Horario sugerido:
-                  </span>
+                  <span className="text-brand-gray font-medium">Fecha:</span>
                   <span className="font-bold text-brand-primary">
-                    {actionModal.date} a las {actionModal.time}
+                    {actionModal.date}
                   </span>
                 </div>
                 <div className="relative z-50">
-                  <label className="text-brand-dark font-bold text-sm mb-2 block">
+                  <label id="schedule-patient-label" className="text-brand-dark font-bold text-sm mb-2 block">
                     Buscar Paciente
                   </label>
                   <Dropdown
+                    labelledBy="schedule-patient-label"
                     options={patientOptions}
                     value={selectedPatient}
                     onChange={setSelectedPatient}
@@ -840,20 +919,40 @@ export const CalendarTab = ({
                   />
                 </div>
                 <div className="relative z-40">
-                  <label className="text-brand-dark font-bold text-sm mb-2 block">
+                  <label id="schedule-service-label" className="text-brand-dark font-bold text-sm mb-2 block">
                     Servicio a realizar
                   </label>
                   <Dropdown
+                    labelledBy="schedule-service-label"
                     options={serviceOptions}
                     value={selectedService}
                     onChange={setSelectedService}
                     placeholder="Seleccione un servicio..."
                   />
                 </div>
+                <div className="relative z-30">
+                  <label id="schedule-time-label" className="text-brand-dark font-bold text-sm mb-2 block">
+                    Hora
+                  </label>
+                  <Dropdown
+                    labelledBy="schedule-time-label"
+                    options={
+                      scheduleOptions.length > 0
+                        ? scheduleOptions
+                        : [{ label: "Sin horarios", value: "" }]
+                    }
+                    value={scheduleTime}
+                    onChange={setScheduleTime}
+                    placeholder="Seleccione una hora..."
+                  />
+                </div>
                 <Button
                   onClick={handleScheduleAppointment}
                   disabled={
-                    isSubmitting || !selectedPatient || !selectedService
+                    isSubmitting ||
+                    !selectedPatient ||
+                    !selectedService ||
+                    !scheduleTime
                   }
                   className="w-full py-3.5 rounded-xl bg-brand-primary hover:opacity-90 text-white mt-4 cursor-pointer border-none shadow-md disabled:opacity-50"
                 >
@@ -870,10 +969,11 @@ export const CalendarTab = ({
               >
                 <div className="grid grid-cols-2 gap-3 relative z-50">
                   <div>
-                    <label className="text-brand-dark font-bold text-sm mb-2 block">
+                    <label htmlFor="block-start-date" className="text-brand-dark font-bold text-sm mb-2 block">
                       Desde (Fecha)
                     </label>
                     <button
+                      id="block-start-date"
                       onClick={() => setIsStartPickerOpen(!isStartPickerOpen)}
                       className="w-full px-4 py-3 bg-white border border-slate-200 rounded-xl text-sm font-medium text-left transition-all flex items-center justify-between group cursor-pointer"
                     >
@@ -891,6 +991,7 @@ export const CalendarTab = ({
                         isOpen={isStartPickerOpen}
                         onClose={() => setIsStartPickerOpen(false)}
                         selectedDate={blockStartDate}
+                        maxDate={blockEndDate}
                         onSelectDate={(d) => {
                           setBlockStartDate(d);
                           setIsStartPickerOpen(false);
@@ -899,10 +1000,11 @@ export const CalendarTab = ({
                     </div>
                   </div>
                   <div>
-                    <label className="text-brand-dark font-bold text-sm mb-2 block">
+                    <label htmlFor="block-end-date" className="text-brand-dark font-bold text-sm mb-2 block">
                       Hasta (Fecha)
                     </label>
                     <button
+                      id="block-end-date"
                       onClick={() => setIsEndPickerOpen(!isEndPickerOpen)}
                       className="w-full px-4 py-3 bg-white border border-slate-200 rounded-xl text-sm font-medium text-left transition-all flex items-center justify-between group cursor-pointer"
                     >
@@ -932,20 +1034,22 @@ export const CalendarTab = ({
 
                 <div className="grid grid-cols-2 gap-3 relative z-40">
                   <div>
-                    <label className="text-brand-dark font-bold text-sm mb-2 block">
+                    <label id="block-start-time-label" className="text-brand-dark font-bold text-sm mb-2 block">
                       Hora Inicio
                     </label>
                     <Dropdown
+                      labelledBy="block-start-time-label"
                       options={timeOptions}
                       value={blockStartTime}
                       onChange={setBlockStartTime}
                     />
                   </div>
                   <div>
-                    <label className="text-brand-dark font-bold text-sm mb-2 block">
+                    <label id="block-end-time-label" className="text-brand-dark font-bold text-sm mb-2 block">
                       Hora Fin
                     </label>
                     <Dropdown
+                      labelledBy="block-end-time-label"
                       options={timeOptions}
                       value={blockEndTime}
                       onChange={setBlockEndTime}
