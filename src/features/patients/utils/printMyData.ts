@@ -53,6 +53,45 @@ const section = (title: string, body: string): string =>
 
 const empty = (text: string): string => `<p class="muted">${escapeHtml(text)}</p>`;
 
+/**
+ * Body composition measurements (migration 24). Kept local: absent from
+ * exports made before that migration.
+ */
+interface MeasurementExport {
+  measured_at: string;
+  weight_kg: number | null;
+  height_cm?: number | null;
+  bmi?: number | null;
+  body_fat_pct?: number | null;
+  body_fat_kg?: number | null;
+  skeletal_muscle_kg?: number | null;
+  lean_mass_kg?: number | null;
+  waist_hip_ratio?: number | null;
+  visceral_fat_level?: number | null;
+  bmr_kcal?: number | null;
+}
+
+const MEASUREMENT_FIELDS: { key: keyof MeasurementExport; label: string; unit: string }[] = [
+  { key: "weight_kg", label: "Peso", unit: "kg" },
+  { key: "height_cm", label: "Talla", unit: "cm" },
+  { key: "bmi", label: "IMC", unit: "kg/m²" },
+  { key: "body_fat_pct", label: "Grasa corporal", unit: "%" },
+  { key: "body_fat_kg", label: "Masa grasa", unit: "kg" },
+  { key: "skeletal_muscle_kg", label: "Masa muscular", unit: "kg" },
+  { key: "lean_mass_kg", label: "Masa magra", unit: "kg" },
+  { key: "waist_hip_ratio", label: "Cintura-cadera", unit: "" },
+  { key: "visceral_fat_level", label: "Grasa visceral", unit: "" },
+  { key: "bmr_kcal", label: "Metabolismo basal", unit: "kcal" },
+];
+
+const describeMeasurement = (m: MeasurementExport): string =>
+  MEASUREMENT_FIELDS.filter(({ key }) => m[key] !== null && m[key] !== undefined)
+    .map(({ key, label, unit }) => {
+      const value = Number(m[key]).toLocaleString("es-MX", { maximumFractionDigits: 2 });
+      return `${label} ${value}${unit ? ` ${unit}` : ""}`;
+    })
+    .join(" · ");
+
 const buildDocument = (data: MyDataExport): string => {
   const p = data.profile;
   const fullName = [p?.first_name, p?.last_name].filter(Boolean).join(" ");
@@ -156,6 +195,21 @@ const buildDocument = (data: MyDataExport): string => {
           .join("")}</ul>`,
   );
 
+  const measurementList =
+    (data as MyDataExport & { body_measurements?: MeasurementExport[] }).body_measurements ?? [];
+  const measurements =
+    measurementList.length === 0
+      ? ""
+      : section(
+          "Control de peso",
+          `<ul>${measurementList
+            .map(
+              (m) =>
+                `<li><strong>${escapeHtml(formatDate(m.measured_at))}</strong><br>${escapeHtml(describeMeasurement(m))}</li>`,
+            )
+            .join("")}</ul>`,
+        );
+
   const requests =
     data.arco_requests.length === 0
       ? ""
@@ -204,7 +258,7 @@ const buildDocument = (data: MyDataExport): string => {
   </div>
   <button onclick="window.print()">Imprimir o guardar PDF</button>
 </header>
-${profile}${clinicalHistory}${appointments}${clinicalSummary}${medications}${files}${consents}${requests}
+${profile}${clinicalHistory}${appointments}${clinicalSummary}${medications}${measurements}${files}${consents}${requests}
 </body>
 </html>`;
 };

@@ -223,6 +223,28 @@ describe("renderMyDataDocument", () => {
     expect(render(base)).toContain("No hay antecedentes registrados.");
   });
 
+  it("lists the weight-tracking measurements, oldest first, only when there are some", () => {
+    const html = render({
+      ...baseExport(),
+      body_measurements: [
+        { measured_at: "2026-09-01", weight_kg: 72.4, bmi: null, body_fat_pct: null },
+        { measured_at: "2026-10-01", weight_kg: 68.5, height_cm: 170, bmi: 23.7, body_fat_pct: 30.5 },
+      ],
+    } as MyDataExport);
+    const section = [...parse(html).querySelectorAll("section")].find(
+      (s) => s.querySelector("h2")?.textContent === "Control de peso",
+    )!;
+    expect(section).toBeDefined();
+    const items = [...section.querySelectorAll("li")].map((li) => li.textContent);
+    expect(items[0]).toContain("1 de septiembre de 2026");
+    expect(items[0]).toContain("Peso 72.4 kg");
+    expect(items[0]).not.toContain("IMC");
+    expect(items[1]).toContain("IMC 23.7 kg/m²");
+    expect(items[1]).toContain("Grasa corporal 30.5 %");
+
+    expect(render(baseExport())).not.toContain("Control de peso");
+  });
+
   it("shows placeholders for empty sections and translates statuses", () => {
     const html = render(
       baseExport({ appointments: [], prescriptions: [], files: [], consents: [] }),

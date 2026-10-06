@@ -26,6 +26,11 @@ import {
 } from "../../../lib/services/patientService";
 import { recordPayment, type Payment } from "../../../lib/services/financeService";
 import { supabaseMock } from "../../../test/supabaseMock";
+import {
+  getWeightTracking,
+  listBodyMeasurements,
+  setWeightTracking,
+} from "../../../lib/services/bodyMeasurementService";
 import { ConsultationWorkspace } from "./ConsultationWorkspace";
 
 vi.mock("../../../lib/services/soapService", async (importOriginal) => ({
@@ -52,6 +57,14 @@ vi.mock("../../../lib/services/patientService", async (importOriginal) => ({
   updatePatientBackground: vi.fn(),
   fetchPatientDetails: vi.fn(),
   fetchPatientNotes: vi.fn(),
+}));
+vi.mock("../../../lib/services/bodyMeasurementService", () => ({
+  getWeightTracking: vi.fn(),
+  setWeightTracking: vi.fn(),
+  listBodyMeasurements: vi.fn(),
+  createBodyMeasurement: vi.fn(),
+  updateBodyMeasurement: vi.fn(),
+  deleteBodyMeasurement: vi.fn(),
 }));
 vi.mock("../../../lib/services/financeService", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../../../lib/services/financeService")>()),
@@ -143,6 +156,7 @@ const reviewPatient: DashboardPatient = {
   totalVisits: 3,
   lastVisit: null,
   notes: "",
+  hasPrivacyConsent: true,
 };
 
 /** Diagnosis and plan are required to finalize. */
@@ -212,6 +226,9 @@ beforeEach(() => {
   vi.mocked(fetchPatientDetails).mockResolvedValue(details);
   vi.mocked(fetchPatientNotes).mockResolvedValue("");
   vi.mocked(recordPayment).mockResolvedValue(storedPayment);
+  vi.mocked(getWeightTracking).mockResolvedValue(false);
+  vi.mocked(setWeightTracking).mockResolvedValue();
+  vi.mocked(listBodyMeasurements).mockResolvedValue([]);
 });
 
 describe("ConsultationWorkspace", () => {
@@ -1059,5 +1076,148 @@ describe("ConsultationWorkspace antecedentes", () => {
     await user.click(backButton());
     await waitFor(() => expect(onClose).toHaveBeenCalled());
     expect(updatePatientBackground).not.toHaveBeenCalled();
+  });
+});
+
+describe("ConsultationWorkspace weight tracking", () => {
+  const weightTab = () => screen.queryByRole("button", { name: "Control de peso" });
+  const turnOnButton = () =>
+    screen.queryByRole("button", { name: "Llevar control de peso" });
+
+  it("hides the tab and offers to start tracking when it is off", async () => {
+    renderWorkspace();
+    await waitForHistory();
+
+    expect(await screen.findByRole("button", { name: "Llevar control de peso" })).toBeInTheDocument();
+    expect(weightTab()).toBeNull();
+    expect(getWeightTracking).toHaveBeenCalledWith("patient-1");
+  });
+
+  it("turns tracking on only after confirmation, then opens the tab", async () => {
+    const { user } = renderWorkspace();
+    await waitForHistory();
+
+    await user.click(await screen.findByRole("button", { name: "Llevar control de peso" }));
+    expect(setWeightTracking).not.toHaveBeenCalled();
+    expect(screen.getByText("¿Llevar el control de peso de Ana Pérez?")).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "Sí, llevar control" }));
+
+    await waitFor(() => expect(setWeightTracking).toHaveBeenCalledWith("patient-1", true));
+    expect(await screen.findByText("Mediciones de la báscula InBody.")).toBeInTheDocument();
+    expect(weightTab()).toBeInTheDocument();
+    expect(turnOnButton()).toBeNull();
+  });
+
+  it("keeps the tab hidden when turning tracking on fails", async () => {
+    vi.mocked(setWeightTracking).mockRejectedValue(new Error(ANONYMIZED_PATIENT_MESSAGE));
+    const errorToast = vi.spyOn(toast, "error");
+    const { user } = renderWorkspace();
+    await waitForHistory();
+
+    await user.click(await screen.findByRole("button", { name: "Llevar control de peso" }));
+    await user.click(screen.getByRole("button", { name: "Sí, llevar control" }));
+
+    await waitFor(() => expect(errorToast).toHaveBeenCalledWith(ANONYMIZED_PATIENT_MESSAGE));
+    expect(weightTab()).toBeNull();
+  });
+
+  it("pre-fills a new measurement with the weight typed in the vital signs", async () => {
+    vi.mocked(getWeightTracking).mockResolvedValue(true);
+    const { user } = renderWorkspace();
+    await waitForHistory();
+
+    await user.type(screen.getByLabelText("Peso"), "71.2");
+    await user.click(await screen.findByRole("button", { name: "Control de peso" }));
+    await user.click(await screen.findByRole("button", { name: /Nueva medición/ }));
+
+    expect(screen.getByLabelText(/Peso \(kg\)/)).toHaveValue("71.2");
+  });
+
+  it("shows the tab in review mode too, where measurements can still be added", async () => {
+    vi.mocked(getWeightTracking).mockResolvedValue(true);
+    const { user } = renderWorkspace({ appointment: undefined, patient: reviewPatient });
+
+    await user.click(await screen.findByRole("button", { name: "Control de peso" }));
+
+    expect(await screen.findByRole("button", { name: /Nueva medición/ })).toBeInTheDocument();
+    expect(turnOnButton()).toBeNull();
+  });
+
+  it("stops tracking from the tab and hides it", async () => {
+    vi.mocked(getWeightTracking).mockResolvedValue(true);
+    const { user } = renderWorkspace();
+    await waitForHistory();
+
+    await user.click(await screen.findByRole("button", { name: "Control de peso" }));
+    await user.click(await screen.findByRole("button", { name: "Dejar de llevar control" }));
+    await user.click(screen.getByRole("button", { name: "Sí, dejar de llevarlo" }));
+
+    await waitFor(() => expect(setWeightTracking).toHaveBeenCalledWith("patient-1", false));
+    await waitFor(() => expect(weightTab()).toBeNull());
+    expect(screen.getByLabelText("A - Diagnóstico (Análisis)")).toBeInTheDocument();
+  });
+
+  it("never offers tracking for an anonymized record", async () => {
+    vi.mocked(fetchPatientDetails).mockResolvedValue({
+      ...details,
+      anonymized_at: "2026-01-01T00:00:00Z",
+    });
+    renderWorkspace({ appointment: undefined, patient: reviewPatient });
+
+    await waitFor(() => expect(getWeightTracking).toHaveBeenCalled());
+    await screen.findByText(ANONYMIZED_PATIENT_MESSAGE);
+    expect(turnOnButton()).toBeNull();
+  });
+
+  it("offers no tracking change until the patient's details are read", async () => {
+    let releaseDetails!: (value: PatientDetails) => void;
+    vi.mocked(fetchPatientDetails).mockReturnValue(
+      new Promise<PatientDetails>((resolve) => {
+        releaseDetails = resolve;
+      }),
+    );
+    renderWorkspace();
+    await waitForHistory();
+    await waitFor(() => expect(getWeightTracking).toHaveBeenCalled());
+
+    // The flag is known (off) but "not anonymized" is not yet.
+    expect(turnOnButton()).toBeNull();
+
+    releaseDetails(details);
+
+    expect(await screen.findByRole("button", { name: "Llevar control de peso" })).toBeInTheDocument();
+  });
+
+  it("keeps the tab read-only until the patient's details are read", async () => {
+    vi.mocked(getWeightTracking).mockResolvedValue(true);
+    let releaseDetails!: (value: PatientDetails) => void;
+    vi.mocked(fetchPatientDetails).mockReturnValue(
+      new Promise<PatientDetails>((resolve) => {
+        releaseDetails = resolve;
+      }),
+    );
+    const { user } = renderWorkspace();
+    await waitForHistory();
+
+    await user.click(await screen.findByRole("button", { name: "Control de peso" }));
+    await screen.findByText("Mediciones de la báscula InBody.");
+    expect(screen.queryByRole("button", { name: /Nueva medición/ })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Dejar de llevar control" })).toBeNull();
+
+    releaseDetails(details);
+
+    expect(await screen.findByRole("button", { name: /Nueva medición/ })).toBeInTheDocument();
+  });
+
+  it("hides weight tracking when its flag cannot be read", async () => {
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    vi.mocked(getWeightTracking).mockRejectedValue(new Error("x"));
+    renderWorkspace();
+    await waitForHistory();
+
+    await waitFor(() => expect(getWeightTracking).toHaveBeenCalled());
+    expect(turnOnButton()).toBeNull();
+    expect(weightTab()).toBeNull();
   });
 });
