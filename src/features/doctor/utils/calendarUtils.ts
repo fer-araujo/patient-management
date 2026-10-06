@@ -80,34 +80,59 @@ export const isTimeSlotInPast = (
   dateObj: Date,
   hour24: number,
   minutes: number = 0,
+  now: number = Date.now(),
 ): boolean => {
   const slotStart = clinicWallTimeToUtc(localDateToIso(dateObj), hour24, minutes);
-  return slotStart.getTime() <= Date.now();
+  return slotStart.getTime() <= now;
 };
 
 /** isTimeSlotInPast for a "hh:mm AM/PM" start time. */
-export const isTimeStrInPast = (dateObj: Date, timeStr: string): boolean => {
+export const isTimeStrInPast = (
+  dateObj: Date,
+  timeStr: string,
+  now: number = Date.now(),
+): boolean => {
   const { hours, minutes } = extractHoursMinutes(timeStr);
-  return isTimeSlotInPast(dateObj, hours, minutes);
+  return isTimeSlotInPast(dateObj, hours, minutes, now);
+};
+
+const VISUAL_MONTHS: Record<string, string> = {
+  ene: "01",
+  feb: "02",
+  mar: "03",
+  abr: "04",
+  may: "05",
+  jun: "06",
+  jul: "07",
+  ago: "08",
+  sep: "09",
+  // Some ICU versions abbreviate September as "sept" in es-MX.
+  sept: "09",
+  oct: "10",
+  nov: "11",
+  dic: "12",
+};
+
+/**
+ * "YYYY-MM-DD" for a short Spanish date ("05 oct 2026"), or null when the
+ * month token is unknown or the day/year are not numbers.
+ */
+const tryParseVisualDateToISO = (visualDate: string): string | null => {
+  const [day = "", monthStr = "", year = ""] = visualDate
+    .toLowerCase()
+    .split(" ");
+  const month = VISUAL_MONTHS[monthStr];
+  if (!month || !/^\d{1,2}$/.test(day) || !/^\d{4}$/.test(year)) return null;
+  return `${year}-${month}-${day.padStart(2, "0")}`;
 };
 
 export const parseVisualDateToISO = (visualDate: string): string => {
+  const strict = tryParseVisualDateToISO(visualDate);
+  if (strict) return strict;
+  // Legacy lenient fallback (unknown month reads as January) kept for the
+  // sorting/windowing callers; hasAppointmentStarted uses the strict parser.
   const [day, monthStr, year] = visualDate.toLowerCase().split(" ");
-  const months: Record<string, string> = {
-    ene: "01",
-    feb: "02",
-    mar: "03",
-    abr: "04",
-    may: "05",
-    jun: "06",
-    jul: "07",
-    ago: "08",
-    sep: "09",
-    oct: "10",
-    nov: "11",
-    dic: "12",
-  };
-  return `${year}-${months[monthStr] || "01"}-${day.padStart(2, "0")}`;
+  return `${year}-${VISUAL_MONTHS[monthStr] || "01"}-${(day ?? "").padStart(2, "0")}`;
 };
 
 /**
@@ -127,6 +152,28 @@ export const combineVisualDateAndTime = (
   timeStr: string,
 ): string => {
   return combineIsoDateAndTime(parseVisualDateToISO(visualDate), timeStr);
+};
+
+/**
+ * Whether an appointment's start (clinic wall clock) is at or behind `now`
+ * (same "start <= now" rule as isTimeSlotInPast and the server's
+ * assert_slot_free). A pending appointment in this state is shown as
+ * "Vencida": it can only be moved or cancelled, never confirmed.
+ *
+ * An unparseable date (unknown month token) returns false instead of being
+ * read as January: the row stays actionable and the server remains the
+ * authority, rather than a future visit being mislabelled "Vencida" or a
+ * throw blanking the whole agenda during render.
+ */
+export const hasAppointmentStarted = (
+  app: { date: string; time: string },
+  now: number = Date.now(),
+): boolean => {
+  const isoDate = tryParseVisualDateToISO(app.date);
+  if (!isoDate) return false;
+  const start = new Date(combineIsoDateAndTime(isoDate, app.time)).getTime();
+  if (Number.isNaN(start)) return false;
+  return start <= now;
 };
 
 // AHORA RECIBE WeeklySchedule ESTRICTO
@@ -301,6 +348,7 @@ export const getBookableTimeOptions = (
   workingSchedule: WeeklySchedule,
   requiredDurationMins: number = 30,
   excludeAppointmentId?: string,
+  now: number = Date.now(),
 ): { label: string; value: string }[] => {
   if (!isoDate) return [];
   const [y, m, d] = isoDate.split("-").map(Number);
@@ -312,7 +360,7 @@ export const getBookableTimeOptions = (
     workingSchedule,
     requiredDurationMins,
     excludeAppointmentId,
-  ).filter((opt) => !isTimeStrInPast(dateObj, opt.value));
+  ).filter((opt) => !isTimeStrInPast(dateObj, opt.value, now));
 };
 
 /**

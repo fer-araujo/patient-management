@@ -3,12 +3,14 @@ import toast from "react-hot-toast";
 import {
   Eye,
   Loader2,
+  Plus,
   Search,
   ShieldCheck,
   UserPen,
   UserX,
 } from "lucide-react";
 import { EditPatientModal } from "../modals/EditPatientModal";
+import { RegisterArcoRequestModal } from "../modals/RegisterArcoRequestModal";
 import { Modal } from "../../../../components/ui/Modal";
 import { DataGrid, type ColumnDef } from "../../../../components/ui/DataGrid";
 import {
@@ -19,6 +21,7 @@ import {
   type ArcoRequestStatus,
 } from "../../../../lib/services/privacyService";
 import {
+  ARCO_CHANNEL_LABELS,
   ARCO_STATUS_LABELS,
   ARCO_TYPE_LABELS,
 } from "../../../../lib/legal/arcoLabels";
@@ -43,10 +46,16 @@ const secondaryButton =
 
 interface RequestCardProps {
   request: ArcoRequest;
+  /** The request itself changed (status, anonymized): reload and close. */
   onChanged: () => void;
+  /**
+   * The patient's data was saved from "Ver y corregir datos". Only reloads:
+   * the nested edit form must stay open when one of its steps failed.
+   */
+  onPatientSaved: () => void;
 }
 
-const RequestCard = ({ request, onChanged }: RequestCardProps) => {
+const RequestCard = ({ request, onChanged, onPatientSaved }: RequestCardProps) => {
   const [note, setNote] = useState("");
   const [isSaving, setIsSaving] = useState(false);
   const [confirmAnonymize, setConfirmAnonymize] = useState(false);
@@ -109,6 +118,7 @@ const RequestCard = ({ request, onChanged }: RequestCardProps) => {
           </h3>
           <p className="text-xs font-bold text-brand-gray uppercase tracking-wider">
             {type.title} · Recibida el {formatDate(request.createdAt)}
+            {request.channel && ` · ${ARCO_CHANNEL_LABELS[request.channel]}`}
           </p>
         </div>
         <span
@@ -157,7 +167,7 @@ const RequestCard = ({ request, onChanged }: RequestCardProps) => {
             isOpen={isEditingPatient}
             patientId={request.patientId}
             onClose={() => setIsEditingPatient(false)}
-            onSaved={onChanged}
+            onSaved={onPatientSaved}
           />
         </div>
       )}
@@ -341,6 +351,7 @@ export const ArcoRequestsTab = () => {
   const [view, setView] = useState<ArcoView>("all");
   const [search, setSearch] = useState("");
   const [detail, setDetail] = useState<ArcoRequest | null>(null);
+  const [isRegisterOpen, setIsRegisterOpen] = useState(false);
 
   useEffect(() => {
     let active = true;
@@ -381,10 +392,17 @@ export const ArcoRequestsTab = () => {
     b.createdAt.localeCompare(a.createdAt),
   );
 
+  const reload = () => setReloadKey((k) => k + 1);
+
   const handleChanged = () => {
     setDetail(null);
-    setReloadKey((k) => k + 1);
+    reload();
   };
+
+  // The open detail follows the reloaded list (e.g. a corrected name).
+  const detailRow = detail
+    ? (requests.find((r) => r.id === detail.id) ?? detail)
+    : null;
 
   const choiceClasses = (selected: boolean) =>
     `rounded-xl border-2 px-3 py-1.5 text-sm font-bold transition-all cursor-pointer ${
@@ -430,10 +448,22 @@ export const ArcoRequestsTab = () => {
           />
         </div>
       </div>
-      <p className="text-xs text-brand-gray -mt-3">
-        Solicitudes de los pacientes sobre sus datos personales. La ley da{" "}
-        {ARCO_RESPONSE_BUSINESS_DAYS} días hábiles para responder.
-      </p>
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 -mt-3">
+        <p className="text-xs text-brand-gray">
+          Solicitudes de los pacientes sobre sus datos personales. La ley da{" "}
+          {ARCO_RESPONSE_BUSINESS_DAYS} días hábiles para responder. Si te la
+          piden en persona, por teléfono, por correo o por escrito, regístrala
+          aquí.
+        </p>
+        <button
+          type="button"
+          onClick={() => setIsRegisterOpen(true)}
+          className="inline-flex items-center justify-center gap-2 min-h-11 rounded-xl bg-brand-primary hover:bg-brand-primary-hover px-4 text-base font-bold text-white transition-colors cursor-pointer shrink-0"
+        >
+          <Plus className="w-5 h-5" aria-hidden="true" />
+          Registrar solicitud
+        </button>
+      </div>
 
       {view === "pending" ? (
         pendingQueue.length === 0 ? (
@@ -445,7 +475,12 @@ export const ArcoRequestsTab = () => {
         ) : (
           <ul className="space-y-4">
             {pendingQueue.map((r) => (
-              <RequestCard key={r.id} request={r} onChanged={handleChanged} />
+              <RequestCard
+                key={r.id}
+                request={r}
+                onChanged={handleChanged}
+                onPatientSaved={reload}
+              />
             ))}
           </ul>
         )
@@ -465,6 +500,15 @@ export const ArcoRequestsTab = () => {
         </div>
       )}
 
+      <RegisterArcoRequestModal
+        isOpen={isRegisterOpen}
+        onClose={() => setIsRegisterOpen(false)}
+        onRegistered={() => {
+          setIsRegisterOpen(false);
+          handleChanged();
+        }}
+      />
+
       <Modal
         isOpen={detail !== null}
         onClose={() => setDetail(null)}
@@ -472,9 +516,13 @@ export const ArcoRequestsTab = () => {
         icon={<ShieldCheck className="w-5 h-5 text-brand-primary" />}
         hideFooter={true}
       >
-        {detail && (
+        {detailRow && (
           <ul className="list-none">
-            <RequestCard request={detail} onChanged={handleChanged} />
+            <RequestCard
+              request={detailRow}
+              onChanged={handleChanged}
+              onPatientSaved={reload}
+            />
           </ul>
         )}
       </Modal>

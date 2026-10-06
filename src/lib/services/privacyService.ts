@@ -1,5 +1,10 @@
 import type { PostgrestError } from "@supabase/supabase-js";
 import { supabase } from "../supabase";
+import { fetchAllRows } from "./fetchAllRows";
+import {
+  PRIVACY_NOTICE_DOCUMENT,
+  PRIVACY_NOTICE_VERSION,
+} from "../legal/privacyNotice";
 
 export type ArcoRequestType =
   | "access"
@@ -7,6 +12,12 @@ export type ArcoRequestType =
   | "cancellation"
   | "opposition"
   | "revocation";
+
+/**
+ * How a request recorded by the doctor reached the clinic (migration 23).
+ * Null on a request the patient filed in the portal.
+ */
+export type ArcoChannel = "presencial" | "telefono" | "correo" | "escrito";
 
 export type ArcoRequestStatus =
   | "received"
@@ -24,6 +35,8 @@ export interface ArcoRequest {
   createdAt: string;
   resolvedAt: string | null;
   resolutionNote: string | null;
+  /** Null: filed by the patient in the portal. */
+  channel: ArcoChannel | null;
 }
 
 export interface AuditEntry {
@@ -46,6 +59,8 @@ interface RawArcoRequest {
   created_at: string;
   resolved_at: string | null;
   resolution_note: string | null;
+  /** Staff list only; absent from the patient's own list. */
+  channel?: ArcoChannel | null;
   patients?: { first_name: string | null; last_name: string | null } | null;
 }
 
@@ -76,6 +91,7 @@ const mapArcoRequest = (r: RawArcoRequest): ArcoRequest => ({
   createdAt: r.created_at,
   resolvedAt: r.resolved_at,
   resolutionNote: r.resolution_note,
+  channel: r.channel ?? null,
 });
 
 // -----------------------------------------------------------------------------
@@ -172,16 +188,44 @@ export const fetchMyArcoRequests = async (): Promise<ArcoRequest[]> => {
 // -----------------------------------------------------------------------------
 
 export const fetchArcoRequests = async (): Promise<ArcoRequest[]> => {
-  const { data, error } = await supabase
-    .from("arco_requests")
-    .select(
-      "id, patient_id, request_type, details, status, created_at, resolved_at, resolution_note, patients ( first_name, last_name )",
-    )
-    .order("created_at", { ascending: false })
-    .returns<RawArcoRequest[]>();
+  // Every request of the clinic, paged: a pending one must never be cut off.
+  const { data, error } = await fetchAllRows<RawArcoRequest>((from, to) =>
+    supabase
+      .from("arco_requests")
+      .select(
+        "id, patient_id, request_type, details, status, created_at, resolved_at, resolution_note, channel, patients ( first_name, last_name )",
+      )
+      .order("created_at", { ascending: false })
+      .order("id", { ascending: false })
+      .range(from, to)
+      .returns<RawArcoRequest[]>(),
+  );
 
   if (error) throw new Error("No se pudieron cargar las solicitudes.");
   return (data || []).map(mapArcoRequest);
+};
+
+/**
+ * The doctor records a request the patient made in person, by phone, by
+ * e-mail or in writing (works with the portal open or closed). The server
+ * sets the received date to now, so the legal deadline counts from today.
+ */
+export const staffRegisterArcoRequest = async (
+  patientId: string,
+  requestType: ArcoRequestType,
+  details: string,
+  channel: ArcoChannel,
+): Promise<void> => {
+  const { error } = await supabase.rpc("staff_register_arco_request", {
+    p_patient_id: patientId,
+    p_request_type: requestType,
+    p_details: details,
+    p_channel: channel,
+  });
+  if (error) {
+    console.error("[PrivacyService] staff_register_arco_request failed:", error.code);
+    throw toUserFacingError(error, "No se pudo registrar la solicitud.");
+  }
 };
 
 export const resolveArcoRequest = async (
@@ -210,6 +254,43 @@ export const anonymizePatient = async (
   if (error) throw toUserFacingError(error, "No se pudo anonimizar el expediente.");
   const result = (data ?? {}) as { files_to_review?: number };
   return { filesToReview: result.files_to_review ?? 0 };
+};
+
+// -----------------------------------------------------------------------------
+// Privacy notice signed on paper (staff)
+// -----------------------------------------------------------------------------
+
+/**
+ * Records that the patient signed the CURRENT privacy notice on paper at the
+ * clinic (consents.method = 'in_person'). Doctor only. Idempotent: returns
+ * false, recording nothing, when the patient already consented to this
+ * version.
+ */
+export const recordInPersonConsent = async (patientId: string): Promise<boolean> => {
+  const { data, error } = await supabase.rpc("record_consent_in_person", {
+    p_patient_id: patientId,
+  });
+  if (error) {
+    console.error("[privacyService] record_consent_in_person failed:", error.code);
+    throw toUserFacingError(error, "No se pudo registrar el aviso de privacidad firmado.");
+  }
+  return data === true;
+};
+
+/** Whether the patient holds a consent for the current privacy notice. */
+export const fetchHasCurrentConsent = async (patientId: string): Promise<boolean> => {
+  const { data, error } = await supabase
+    .from("consents")
+    .select("id")
+    .eq("patient_id", patientId)
+    .eq("document", PRIVACY_NOTICE_DOCUMENT)
+    .eq("version", PRIVACY_NOTICE_VERSION)
+    .limit(1);
+  if (error) {
+    console.error("[privacyService] consent lookup failed:", error.code);
+    throw new Error("No se pudo consultar el aviso de privacidad del paciente.");
+  }
+  return (data ?? []).length > 0;
 };
 
 export const AUDIT_PAGE_SIZE = 30;

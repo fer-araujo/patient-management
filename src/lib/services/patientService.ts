@@ -1,10 +1,20 @@
 import { supabase } from "../supabase";
 import { normalizeToE164 } from "../phone";
+import { fetchAllRows } from "./fetchAllRows";
+import {
+  PRIVACY_NOTICE_DOCUMENT,
+  PRIVACY_NOTICE_VERSION,
+} from "../legal/privacyNotice";
 
 // 1. INTERFAZ ESTRICTA PARA LA RESPUESTA DE LA BD (CERO ANYS)
 interface RawAppointmentData {
   start_time: string;
   status: string;
+}
+
+interface RawConsentData {
+  document: string;
+  version: string;
 }
 
 interface RawPatientData {
@@ -21,7 +31,10 @@ interface RawPatientData {
   notes: string | null; // El Post-it global
   status: "active" | "blocked" | "archived";
   anonymized_at: string | null;
+  /** Migration 24; absent (undefined) before it is applied. */
+  weight_tracking?: boolean | null;
   appointments: RawAppointmentData[] | null;
+  consents?: RawConsentData[] | null;
 }
 
 // 2. INTERFAZ PARA EL FRONTEND
@@ -36,22 +49,32 @@ export interface DashboardPatient {
   status: "active" | "blocked" | "archived";
   /** Set once the record was anonymized (ARCO); it can never be restored. */
   anonymizedAt?: string | null;
+  /** The doctor follows this patient's weight (patients.weight_tracking). */
+  weightTracking?: boolean;
+  /** Holds a consent (online or on paper) for the CURRENT privacy notice. */
+  hasPrivacyConsent: boolean;
   totalVisits: number;
   lastVisit: string | null;
 }
 
 // 3. CONSULTA DE PACIENTES
 export const fetchPatients = async (): Promise<DashboardPatient[]> => {
-  const { data, error } = await supabase
-    .from("patients")
-    .select(
-      `
-      id, first_name, last_name, phone, email, dob, gender, blood_type, allergies, chronic_conditions, notes, status, anonymized_at,
-      appointments ( start_time, status )
+  // Every patient, paged: one request stops at max_rows (1000).
+  const { data, error } = await fetchAllRows<RawPatientData>((from, to) =>
+    supabase
+      .from("patients")
+      .select(
+        `
+      id, first_name, last_name, phone, email, dob, gender, blood_type, allergies, chronic_conditions, notes, status, anonymized_at, weight_tracking,
+      appointments ( start_time, status ),
+      consents ( document, version )
     `,
-    )
-    .order("first_name", { ascending: true }) // Orden alfabético para que no brinquen
-    .returns<RawPatientData[]>(); // OBLIGAMOS A SUPABASE A RESPETAR LA INTERFAZ
+      )
+      .order("first_name", { ascending: true }) // Orden alfabético para que no brinquen
+      .order("id", { ascending: true })
+      .range(from, to)
+      .returns<RawPatientData[]>(), // OBLIGAMOS A SUPABASE A RESPETAR LA INTERFAZ
+  );
 
   if (error) throw new Error("Error al cargar pacientes.");
   if (!data) return [];
@@ -86,6 +109,12 @@ export const fetchPatients = async (): Promise<DashboardPatient[]> => {
       notes: p.notes || undefined, // Cargamos la nota real de la BD
       status: p.status,
       anonymizedAt: p.anonymized_at ?? null,
+      weightTracking: p.weight_tracking === true,
+      hasPrivacyConsent: (p.consents ?? []).some(
+        (c) =>
+          c.document === PRIVACY_NOTICE_DOCUMENT &&
+          c.version === PRIVACY_NOTICE_VERSION,
+      ),
       totalVisits: completedApps.length,
       lastVisit: lastVisitStr,
     };
@@ -139,6 +168,7 @@ export const updatePatientStatus = async (
 };
 
 // 6. CREAR PACIENTE
+/** Creates the record and returns its id (null if the server did not return it). */
 export const createPatient = async (
   firstName: string,
   lastName: string,
@@ -146,18 +176,22 @@ export const createPatient = async (
   email?: string,
   dob?: string,
   gender?: string,
-): Promise<void> => {
-  const { error } = await supabase.from("patients").insert([
-    {
-      first_name: firstName,
-      last_name: lastName,
-      phone: phone || null,
-      email: email || null,
-      dob: dob || null,
-      gender: gender || null,
-      status: "active",
-    },
-  ]);
+): Promise<string | null> => {
+  const { data, error } = await supabase
+    .from("patients")
+    .insert([
+      {
+        first_name: firstName,
+        last_name: lastName,
+        phone: phone || null,
+        email: email || null,
+        dob: dob || null,
+        gender: gender || null,
+        status: "active",
+      },
+    ])
+    .select("id")
+    .maybeSingle<{ id: string }>();
 
   if (error) {
     // 23505 = unique_violation on the normalized-phone index (migration 15).
@@ -166,6 +200,7 @@ export const createPatient = async (
     }
     throw new Error("Error al crear el paciente.");
   }
+  return data?.id ?? null;
 };
 
 // 7. PERSONAL DATA (staff edit, e.g. an ARCO rectification request)

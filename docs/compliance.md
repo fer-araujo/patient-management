@@ -182,7 +182,7 @@ Phase 3 (runbook, "Phase 3 — Verified booking"):
 | # | Priority | Gap | Why it matters | Suggested fix |
 | --- | --- | --- | --- | --- |
 | G1 | Fixed | Consent from the anonymous flow was not tied to an authenticated identity | Art. 8 asks for a signature or "mecanismo de autenticación"; anyone could type anyone's phone | Fixed in Phase 3 (`20260922181200_verified_booking.sql`): booking requires a phone OTP first, and consent is recorded by `register_me` / `accept_privacy_notice` against the phone in the authenticated session. Until a paid Twilio account exists, only Supabase test numbers can complete the OTP |
-| G2 | High (partly mitigated) | Patients registered before Phase 2 have no `consents` row | No evidence of consent for the existing base | Since Phase 3, a returning patient who books online must accept the current notice first (`accept_privacy_notice`). Patients who never book online still need a signed consent at their next visit |
+| G2 | Medium (process) | Patients registered before Phase 2, and patients who never use the portal, have no `consents` row | No evidence of consent for them | Since Phase 3 a returning patient who books online must accept the current notice first (`accept_privacy_notice`). Since migration 23 the doctor records a notice signed ON PAPER with "El paciente firmó el aviso de privacidad en papel" (Nuevo paciente / Editar datos → `record_consent_in_person`, `consents.method = 'in_person'`), and the Directorio shows "Aviso firmado" / "Sin aviso firmado" per patient. Remaining: actually collect and file the signed paper notices (keep the originals) |
 | G3 | High (accepted risk) | The online notice omits the controller's address: the practice operates from the doctor's home and she will not publish it. The notice states the address is given when an appointment is confirmed and in the integral notice available on request. Supabase region disclosed: East US (North Virginia), i.e. a cross-border transfer to the United States | Art. 15 fr. I requires identity and address in the notice; omitting it online is a knowingly accepted gap, not compliance. Mitigations: a commercial/virtual office address for notifications would close it | Owner decision, 2026-09-24, with no legal counsel. Keep a printed integral notice (with an address) at the practice |
 | G4 | Fixed | The back arrow in the consultation screen used to call the same handler as "Finalizar Consulta", which would have permanently frozen an unfinished note | — | Fixed: the back arrow saves a draft only (`saveConsultation(false)`); only "Finalizar Consulta" finalizes |
 | G5 | Medium (partly fixed) | No electronic signature and no cédula on the note. The author's full name and the time are rendered since migration 20 | NOM-004 5.10, NOM-024 6.6.2 | e.firma (SAT) or an FEA provider for finalized notes; render the cédula on the note |
@@ -215,7 +215,7 @@ Phase 3 (runbook, "Phase 3 — Verified booking"):
 - [ ] Apply Phase 2 migrations in order and pass every gate (runbook, Phase 2).
 - [ ] Deploy the frontend **in the same window** as migration `20260922180800_consents.sql` (the booking RPC signature changes).
 - [ ] Decide on the optional back-fill that finalizes historical notes (runbook step P2-3b).
-- [ ] Obtain signed consent from existing patients who do not book online, at their next visit (G2).
+- [ ] Obtain signed consent from existing patients who do not book online, at their next visit, file the paper and tick "El paciente firmó el aviso de privacidad en papel" in Editar datos (G2). The Directorio marks who is still "Sin aviso firmado".
 - [ ] Apply `20260922181200_verified_booking.sql` together with the new frontend (it drops the anonymous booking RPC), and configure the paid Twilio account: until then only Supabase test numbers can complete the booking OTP.
 - [ ] Formally designate the person who handles ARCO requests (LFPDPPP art. 29).
 - [ ] Enable MFA for staff accounts (G8).
@@ -253,3 +253,36 @@ requires a diagnosis and a plan to finalize, and adds to the patient record
   consultation, or the reverse.
 - **Interrupted consultations** reopen with their saved draft; the editor is
   locked until the draft is loaded, so nothing typed can overwrite it.
+
+## Addendum — doctor-only mode and paper consent (migration 23)
+
+`20261004100000_doctor_only_mode.sql` adds the "Modo solo doctora" switch
+(Centro de Comando). While it is on:
+
+- The patient portal and online booking are closed: the site shows the
+  clinic's sign-in, and the database refuses `request_my_appointment`,
+  `reschedule_my_appointment`, `cancel_my_appointment`, `register_me`,
+  `accept_privacy_notice`, `submit_arco_request` and `register_my_upload`
+  (and the patient's storage upload policy) with a message to call the
+  clinic. Patients only receive informational WhatsApp messages about the
+  appointments the doctor records; none asks them to sign in, confirm or
+  accept anything.
+- **Consent:** nothing is accepted online, so consent must be collected on
+  paper. The doctor records it per patient (`record_consent_in_person`,
+  method `in_person`, current notice version, audited with her as the actor).
+  The paper original is the evidence; the row only records that it exists.
+  **Lawyer review:** confirm a signed paper notice plus this record satisfies
+  art. 8 (express written consent for sensitive data).
+- **ARCO:** the rights still apply but the portal form is closed. Requests
+  arrive in person, by phone, by e-mail or in writing, and the doctor records
+  each one with "Registrar solicitud" in "Solicitudes ARCO"
+  (`staff_register_arco_request`, doctor only, works in both modes): patient,
+  type, channel (`arco_requests.channel`: presencial, telefono, correo,
+  escrito; null = filed in the portal) and what was asked. The received date
+  is the server's time of recording, so the 20-business-day deadline is
+  tracked like any portal request. The notice must tell patients how to file
+  them in that case (art. 15 fr. IV). **Process:** identity of an offline
+  requester is checked by the doctor (art. 28), and she must record the
+  request the day it arrives, since the deadline counts from that moment.
+- "Mis datos" (export) is unavailable to the patient while the portal is
+  closed; an access request is answered by the doctor directly.

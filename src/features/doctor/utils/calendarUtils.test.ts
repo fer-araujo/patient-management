@@ -10,6 +10,7 @@ import {
   getGridHoursRange,
   getSmartStartDate,
   getServiceColors,
+  hasAppointmentStarted,
   isTimeSlotInPast,
   isTimeStrInPast,
   parseHour24,
@@ -346,5 +347,43 @@ describe("getSmartStartDate (patient booking start day)", () => {
   it("skips closed days after the cut-off", () => {
     // Saturday 17 Oct at 05:00 PM: Sunday is closed, so Monday 19 Oct.
     expect(getSmartStartDate(DEFAULT_SCHEDULE, new Date(2026, 9, 17, 17, 0))).toBe("2026-10-19");
+  });
+});
+
+describe("hasAppointmentStarted", () => {
+  // 10:00 AM Monterrey on 2026-10-15 is 16:00Z (UTC-6 all year).
+  const app = { date: "15 oct 2026", time: "10:00 AM" };
+  const START = Date.parse("2026-10-15T16:00:00.000Z");
+
+  it("is false one minute before the start", () => {
+    expect(hasAppointmentStarted(app, START - 60_000)).toBe(false);
+  });
+
+  it("is true at the exact start minute (start <= now, like the server)", () => {
+    expect(hasAppointmentStarted(app, START)).toBe(true);
+    // Same boundary rule as isTimeSlotInPast.
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(START);
+    expect(isTimeSlotInPast(new Date(2026, 9, 15), 10, 0)).toBe(true);
+    expect(hasAppointmentStarted(app)).toBe(true);
+  });
+
+  it("reads the September abbreviation some engines print as 'sept'", () => {
+    expect(
+      hasAppointmentStarted(
+        { date: "05 sept 2026", time: "10:00 AM" },
+        Date.parse("2026-09-05T16:00:00.000Z"),
+      ),
+    ).toBe(true);
+  });
+
+  it("returns false for an unknown month token instead of reading it as January", () => {
+    // With the lenient parser this would be 10 Jan 2026 and show as "Vencida".
+    expect(
+      hasAppointmentStarted(
+        { date: "10 xyz 2026", time: "10:00 AM" },
+        Date.parse("2026-10-15T16:00:00.000Z"),
+      ),
+    ).toBe(false);
   });
 });

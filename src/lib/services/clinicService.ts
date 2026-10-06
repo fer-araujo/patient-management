@@ -1,6 +1,7 @@
 import { combineVisualDateAndTime } from "../../features/doctor/utils/calendarUtils";
-import { formatClinicShortDate, formatClinicTime12h } from "../clinicTime";
+import { clinicIsoDate, formatClinicShortDate, formatClinicTime12h } from "../clinicTime";
 import { supabase } from "../supabase";
+import { fetchAllRows } from "./fetchAllRows";
 
 export interface DashboardAppointment {
   id: string;
@@ -8,6 +9,8 @@ export interface DashboardAppointment {
   patientName: string;
   service: string;
   date: string;
+  /** The appointment's day on the clinic calendar, "YYYY-MM-DD". */
+  isoDate?: string;
   time: string;
   phone: string;
   isNewPatient: boolean;
@@ -67,9 +70,12 @@ const isSuppliesPending = (apt: RawAppointmentData): boolean => {
 export const fetchDoctorAppointments = async (): Promise<
   DashboardAppointment[]
 > => {
-  const { data, error } = await supabase
-    .from("appointments")
-    .select(
+  // Every appointment ever, so it is paged: one request stops at max_rows
+  // (1000) and, sorted ascending, would drop the NEWEST ones.
+  const { data, error } = await fetchAllRows<RawAppointmentData>((from, to) =>
+    supabase
+      .from("appointments")
+      .select(
       `
       id,
       start_time,
@@ -91,9 +97,12 @@ export const fetchDoctorAppointments = async (): Promise<
       ),
       clinical_notes ( finalized_at, supplies_recorded_at )
     `,
-    )
-    .order("start_time", { ascending: true })
-    .returns<RawAppointmentData[]>();
+      )
+      .order("start_time", { ascending: true })
+      .order("id", { ascending: true })
+      .range(from, to)
+      .returns<RawAppointmentData[]>(),
+  );
 
   if (error) {
     console.error("Error al obtener las citas:", error.message);
@@ -121,6 +130,7 @@ export const fetchDoctorAppointments = async (): Promise<
       patientName: `${firstName} ${lastName}`,
       service: serviceName,
       date: formattedDate,
+      isoDate: clinicIsoDate(startDate),
       time: cleanTime,
       phone: phone,
       isNewPatient: true,

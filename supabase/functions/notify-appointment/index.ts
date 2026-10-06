@@ -99,6 +99,33 @@ serve(async (req: Request) => {
     const supabaseServiceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
     const supabase = createClient(supabaseUrl, supabaseServiceKey);
 
+    // "Modo solo doctora" (migration 23): no portal, so the messages never ask
+    // the patient to sign in, confirm or accept anything. If the mode cannot
+    // be read, the doctor-only WORDING is used (it is true in both modes,
+    // while a portal link could point at a portal that is closed), but no
+    // message is skipped: the pending notice does not mention the portal, and
+    // a 500 would make the webhook retry and could send the other messages
+    // twice. Skipping happens only when the mode is known to be on.
+    const { data: clinicMode, error: clinicModeError } = await supabase.rpc(
+      "get_clinic_mode",
+    );
+    if (clinicModeError) {
+      console.error(
+        `Appointment ${appointmentId}: could not read the clinic mode (${clinicModeError.code ?? "unknown"}); using doctor-only wording, skipping nothing.`,
+      );
+    }
+    const doctorOnlyModeKnown = !clinicModeError && clinicMode === true;
+    const doctorOnlyMode = clinicModeError ? true : doctorOnlyModeKnown;
+
+    // A request "pending confirmation" only exists with online booking.
+    if (doctorOnlyModeKnown && payload.type === "INSERT" && record.status !== "confirmed") {
+      console.log(`Appointment ${appointmentId}: doctor-only mode, no pending notice.`);
+      return new Response(JSON.stringify({ skipped: true }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      });
+    }
+
     const { data: patient } = await supabase
       .from("patients")
       .select("first_name, phone")
@@ -158,13 +185,19 @@ serve(async (req: Request) => {
     const updatedBy = record.updated_by || "doctor";
     let messageBody = "";
 
+    // Doctor-only mode: what to do instead of opening the portal.
+    const CHANGE_HINT = `Si necesitas cambiarla, comunícate con la clínica.\n\n`;
+    const REBOOK_HINT = `Para agendar otra cita, comunícate con la clínica.\n\n`;
+
     if (payload.type === "INSERT" && record.status === "confirmed") {
       // Booked by the clinic from the calendar: it is born confirmed, so no
       // later UPDATE will send the confirmation.
       messageBody =
         `¡Hola ${firstName}! ✅\n\n` +
         `Tu cita del *${formattedDate}* a las *${formattedTime}* quedó AGENDADA y CONFIRMADA.\n\n` +
-        `*Si este horario no te funciona*, entra a tu portal para reprogramarla o cancelarla.\n\n` +
+        (doctorOnlyMode
+          ? CHANGE_HINT
+          : `*Si este horario no te funciona*, entra a tu portal para reprogramarla o cancelarla.\n\n`) +
         `_Atte: ${CLINIC_NAME}_ 🏥`;
     } else if (payload.type === "INSERT") {
       messageBody =
@@ -177,10 +210,16 @@ serve(async (req: Request) => {
         updatedBy === "patient"
           ? `¡Hola ${firstName}! ❌\n\n` +
             `Confirmamos que has CANCELADO tu cita del *${formattedDate}* a las *${formattedTime}*.\n\n` +
-            `Puedes reagendar cuando gustes desde tu portal.\n\n_Atte: ${CLINIC_NAME}_`
+            (doctorOnlyMode
+              ? REBOOK_HINT
+              : `Puedes reagendar cuando gustes desde tu portal.\n\n`) +
+            `_Atte: ${CLINIC_NAME}_`
           : `¡Hola ${firstName}! ❌\n\n` +
             `Lamentamos informarte que tu cita del *${formattedDate}* a las *${formattedTime}* ha sido CANCELADA por la clínica.\n\n` +
-            `Por favor entra a tu portal para elegir un nuevo día.\n\n_Atte: ${CLINIC_NAME}_`;
+            (doctorOnlyMode
+              ? REBOOK_HINT
+              : `Por favor entra a tu portal para elegir un nuevo día.\n\n`) +
+            `_Atte: ${CLINIC_NAME}_`;
     } else if (isReschedule) {
       messageBody =
         updatedBy === "patient"
@@ -189,7 +228,9 @@ serve(async (req: Request) => {
             `¡Te esperamos! ✨\n\n_Atte: ${CLINIC_NAME}_`
           : `¡Hola ${firstName}! 📅\n\n` +
             `Tu cita ha sido REPROGRAMADA por la clínica.\n\nNueva fecha: *${formattedDate}* a las *${formattedTime}*.\n\n` +
-            `*Si este nuevo horario no te funciona*, entra a tu portal para elegir otro día o cancelarla.\n\n` +
+            (doctorOnlyMode
+              ? CHANGE_HINT
+              : `*Si este nuevo horario no te funciona*, entra a tu portal para elegir otro día o cancelarla.\n\n`) +
             `_Atte: ${CLINIC_NAME}_`;
     } else if (payload.type === "UPDATE" && record.status === "confirmed") {
       messageBody =

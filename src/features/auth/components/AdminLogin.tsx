@@ -6,6 +6,7 @@ import { supabase } from "../../../lib/supabase";
 import { Button } from "../../../components/ui/Button";
 import { Input } from "../../../components/ui/Input";
 import { Badge } from "../../../components/ui/Badge";
+import { useClinicMode } from "../../clinicMode/useClinicMode";
 
 interface AdminLoginProps {
   onLoginSuccess: () => void;
@@ -13,6 +14,8 @@ interface AdminLoginProps {
 
 export const AdminLogin = ({ onLoginSuccess }: AdminLoginProps) => {
   const navigate = useNavigate();
+  // In doctor-only mode "/" IS this sign-in: there is no patient portal to go back to.
+  const { doctorOnlyMode } = useClinicMode();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [isLoading, setIsLoading] = useState(false);
@@ -137,15 +140,17 @@ export const AdminLogin = ({ onLoginSuccess }: AdminLoginProps) => {
             </div>
           </form>
 
-          <div className="mt-8 flex items-center justify-between gap-2 max-w-sm">
-            <button
-              type="button"
-              onClick={() => navigate("/")}
-              className="text-brand-gray/80 font-bold hover:text-brand-dark transition-colors cursor-pointer flex items-center gap-2"
-            >
-              <ArrowLeft className="w-4 h-4" /> Volver al portal de pacientes
-            </button>
-          </div>
+          {!doctorOnlyMode && (
+            <div className="mt-8 flex items-center justify-between gap-2 max-w-sm">
+              <button
+                type="button"
+                onClick={() => navigate("/")}
+                className="text-brand-gray/80 font-bold hover:text-brand-dark transition-colors cursor-pointer flex items-center gap-2"
+              >
+                <ArrowLeft className="w-4 h-4" /> Volver al portal de pacientes
+              </button>
+            </div>
+          )}
           
           <div className="mt-8 pt-6 border-t border-slate-100 flex items-center gap-2 text-xs font-medium text-slate-400">
             <ShieldCheck className="w-4 h-4 text-teal-500" />

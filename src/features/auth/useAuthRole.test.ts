@@ -49,7 +49,12 @@ describe("useAuthRole", () => {
     expect(result.current.loading).toBe(true);
     await waitFor(() => expect(result.current.loading).toBe(false));
 
-    expect(result.current).toEqual({ session: null, role: null, loading: false });
+    expect(result.current).toMatchObject({
+      session: null,
+      role: null,
+      loading: false,
+      roleError: false,
+    });
     expect(supabaseMock.client.from).not.toHaveBeenCalled();
   });
 
@@ -83,16 +88,40 @@ describe("useAuthRole", () => {
     expect(result.current.role).toBe("patient");
   });
 
-  it("resolves to no role when the profile row is missing or unreadable", async () => {
-    vi.spyOn(console, "error").mockImplementation(() => {});
+  it("resolves to no role, without an error, when the profile row is missing", async () => {
     supabaseMock.setSession(makeSession("user-x"));
-    supabaseMock.onFrom("profiles", { error: { message: "permission denied" } });
+    supabaseMock.onFrom("profiles", { data: null });
 
     const { result } = renderHook(() => useAuthRole());
     await waitFor(() => expect(result.current.loading).toBe(false));
 
     expect(result.current.session).not.toBeNull();
     expect(result.current.role).toBeNull();
+    expect(result.current.roleError).toBe(false);
+  });
+
+  it("flags a failed role read as an error (not as 'not staff') and reads it again on retry", async () => {
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    supabaseMock.setSession(makeSession("user-x"));
+    supabaseMock.onFrom(
+      "profiles",
+      { error: { message: "network down" } },
+      { data: { role: "doctor" } },
+    );
+
+    const { result } = renderHook(() => useAuthRole());
+    await waitFor(() => expect(result.current.loading).toBe(false));
+
+    expect(result.current.session).not.toBeNull();
+    expect(result.current.role).toBeNull();
+    expect(result.current.roleError).toBe(true);
+
+    act(() => result.current.retryRole());
+
+    await waitFor(() => expect(result.current.role).toBe("doctor"));
+    expect(result.current.roleError).toBe(false);
+    expect(result.current.loading).toBe(false);
+    expect(supabaseMock.queries("profiles")).toHaveLength(2);
   });
 
   it("re-resolves the role when the auth state changes", async () => {
@@ -112,6 +141,50 @@ describe("useAuthRole", () => {
       supabaseMock.emitAuthChange("SIGNED_OUT", null);
     });
     await waitFor(() => expect(result.current.session).toBeNull());
+    expect(result.current.role).toBeNull();
+  });
+
+  it("keeps the last known role when a background re-read for the same user fails", async () => {
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    supabaseMock.setSession(makeSession("doctor-user"));
+    supabaseMock.onFrom(
+      "profiles",
+      { data: { role: "doctor" } },
+      { error: { message: "network down" } },
+    );
+
+    const { result } = renderHook(() => useAuthRole());
+    await waitFor(() => expect(result.current.role).toBe("doctor"));
+
+    // Token refresh for the same user: the re-read fails.
+    act(() => {
+      supabaseMock.emitAuthChange("TOKEN_REFRESHED", makeSession("doctor-user"));
+    });
+    // No "checking access" flash while it re-reads in the background.
+    expect(result.current.loading).toBe(false);
+    await waitFor(() => expect(supabaseMock.queries("profiles")).toHaveLength(2));
+    await waitFor(() => expect(result.current.loading).toBe(false));
+
+    expect(result.current.role).toBe("doctor");
+    expect(result.current.roleError).toBe(false);
+  });
+
+  it("does not carry a known role over to a different user whose read fails", async () => {
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    supabaseMock.setSession(makeSession("doctor-user"));
+    supabaseMock.onFrom(
+      "profiles",
+      { data: { role: "doctor" } },
+      { error: { message: "network down" } },
+    );
+
+    const { result } = renderHook(() => useAuthRole());
+    await waitFor(() => expect(result.current.role).toBe("doctor"));
+
+    act(() => {
+      supabaseMock.emitAuthChange("SIGNED_IN", makeSession("other-user"));
+    });
+    await waitFor(() => expect(result.current.roleError).toBe(true));
     expect(result.current.role).toBeNull();
   });
 

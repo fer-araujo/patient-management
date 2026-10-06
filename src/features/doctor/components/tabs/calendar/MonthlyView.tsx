@@ -3,7 +3,10 @@ import type { DashboardAppointment } from "../../../../../lib/services/clinicSer
 import type { DashboardBlockedSlot } from "../../../../../lib/services/blockedSlotsService";
 import type { WeeklySchedule } from "../../../../../lib/services/settingsService";
 import { useCalendar } from "../../../hooks/useCalendar";
-import { getAppointmentColors } from "../../../utils/calendarUtils";
+import {
+  getAppointmentColors,
+  hasAppointmentStarted,
+} from "../../../utils/calendarUtils";
 import { PendingBadge } from "./PendingBadge";
 import { SuppliesPendingBadge } from "./SuppliesPendingBadge";
 
@@ -161,7 +164,9 @@ export const MonthlyView = ({
                       >
                         {app.status === "pending" && (
                           <span className="mr-1 inline-block align-middle">
-                            <PendingBadge />
+                            <PendingBadge
+                              overdue={hasAppointmentStarted(app)}
+                            />
                           </span>
                         )}
                         {app.suppliesPending && (
