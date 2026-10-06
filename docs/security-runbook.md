@@ -971,9 +971,14 @@ end $$;
 1. **Doctor:** finish a consultation, then open the same patient from the
    Directorio de Pacientes. The note shows "Nota cerrada el ..." and the
    "Agregar una corrección" form. Save an addendum; it appears under the note.
-2. **Doctor:** the "Recetas e Indicaciones" tab shows "Registro informativo
-   del expediente. No es una receta médica oficial."
-3. **Patient:** "Mis Medicamentos" shows the same notice, always at the top of the modal.
+2. **Doctor:** the "Recetas e Indicaciones" tab shows the notice "Al
+   finalizar la consulta, la receta se puede emitir en PDF con tus datos y tu
+   firma. No recetes aquí medicamentos controlados (Grupos I a III)." (since
+   migration 25; before it, the notice said the record was not an official
+   prescription).
+3. **Patient:** "Mis Medicamentos" shows, always at the top of the modal,
+   "Registro de tus medicamentos. Tu receta oficial es el PDF firmado que te
+   envía la doctora."
 4. **Patient:** "Estudios" first explains that uploads join the record and
    cannot be deleted by the patient. A `.docx`, or any file over 10 MB, is
    refused with a Spanish message before uploading.
@@ -1924,3 +1929,192 @@ patient reads none directly, cannot write one or change their own
 `weight_tracking`, and their export carries both measurements (oldest first,
 with BMI) without the doctor's note; `anon` reads nothing; the Bitácora has 3
 inserts, 1 update and 1 delete by the doctor and the `weight_tracking` change.
+
+# Digital prescription (receta oficial en PDF)
+
+## Migration 25 — Prescriber data, versioned signature, issue snapshot, folio
+
+**File:** `supabase/migrations/20261005100000_digital_prescription.sql`.
+Idempotent; paste it into the SQL editor after migration 24
+(`20261004110000_*`). It redefines no earlier function.
+
+- Expected: one notice starting with `Migration 25 PASSED`.
+- A failure raises `Migration 25 FAILED: …` naming the broken rule.
+
+What it adds:
+
+- Table `public.prescriber_profile` — the doctor's printed prescription data
+  (RIS art. 29): `full_name`, `cedula_profesional`, `especialidad`,
+  `cedula_especialidad`, `institucion_titulo`, `consultorio_domicilio`,
+  `telefono`, `signature_path` (the CURRENT signature version). **A new
+  table, not columns on `clinic_settings`**, because `clinic_settings` feeds
+  public RPCs (`get_clinic_schedule`, `get_clinic_mode`): keeping the
+  doctor's personal data elsewhere means no present or future public RPC can
+  expose it, its changes get their own audit trigger, and its access rules
+  are checked in isolation.
+  - Single row: `singleton boolean` (always true, unique); the browser
+    upserts `on conflict (singleton)`.
+  - RLS policy `prescriber_profile_staff_all`: `is_staff()` only (the
+    doctor). The admin and patients read nothing; `anon` has no privilege.
+    `authenticated` has SELECT/INSERT/UPDATE but **no DELETE**.
+  - `prescriber_profile_values_check`: lengths; cédulas are 4–12 digits; a
+    specialty cédula needs its specialty; phone digits/spaces/+()-;
+    `signature_path` must match `^signature-[A-Za-z0-9_-]+\.png$`.
+  - Trigger `prescriber_profile_guard` (SECURITY DEFINER, pinned
+    `search_path`, no API grant): the server sets `updated_by`, `created_at`
+    and `updated_at`. `audit_row_change` logs every change (column names
+    only) in the Bitácora.
+- Private Storage bucket `prescriber_private`: `public = false`, 256 KB,
+  `image/png` only. **Versioned signatures:** every "Guardar firma" uploads a
+  NEW object `signature-<id>.png` and points `signature_path` to it; older
+  versions are kept, because issued prescriptions still use them. Two
+  storage policies, both doctor-only (`is_staff()`):
+  `prescriber_private_staff_read` (SELECT) and
+  `prescriber_private_staff_insert` (INSERT, name must match
+  `^signature-[A-Za-z0-9_-]+\.png$`: no folders, no other name). **No
+  UPDATE and no DELETE policy**: a saved version can never be replaced or
+  removed through the API. The app reads it with an authenticated download,
+  never a public or signed URL.
+- **Issue snapshot** on `public.prescriptions` (new columns
+  `prescriber_snapshot jsonb`, `signature_path text`, `issued_at
+  timestamptz`, `folio bigint`): an issued prescription never changes when
+  the doctor later edits her data or draws a new signature.
+  - RPC `issue_prescription(p_prescription_id uuid)` (SECURITY DEFINER,
+    pinned `search_path`, `authenticated` only, `is_staff()`): only for a
+    FINALIZED prescription with at least one medication. The first call
+    (first "Ver / imprimir" or "Enviar por WhatsApp") locks the row, checks
+    the prescriber data is complete and the signature object exists (else
+    `Faltan datos de la receta.` with hint `prescriber_incomplete`), and
+    stores the printed fields, the current signature version, `issued_at`
+    and `folio = nextval('prescription_folio_seq')`. Later calls return the
+    stored snapshot unchanged (idempotent; two taps at once get one folio).
+  - The PDF is always rendered from the snapshot and its signature file.
+  - `prescriptions_folio_key` (unique) and `prescriptions_issue_check` (all
+    four set together, only on a finalized row, valid signature name,
+    folio > 0).
+  - Trigger `prescriptions_issue_guard` (SECURITY DEFINER, pinned
+    `search_path`, no API grant): the four columns are refused on INSERT,
+    and on UPDATE they are write-once and accepted only while
+    `issue_prescription()` has set the transaction-local flag
+    `app.issuing_prescription` to that row's id (same pattern as
+    `app.inventory_ledger`). The API cannot set that flag. Refusals use
+    `42501`.
+  - Sequence `prescription_folio_seq`: no privilege for `anon` or
+    `authenticated`. Folios are unique and increasing but **not gapless**
+    (a failed or rolled-back issue — including each run of the check script,
+    which uses up 2 — skips a number). Shown as "Folio 000123"; the file is
+    `receta-000123.pdf`.
+  - The patient can read these columns of her own prescriptions
+    (`prescriptions_select_own`): they hold exactly what is printed on the
+    PDF she receives, plus the signature object name, which only the doctor
+    can download.
+- RPC `log_prescription_shared(p_prescription_id uuid, p_channel text)`
+  (SECURITY DEFINER, pinned `search_path`, `authenticated` only):
+  `is_staff()`; refuses unknown prescriptions, drafts, prescriptions that
+  were never issued and channels other than `share_sheet` (share sheet
+  finished), `whatsapp_link` (the WhatsApp chat really opened and the PDF
+  was downloaded), `download` (only downloaded: the share sheet failed or
+  the browser blocked the chat) and `print` (opened in a tab). Writes an
+  `EXPORT` audit event on `prescriptions` (row = prescription, patient = its
+  patient) whose only "columns" are the channel, `folio:000123` and
+  `issued_at:<UTC time>`. No clinical or personal value is logged. The
+  Bitácora shows it as e.g. "Compartió la receta en PDF (folio 000123)"; the
+  first issue appears as "Emitió la receta oficial (asignó folio)".
+- Medications get optional `presentacion`, `via`, `frecuencia`, `duracion`
+  inside `prescriptions.medications` (jsonb). No table change; the
+  frozen-prescription trigger is unchanged. Items copied from an older
+  prescription without route or frequency are marked "Incompleto" with a
+  "Completar" button, and the consultation cannot be finalized until they
+  are completed. A prescription holds at most 30 medications.
+
+The gate also refuses to pass if any `storage.objects` policy does not name a
+bucket where it matters: a SELECT / UPDATE / DELETE / ALL policy whose USING
+lacks `bucket_id`, or an INSERT / UPDATE / ALL policy whose WITH CHECK (or,
+when absent, its USING, which Postgres then applies to new rows) lacks
+`bucket_id`; or if any other policy mentions `prescriber_private`. Its
+rolled-back behavior block proves the guard: snapshot columns refused on
+insert and outside the RPC, write-once inside it.
+
+**Deploy order:** run the migration BEFORE deploying the frontend: the
+Centro de Comando reads `prescriber_profile` for "Datos de la receta" and the
+PDF buttons call `issue_prescription`.
+
+**After deploying:** the doctor opens Centro de Comando → "Datos de la
+receta", fills her data and draws her signature once. Until then "Ver /
+imprimir" and "Enviar por WhatsApp" explain what is missing and link there.
+
+**Re-running older files:** nothing earlier is redefined, so any earlier file
+can be re-run; run this one again afterwards only if the earlier file drops
+storage policies (migration 04 drops every `storage.objects` policy).
+
+**Rollback** (issued snapshots and folios are lost; the PDFs already sent
+are not affected):
+
+```sql
+drop function public.log_prescription_shared(uuid, text);
+drop function public.issue_prescription(uuid);
+drop trigger prescriptions_issue_guard on public.prescriptions;
+drop function public.prescriptions_issue_guard();
+alter table public.prescriptions
+  drop constraint prescriptions_issue_check,
+  drop constraint prescriptions_folio_key,
+  drop column prescriber_snapshot,
+  drop column signature_path,
+  drop column issued_at,
+  drop column folio;
+drop sequence public.prescription_folio_seq;
+drop policy "prescriber_private_staff_read" on storage.objects;
+drop policy "prescriber_private_staff_insert" on storage.objects;
+drop table public.prescriber_profile;
+drop function public.prescriber_profile_guard();
+```
+
+Then delete the `signature-*.png` objects from the `prescriber_private`
+bucket in the Storage dashboard and delete the bucket. Audit rows already
+written stay (the log is append-only).
+
+## Digital prescription check — `supabase/tests/digital_prescription_check.sql`
+
+**Run:** paste the whole file into the SQL editor after migration 25. It runs
+inside `begin; … rollback;` with throwaway doctor, admin and patient users, a
+patient, a service, four appointments and four prescriptions (three
+finalized, one draft), and disables the `whatsapp_notifications` and
+`appointments_prevent_overlap` triggers inside the transaction, so nothing
+is committed or sent. An existing real `prescriber_profile` row is removed
+only inside the transaction and comes back with the rollback. The folio
+sequence is not rolled back: each run uses up 2 folio numbers.
+
+- Expected: one notice starting with `DIGITAL PRESCRIPTION CHECK PASSED`.
+- A failure raises `DIGITAL PRESCRIPTION CHECK FAILED: …` naming the broken
+  rule.
+- `DIGITAL PRESCRIPTION CHECK ABORTED: …` means it could not set up its test
+  data (e.g. the doctor's two signature objects were not stored, which it
+  verifies as owner right after the upload). Nothing was proven; report the
+  message.
+
+Refusals that are privilege decisions (RLS, missing grants, the snapshot
+guard) are caught ONLY as `insufficient_privilege` (42501), so an unrelated
+error can never count as a refusal.
+
+It proves: the doctor creates and corrects the single prescription data row
+by upsert and the server owns `updated_by`; a cédula with letters, a bad
+phone, a signature path outside `signature-<id>.png` (including the old
+`signature.png` and a `../` path) and a specialty cédula without a specialty
+are refused; a second row is impossible and the doctor cannot delete the
+row; the doctor's two signature versions exist (checked as owner); every
+other object name (`signature.png`, `other.png`, folders, `../`, `.jpg`,
+spaces, `signature-.png`) is refused; she can neither rename nor delete a
+saved version; `issue_prescription()` stores the snapshot on first issue and
+returns it unchanged on the second call AND after she edits her name and
+draws a new signature, while the next prescription uses the new data; folios
+increase and a duplicate folio is refused by the unique constraint; drafts
+and unknown prescriptions cannot be issued; direct writes to the snapshot
+columns (edit an issued snapshot or folio, issue by hand, issue a draft,
+insert with a folio, or set the internal flag on an issued row) are refused;
+`log_prescription_shared()` logs an issued prescription once per channel
+(4 events) with exactly channel, folio and issue time, and refuses a draft,
+a finalized-but-not-issued prescription, an unknown prescription and an
+unknown or null channel; the admin, the patient and `anon` read no
+prescription data, see no signature object, cannot write one, and cannot
+issue or log; the Bitácora has the doctor's profile insert, her
+`signature_path` update and the issue (an UPDATE with `folio`).

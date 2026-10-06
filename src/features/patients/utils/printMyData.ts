@@ -14,6 +14,19 @@ const escapeHtml = (value: unknown): string =>
     .replace(/"/g, "&quot;")
     .replace(/'/g, "&#39;");
 
+type ExportedMedication = MyDataExport["prescriptions"][number]["medications"][number];
+
+/** "Tabletas 400 mg · Vía oral · Cada 8 h · Por 5 días" (structured fields only). */
+const medicationSchedule = (m: ExportedMedication): string =>
+  [
+    m.presentacion?.trim(),
+    m.via?.trim() ? `Vía ${m.via.trim().toLowerCase()}` : "",
+    m.frecuencia?.trim(),
+    m.duracion?.trim() ? `Por ${m.duracion.trim().replace(/^por\s+/i, "")}` : "",
+  ]
+    .filter(Boolean)
+    .join(" · ");
+
 // A date-only value ("1975-01-01") is parsed by `new Date` as UTC midnight,
 // which is still the previous day in Monterrey. Build it as a local date.
 const DATE_ONLY = /^(\d{4})-(\d{2})-(\d{2})$/;
@@ -152,7 +165,7 @@ const buildDocument = (data: MyDataExport): string => {
 
   const medications = section(
     "Medicamentos indicados",
-    `<p class="notice">Registro informativo del expediente. No es una receta médica oficial.</p>${
+    `<p class="notice">Registro de tus medicamentos. Tu receta oficial es el PDF firmado que te envía la doctora.</p>${
       data.prescriptions.length === 0
         ? empty("No hay medicamentos registrados.")
         : data.prescriptions
@@ -162,7 +175,7 @@ const buildDocument = (data: MyDataExport): string => {
                 <ul>${pr.medications
                   .map(
                     (m) =>
-                      `<li><strong>${escapeHtml(m.nombre)}</strong>${m.dosis ? ` — ${escapeHtml(m.dosis)}` : ""}${m.indicaciones ? `<br>${escapeHtml(m.indicaciones)}` : ""}</li>`,
+                      `<li><strong>${escapeHtml(m.nombre?.trim())}</strong>${m.dosis?.trim() ? ` — ${escapeHtml(m.dosis.trim())}` : ""}${medicationSchedule(m) ? `<br>${escapeHtml(medicationSchedule(m))}` : ""}${m.indicaciones?.trim() ? `<br>${escapeHtml(m.indicaciones.trim())}` : ""}</li>`,
                   )
                   .join("")}</ul>
               </div>`,

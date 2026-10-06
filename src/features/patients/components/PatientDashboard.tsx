@@ -527,7 +527,7 @@ export const PatientDashboard = () => {
         icon={<FileText className="w-5 h-5 text-brand-primary" />}
       >
         <div className="px-2 pb-4">
-          <PrescriptionDisclaimer className="mb-5" />
+          <PrescriptionDisclaimer className="mb-5" variant="patient" />
           {carePlan.length > 0 ? (
             <>
               <p className="text-brand-gray font-medium mb-6 text-center">

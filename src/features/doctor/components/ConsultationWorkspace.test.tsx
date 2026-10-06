@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import toast from "react-hot-toast";
@@ -8,6 +8,7 @@ import type {
   PatientDetails,
 } from "../../../lib/services/patientService";
 import {
+  fetchFinalizedPrescription,
   fetchPatientHistory,
   finalizeConsultation,
   finalizeConsultationWithPayment,
@@ -31,6 +32,13 @@ import {
   listBodyMeasurements,
   setWeightTracking,
 } from "../../../lib/services/bodyMeasurementService";
+import {
+  downloadSignature,
+  issuePrescription,
+  logPrescriptionShared,
+} from "../../../lib/services/prescriberService";
+import { TEST_SIGNATURE_PNG } from "../../../test/signaturePng";
+import { buildPrescriptionPdf } from "../prescription/buildPrescriptionPdf";
 import { ConsultationWorkspace } from "./ConsultationWorkspace";
 
 vi.mock("../../../lib/services/soapService", async (importOriginal) => ({
@@ -39,6 +47,7 @@ vi.mock("../../../lib/services/soapService", async (importOriginal) => ({
     await importOriginal<typeof import("../../../lib/services/soapService")>()
   ).findConsultationDraft,
   fetchPatientHistory: vi.fn(),
+  fetchFinalizedPrescription: vi.fn(),
   saveSoapNote: vi.fn(),
   savePrescription: vi.fn(),
   finalizeConsultation: vi.fn(),
@@ -69,6 +78,17 @@ vi.mock("../../../lib/services/bodyMeasurementService", () => ({
 vi.mock("../../../lib/services/financeService", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../../../lib/services/financeService")>()),
   recordPayment: vi.fn(),
+}));
+vi.mock("../../../lib/services/prescriberService", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../../../lib/services/prescriberService")>()),
+  fetchPrescriberProfile: vi.fn(),
+  downloadSignature: vi.fn(),
+  issuePrescription: vi.fn(),
+  logPrescriptionShared: vi.fn(),
+}));
+// The builder has its own tests; here only that a PDF is produced matters.
+vi.mock("../prescription/buildPrescriptionPdf", () => ({
+  buildPrescriptionPdf: vi.fn(),
 }));
 
 const appointment: DashboardAppointment = {
@@ -787,16 +807,226 @@ describe("ConsultationWorkspace NOM-004 record", () => {
     }
   });
 
-  it("suggests dose, route and frequency for a new medication", async () => {
+  it("marks a copied old medication as incomplete and Completar fills in route and frequency", async () => {
+    vi.mocked(fetchPatientHistory).mockResolvedValue({
+      notes: [],
+      prescriptions: [prescription()],
+    });
+    const { onClose, user } = renderWorkspace();
+    await waitForHistory();
+    await user.click(screen.getByRole("button", { name: /Recetas e Indicaciones/ }));
+    await user.click(
+      await screen.findByRole("button", { name: "Copiar Ibuprofeno a la receta de hoy" }),
+    );
+
+    expect(screen.getByText("Incompleto: falta la vía o la frecuencia.")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Completar Ibuprofeno" }));
+
+    // The same form, prefilled with what the old item has.
+    expect(
+      await screen.findByRole("heading", { name: "Completar Indicación Médica" }),
+    ).toBeInTheDocument();
+    expect(screen.getByLabelText(/Medicamento \(nombre genérico\)/)).toHaveValue("Ibuprofeno");
+    expect(screen.getByLabelText(/^Dosis/)).toHaveValue("400 mg");
+    expect(screen.getByLabelText("Indicaciones")).toHaveValue("1 tableta cada 8 h");
+
+    await user.click(screen.getByRole("combobox", { name: /Vía/ }));
+    await user.click(screen.getByRole("option", { name: "Oral" }));
+    await user.type(screen.getByLabelText(/^Frecuencia/), "Cada 8 horas");
+    await user.click(screen.getByRole("button", { name: "Guardar cambios" }));
+
+    await waitFor(() =>
+      expect(
+        screen.queryByText("Incompleto: falta la vía o la frecuencia."),
+      ).not.toBeInTheDocument(),
+    );
+    // Replaced in place, not added again.
+    expect(screen.getAllByText("Emitida: HOY")).toHaveLength(1);
+
+    await user.click(backButton());
+    await waitFor(() => expect(onClose).toHaveBeenCalled());
+    expect(savePrescription).toHaveBeenCalledWith("appt-1", "patient-1", [
+      {
+        nombre: "Ibuprofeno",
+        dosis: "400 mg",
+        via: "Oral",
+        frecuencia: "Cada 8 horas",
+        indicaciones: "1 tableta cada 8 h",
+      },
+    ]);
+  });
+
+  it("does not finalize while a medication of today is incomplete, and says which one", async () => {
+    vi.mocked(fetchPatientHistory).mockResolvedValue({
+      notes: [],
+      prescriptions: [prescription()],
+    });
+    const toastError = vi.spyOn(toast, "error");
+    const { user } = renderWorkspace();
+    await waitForHistory();
+    await fillRequiredNote(user);
+    await user.click(screen.getByRole("button", { name: /Recetas e Indicaciones/ }));
+    await user.click(
+      await screen.findByRole("button", { name: "Copiar Ibuprofeno a la receta de hoy" }),
+    );
+
+    await user.click(screen.getByRole("button", { name: /Finalizar Consulta/ }));
+
+    expect(toastError).toHaveBeenCalledWith(
+      "Completa la vía y la frecuencia de: Ibuprofeno. Toca «Completar» en Recetas e Indicaciones.",
+    );
+    expect(chargeDialogTitle()).not.toBeInTheDocument();
+    expect(finalizeConsultationWithPayment).not.toHaveBeenCalled();
+    // She is taken to the prescription, where the button is.
+    expect(screen.getByRole("button", { name: "Completar Ibuprofeno" })).toBeInTheDocument();
+
+    // A draft can still be saved with the incomplete item.
+    await user.click(backButton());
+    await waitFor(() => expect(savePrescription).toHaveBeenCalled());
+  });
+
+  it("caps today's prescription at 30 medications with a clear message", async () => {
+    const thirty = Array.from({ length: 30 }, (_, i) => ({
+      nombre: `Medicamento ${i + 1}`,
+      dosis: "1",
+      via: "Oral",
+      frecuencia: "Cada 8 h",
+      indicaciones: "",
+    }));
+    vi.mocked(fetchPatientHistory).mockResolvedValue({
+      notes: [],
+      prescriptions: [
+        prescription(),
+        prescription({ id: "rx-draft", appointmentId: "appt-1", medications: thirty, finalizedAt: null }),
+      ],
+    });
+    const toastError = vi.spyOn(toast, "error");
+    const { user } = renderWorkspace();
+    await waitForHistory();
+    await user.click(screen.getByRole("button", { name: /Recetas e Indicaciones/ }));
+    expect(await screen.findAllByText("Emitida: HOY")).toHaveLength(30);
+
+    await user.click(screen.getByRole("button", { name: /Nueva Indicación/ }));
+    expect(toastError).toHaveBeenLastCalledWith("La receta admite hasta 30 medicamentos.");
+    expect(screen.queryByRole("heading", { name: "Nueva Indicación Médica" })).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "Copiar Ibuprofeno a la receta de hoy" }));
+    expect(toastError).toHaveBeenLastCalledWith("La receta admite hasta 30 medicamentos.");
+
+    await user.click(screen.getByRole("button", { name: /Copiar toda la receta/ }));
+    expect(toastError).toHaveBeenLastCalledWith(
+      "La receta admite hasta 30 medicamentos. No se copió esta receta: quedan 0 lugares.",
+    );
+    expect(screen.getAllByText("Emitida: HOY")).toHaveLength(30);
+  });
+
+  it("Nueva Indicación requires medication, dose, route and frequency", async () => {
     const { user } = renderWorkspace();
     await waitForHistory();
 
     await user.click(screen.getByRole("button", { name: /Recetas e Indicaciones/ }));
     await user.click(screen.getByRole("button", { name: /Nueva Indicación/ }));
+    await user.click(screen.getByRole("button", { name: "Añadir a la Receta" }));
 
+    expect(screen.getByText("Escribe el nombre del medicamento.")).toBeInTheDocument();
+    expect(screen.getByText("Escribe la dosis.")).toBeInTheDocument();
+    expect(screen.getByText("Elige la vía.")).toBeInTheDocument();
+    expect(screen.getByText("Escribe cada cuánto se toma.")).toBeInTheDocument();
+    expect(screen.queryByText("Emitida: HOY")).not.toBeInTheDocument();
+    // The controlled-substance warning is on the form.
     expect(
-      screen.getByPlaceholderText("Ej. 1 tableta vía oral cada 8 h por 5 días"),
+      screen.getByText("No recetes aquí medicamentos controlados (Grupos I a III)."),
     ).toBeInTheDocument();
+  });
+
+  it("Nueva Indicación adds a structured medication and saves it with the draft", async () => {
+    const { onClose, user } = renderWorkspace();
+    await waitForHistory();
+
+    await user.click(screen.getByRole("button", { name: /Recetas e Indicaciones/ }));
+    await user.click(screen.getByRole("button", { name: /Nueva Indicación/ }));
+    await user.type(screen.getByLabelText(/Medicamento \(nombre genérico\)/), "Ibuprofeno");
+    await user.type(screen.getByLabelText("Presentación"), "Tabletas de 400 mg");
+    await user.type(screen.getByLabelText(/^Dosis/), "1 tableta");
+    await user.click(screen.getByRole("combobox", { name: /Vía/ }));
+    await user.click(screen.getByRole("option", { name: "Oral" }));
+    await user.type(screen.getByLabelText(/^Frecuencia/), "Cada 8 horas");
+    await user.type(screen.getByLabelText("Duración"), "5 días");
+    await user.type(screen.getByLabelText("Indicaciones"), "Con alimentos");
+    await user.click(screen.getByRole("button", { name: "Añadir a la Receta" }));
+
+    expect(await screen.findByText("Emitida: HOY")).toBeInTheDocument();
+    expect(
+      screen.getByText("Tabletas de 400 mg · Vía oral · Cada 8 horas · Por 5 días"),
+    ).toBeInTheDocument();
+    expect(screen.getByText(/Podrás enviar la receta en PDF al finalizar/)).toBeInTheDocument();
+
+    await user.click(backButton());
+    await waitFor(() => expect(onClose).toHaveBeenCalled());
+    expect(savePrescription).toHaveBeenCalledWith("appt-1", "patient-1", [
+      {
+        nombre: "Ibuprofeno",
+        presentacion: "Tabletas de 400 mg",
+        dosis: "1 tableta",
+        via: "Oral",
+        frecuencia: "Cada 8 horas",
+        duracion: "5 días",
+        indicaciones: "Con alimentos",
+      },
+    ]);
+  });
+
+  it("offers the prescription PDF only on finalized prescriptions", async () => {
+    vi.mocked(fetchPatientHistory).mockResolvedValue({
+      notes: [],
+      prescriptions: [
+        prescription({ id: "rx-final" }),
+        prescription({
+          id: "rx-draft",
+          appointmentId: "appt-1",
+          medications: [{ nombre: "Hidroquinona", dosis: "4 %", indicaciones: "Noche" }],
+          finalizedAt: null,
+        }),
+      ],
+    });
+    const { user } = renderWorkspace();
+    await waitForHistory();
+    await user.click(screen.getByRole("button", { name: /Recetas e Indicaciones/ }));
+
+    expect(screen.getAllByRole("button", { name: /^Ver o imprimir la receta/ })).toHaveLength(1);
+    expect(screen.getAllByRole("button", { name: /^Enviar por WhatsApp la receta/ })).toHaveLength(1);
+    // The old item (no structured fields) still shows its dose and indications.
+    expect(screen.getByText("Ibuprofeno")).toBeInTheDocument();
+    expect(screen.getByText("1 tableta cada 8 h")).toBeInTheDocument();
+  });
+
+  it("offers the prescription PDF in review mode too, but not for an anonymized record", async () => {
+    vi.mocked(fetchPatientHistory).mockResolvedValue({
+      notes: [],
+      prescriptions: [prescription()],
+    });
+    const user = userEvent.setup();
+    const { unmount } = render(
+      <ConsultationWorkspace patient={reviewPatient} onClose={vi.fn()} />,
+    );
+    await waitFor(() => expect(fetchPatientHistory).toHaveBeenCalled());
+    await user.click(screen.getByRole("button", { name: /Recetas e Indicaciones/ }));
+    expect(
+      await screen.findByRole("button", { name: /^Enviar por WhatsApp la receta/ }),
+    ).toBeInTheDocument();
+    unmount();
+
+    vi.mocked(fetchPatientDetails).mockResolvedValue({
+      ...details,
+      anonymized_at: "2026-01-01T00:00:00Z",
+    });
+    render(<ConsultationWorkspace patient={reviewPatient} onClose={vi.fn()} />);
+    await screen.findByText(ANONYMIZED_PATIENT_MESSAGE);
+    await user.click(screen.getByRole("button", { name: /Recetas e Indicaciones/ }));
+    expect(screen.getByText("Ibuprofeno")).toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: /^Enviar por WhatsApp la receta/ }),
+    ).not.toBeInTheDocument();
   });
 
   it("shows age, sex and the clinical background next to the patient name", async () => {
@@ -1219,5 +1449,155 @@ describe("ConsultationWorkspace weight tracking", () => {
     await waitFor(() => expect(getWeightTracking).toHaveBeenCalled());
     expect(turnOnButton()).toBeNull();
     expect(weightTab()).toBeNull();
+  });
+});
+
+describe("ConsultationWorkspace after finalizing", () => {
+  const medication = {
+    nombre: "Hidroquinona",
+    dosis: "4 %",
+    via: "Tópica",
+    frecuencia: "Cada noche",
+    indicaciones: "",
+  };
+
+  /** Today's draft: diagnosis, plan and the given medications. */
+  const withDraft = (medications: (typeof medication)[]) =>
+    vi.mocked(fetchPatientHistory).mockResolvedValue({
+      notes: [
+        note({ id: "draft", appointmentId: "appt-1", analysis: "Melasma", plan: "Protector", finalizedAt: null }),
+      ],
+      prescriptions:
+        medications.length > 0
+          ? [prescription({ id: "rx-today", appointmentId: "appt-1", medications, finalizedAt: null })]
+          : [],
+    });
+
+  const finalizedToday = prescription({
+    id: "rx-today",
+    appointmentId: "appt-1",
+    medications: [medication],
+    finalizedAt: "2026-10-15T17:00:00Z",
+  });
+
+  /** "Finalizar Consulta" -> charge step -> "Guardar y finalizar" (note already filled). */
+  const finalize = async (user: ReturnType<typeof userEvent.setup>) => {
+    await user.click(screen.getByRole("button", { name: /Finalizar Consulta/ }));
+    await screen.findByText("Cobro de la consulta");
+    await user.click(screen.getByRole("radio", { name: "Efectivo" }));
+    await user.click(screen.getByRole("button", { name: /Guardar y finalizar/ }));
+  };
+
+  const setNavigator = (share?: unknown, canShare?: unknown) => {
+    Object.defineProperty(navigator, "share", { value: share, configurable: true, writable: true });
+    Object.defineProperty(navigator, "canShare", { value: canShare, configurable: true, writable: true });
+  };
+
+  beforeEach(() => {
+    vi.mocked(fetchFinalizedPrescription).mockResolvedValue(finalizedToday);
+    vi.mocked(issuePrescription).mockResolvedValue({
+      folio: 123,
+      issuedAt: "2026-10-15T17:05:00+00:00",
+      signaturePath: "signature-1.png",
+      prescriber: {
+        fullName: "Dra. Carmen Torres",
+        cedulaProfesional: "1234567",
+        especialidad: "Dermatología",
+        cedulaEspecialidad: "",
+        institucionTitulo: "UANL",
+        consultorioDomicilio: "Av. Constitución 100, Monterrey",
+        telefono: "81 1234 5678",
+      },
+    });
+    vi.mocked(downloadSignature).mockResolvedValue(
+      new Blob([TEST_SIGNATURE_PNG], { type: "image/png" }),
+    );
+    vi.mocked(buildPrescriptionPdf).mockResolvedValue(new Uint8Array([37, 80, 68, 70]));
+    vi.mocked(logPrescriptionShared).mockResolvedValue();
+  });
+
+  afterEach(() => {
+    setNavigator(undefined, undefined);
+  });
+
+  it('with medications, stays open on "Consulta finalizada" with both actions until Listo', async () => {
+    withDraft([medication]);
+    const { onClose, onFinishConsultation, user } = renderWorkspace();
+    await waitForHistory();
+
+    await finalize(user);
+
+    const heading = await screen.findByRole("heading", { name: "Consulta finalizada" });
+    const dialog = heading.closest("div.relative") as HTMLElement;
+    // The dashboard marks it completed once and is told to keep it open.
+    expect(onFinishConsultation).toHaveBeenCalledTimes(1);
+    expect(onFinishConsultation).toHaveBeenCalledWith("appt-1", { keepOpen: true });
+    expect(fetchFinalizedPrescription).toHaveBeenCalledWith("appt-1");
+    expect(within(dialog).getByText("Hidroquinona")).toBeInTheDocument();
+    expect(
+      within(dialog).getByRole("button", { name: /^Enviar por WhatsApp la receta/ }),
+    ).toBeInTheDocument();
+    expect(within(dialog).getByRole("button", { name: /^Ver o imprimir la receta/ })).toBeInTheDocument();
+    expect(onClose).not.toHaveBeenCalled();
+
+    await user.click(within(dialog).getByRole("button", { name: "Listo" }));
+
+    expect(onClose).toHaveBeenCalledTimes(1);
+    expect(onFinishConsultation).toHaveBeenCalledTimes(1);
+  });
+
+  it('shares the prescription from "Consulta finalizada" and shows its folio', async () => {
+    const share = vi.fn().mockResolvedValue(undefined);
+    setNavigator(share, vi.fn().mockReturnValue(true));
+    withDraft([medication]);
+    const { onClose, user } = renderWorkspace();
+    await waitForHistory();
+    await finalize(user);
+    await screen.findByRole("heading", { name: "Consulta finalizada" });
+
+    await user.click(screen.getByRole("button", { name: /^Enviar por WhatsApp la receta/ }));
+    await screen.findByRole("heading", { name: "Enviar receta" });
+    expect(screen.getByText(/Folio 000123/)).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Enviar por WhatsApp" }));
+
+    await waitFor(() => expect(share).toHaveBeenCalledTimes(1));
+    expect(issuePrescription).toHaveBeenCalledWith("rx-today");
+    await waitFor(() =>
+      expect(logPrescriptionShared).toHaveBeenCalledWith("rx-today", "share_sheet"),
+    );
+    // Still on "Consulta finalizada" until Listo.
+    expect(screen.getByRole("heading", { name: "Consulta finalizada" })).toBeInTheDocument();
+    expect(onClose).not.toHaveBeenCalled();
+  });
+
+  it("without medications, hands over to the dashboard right away (no dialog)", async () => {
+    withDraft([]);
+    const { onFinishConsultation, user } = renderWorkspace();
+    await waitForHistory();
+
+    await finalize(user);
+
+    await waitFor(() => expect(onFinishConsultation).toHaveBeenCalledTimes(1));
+    expect(onFinishConsultation).toHaveBeenCalledWith("appt-1");
+    expect(fetchFinalizedPrescription).not.toHaveBeenCalled();
+    expect(screen.queryByText("Consulta finalizada")).toBeNull();
+  });
+
+  it("closes with a message when the finalized prescription cannot be read", async () => {
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    const toastError = vi.spyOn(toast, "error");
+    vi.mocked(fetchFinalizedPrescription).mockRejectedValue(new Error("network"));
+    withDraft([medication]);
+    const { onClose, onFinishConsultation, user } = renderWorkspace();
+    await waitForHistory();
+
+    await finalize(user);
+
+    await waitFor(() => expect(onClose).toHaveBeenCalledTimes(1));
+    expect(onFinishConsultation).toHaveBeenCalledTimes(1);
+    expect(toastError).toHaveBeenCalledWith(
+      "No se pudo cargar la receta. Puedes enviarla desde el Calendario.",
+    );
+    expect(screen.queryByText("Consulta finalizada")).toBeNull();
   });
 });

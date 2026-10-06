@@ -39,6 +39,7 @@ import {
 import { formatMXN } from "../../../../lib/services/inventoryService";
 import { ChargeModal } from "../modals/ChargeModal";
 import { RecordSuppliesModal } from "../modals/RecordSuppliesModal";
+import { AppointmentPrescriptionActions } from "../../prescription/AppointmentPrescriptionActions";
 import { useCalendar } from "../../hooks/useCalendar";
 import { WeeklyView } from "./calendar/WeeklyView";
 import { DailyView } from "./calendar/DailyView";
@@ -730,6 +731,15 @@ export const CalendarTab = ({
                     )}
                   </div>
                 </div>
+                {selectedAppointment.status === "completed" && (
+                  <AppointmentPrescriptionActions
+                    key={selectedAppointment.id}
+                    appointmentId={selectedAppointment.id}
+                    patientId={selectedAppointment.patientId}
+                    patientName={selectedAppointment.patientName}
+                    phone={selectedAppointment.phone}
+                  />
+                )}
                 {/* A finalized consultation cannot be cancelled, moved or started again. */}
                 {selectedAppointment.status !== "completed" && (
                 <div className="pt-4 flex flex-wrap sm:flex-nowrap gap-3 bg-white -mx-6 -mb-6 p-6 border-t border-slate-200">

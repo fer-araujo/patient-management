@@ -493,3 +493,69 @@ describe("CalendarTab consultations without recorded supplies", () => {
     expect(screen.getByLabelText("Cantidad de Sculptra")).toBeInTheDocument();
   });
 });
+
+describe("CalendarTab prescription of a finalized consultation", () => {
+  const done = appt({ id: "a-luis", patientId: "p-luis", patientName: "Luis Gómez", status: "completed" });
+
+  const stubPrescription = () => {
+    supabaseMock.onFrom("prescriptions", {
+      data: {
+        id: "rx-luis",
+        appointment_id: "a-luis",
+        patient_id: "p-luis",
+        medications: [{ nombre: "Ibuprofeno", dosis: "400 mg", via: "Oral", frecuencia: "Cada 8 h", indicaciones: "" }],
+        created_at: "2026-10-15T16:00:00Z",
+        finalized_at: "2026-10-15T17:00:00Z",
+      },
+    });
+    supabaseMock.onFrom("patients", {
+      data: {
+        id: "p-luis", first_name: "Luis", last_name: "Gómez", phone: "+528100000001", email: null,
+        gender: "Masculino", dob: "1980-02-01", blood_type: null, allergies: null, chronic_conditions: null,
+        address: null, family_history: null, personal_pathological_history: null,
+        non_pathological_history: null, current_illness: null, anonymized_at: null,
+      },
+    });
+  };
+
+  it("offers Enviar por WhatsApp / Ver for its finalized prescription", async () => {
+    setNow(new Date(2026, 9, 16, 12, 0));
+    stubPrescription();
+    const { user } = renderTab([done]);
+
+    await user.click(screen.getByText("Luis Gómez"));
+    await screen.findByText("Detalles de la Cita");
+
+    expect(
+      await screen.findByRole("button", { name: /^Enviar por WhatsApp la receta/ }),
+    ).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /^Ver o imprimir la receta/ })).toBeInTheDocument();
+    expect(screen.getByText("Receta")).toBeInTheDocument();
+    const query = supabaseMock.queries("prescriptions")[0];
+    expect(query.args("eq")).toEqual(["appointment_id", "a-luis"]);
+    expect(query.args("not")).toEqual(["finalized_at", "is", null]);
+  });
+
+  it("shows no prescription actions when the consultation has none", async () => {
+    setNow(new Date(2026, 9, 16, 12, 0));
+    const { user } = renderTab([done]);
+
+    await user.click(screen.getByText("Luis Gómez"));
+    await screen.findByText("Detalles de la Cita");
+
+    await waitFor(() => expect(supabaseMock.queries("prescriptions")).toHaveLength(1));
+    expect(screen.queryByRole("button", { name: /^Enviar por WhatsApp la receta/ })).toBeNull();
+    expect(supabaseMock.queries("patients")).toHaveLength(0);
+  });
+
+  it("never looks for a prescription of an appointment that is not finalized", async () => {
+    setNow(new Date(2026, 9, 14, 7, 0));
+    const { user } = renderTab([appt({})]);
+
+    await user.click(screen.getByText("Ana Pérez"));
+    await screen.findByText("Detalles de la Cita");
+
+    expect(screen.getByRole("button", { name: "Iniciar" })).toBeInTheDocument();
+    expect(supabaseMock.queries("prescriptions")).toHaveLength(0);
+  });
+});

@@ -87,7 +87,7 @@ VERIFIED:** whether any draft modification (PROY-NOM) is in progress in 2026.
 | Patient identification on each note (name, age, sex) | S2 num. 5.9 | Met | Since migration 20 the consultation sidebar and the note view show name, age (from `dob`) and sex (`gender`). A missing value is shown as "sin registrar". |
 | Patient address in the identification data | S2 num. 5.2.3 | Met | `patients.address` (migration 20), edited in "Editar datos del paciente", included in the patient's export and cleared by `anonymize_patient()`. |
 | Historia clínica minimum contents (interrogatorio, exploración física, resultados, diagnósticos, pronóstico, indicación terapéutica) | S2 num. 6.1 | **Partial** | Since migration 20: antecedentes heredofamiliares, personales patológicos, personales no patológicos and padecimiento actual on the patient record (doctor-only write, shown in the consultation sidebar with allergies, chronic conditions and blood type); diagnosis, prognosis and plan on every note. Still no interrogatorio por aparatos y sistemas or structured exploración física (G10). |
-| Nota de evolución: vital signs (6.2.2), diagnosis (6.2.4), prognosis (6.2.5), treatment and medical indications, "en el caso de medicamentos, señalando como mínimo la dosis, vía de administración y periodicidad" (6.2.6) | S2 num. 6.2 (6.2.1-6.2.6) | Partial | Since migration 20: `vital_signs` (blood pressure, oxygenation, weight, height) and `prognosis` on the note, diagnosis and plan required to finalize. Medication items keep name, dose and free-text indications (owner decision); the indications field suggests "Ej. 1 tableta vía oral cada 8 h por 5 días" but **route and duration are not enforced fields** (G11). |
+| Nota de evolución: vital signs (6.2.2), diagnosis (6.2.4), prognosis (6.2.5), treatment and medical indications, "en el caso de medicamentos, señalando como mínimo la dosis, vía de administración y periodicidad" (6.2.6) | S2 num. 6.2 (6.2.1-6.2.6) | Partial | Since migration 20: `vital_signs` (blood pressure, oxygenation, weight, height) and `prognosis` on the note, diagnosis and plan required to finalize. Since migration 25 every new medication item records generic name, dose, route (closed list) and frequency (all four required in "Nueva Indicación"), plus optional presentation, duration and indications. Items written before migration 25 keep only name, dose and free-text indications and are shown as they are (G11 closed for new items). |
 
 ## 3. NOM-024-SSA3-2012 (electronic health record systems, "SIRES")
 
@@ -121,22 +121,37 @@ beyond that catalog entry.
 
 ## 4. Prescriptions
 
-The platform **does not issue official prescriptions**. It stores what was
-prescribed as part of the clinical record.
+Since migration 25 (`20261005100000_digital_prescription.sql`) the doctor
+**issues official prescriptions** as a PDF built from a FINALIZED (frozen)
+prescription, and sends it to the patient by WhatsApp. The screens remain the
+clinical record; the PDF is the prescription.
 
 | Requirement | Source | Status | Where implemented / why not |
 | --- | --- | --- | --- |
-| A receta médica must have **printed** full name, address and cédula profesional of the prescriber, date and **firma autógrafa** | S6 art. 29 | Not applicable by design | The app shows none of these, so it cannot pass as a receta. The official prescription is issued separately on paper by the doctor. |
-| Prescriber indicates dose, presentation, route, frequency and duration | S6 art. 30 | Partial | Applies to the paper receta; the record captures name, dose and free-text indications only (G11). |
-| Only licensed professionals may issue recetas | S6 art. 28 | N/A | The app issues none. |
-| Disclaimer | — | Met | `PrescriptionDisclaimer.tsx` shows "Registro informativo del expediente. No es una receta médica oficial." in the consultation workspace ("Recetas e Indicaciones" tab) in the patient's "Mis Medicamentos" view (always shown), and in the printable "Mis datos" document. |
+| A receta médica must have **printed** full name, address and cédula profesional of the prescriber, the date and the signature | S6 art. 29 | **Partial** | The PDF prints the doctor's full name, specialty and specialty cédula (when given), cédula profesional, the institution that issued the degree, the practice address and phone ("Datos de la receta", `prescriber_profile`), the prescription date (clinic calendar, from `finalized_at`; the patient's age is computed on that same day), a sequential folio assigned by the database at the first issue, and the doctor's signature drawn on the iPad. These are frozen at the first issue (`issue_prescription()` stores a write-once snapshot of the printed data, the signature version and the folio), so a later change of her data or signature never alters an issued prescription. The PDF cannot be issued while name, cédula, institution, address or signature is missing. **Partial** because the signature is a **simple electronic signature** (a drawn image tied to the doctor's login), not a handwritten one on paper nor an advanced e-signature (FEA / e.firma) — see the lawyer item below. |
+| Prescriber indicates dose, presentation, route, frequency and duration | S6 art. 30 | Met for new items | Structured `MedicationItem` fields (`presentacion`, `dosis`, `via`, `frecuencia`, `duracion`); dose, route and frequency are required in "Nueva Indicación". Older items print what they have. |
+| Only licensed professionals may issue recetas | S6 art. 28 | Met | Only the doctor role (`is_staff()`) can read the prescription data and the signature, and only her browser builds the PDF. The admin and patients cannot read either through the API. |
+| Controlled substances (Grupos I-III, Ley General de Salud art. 226) need special prescription forms | LGS art. 226 (**NOT VERIFIED** against the primary text in this review) | Out of scope by design | They must **never** be prescribed with this PDF. "Nueva Indicación" and the "Recetas e Indicaciones" notice say so on screen. Nothing in the software can detect a controlled substance. |
+| Traceability of every issued prescription | NOM-024 6.6.1 spirit | Met | The first issue is audited (UPDATE of `prescriptions` with `folio`, shown as "Emitió la receta oficial"). Every time the PDF leaves the app, `log_prescription_shared()` writes an `EXPORT` event with the channel (`print`, `share_sheet`, `whatsapp_link` only when the chat really opened, `download`), the folio and the issue time — no medication or patient data. Drafts and never-issued prescriptions are refused. |
+| Notice on screens | — | Met | `PrescriptionDisclaimer.tsx`: doctor variant (how the PDF is issued; no controlled substances); patient variant in "Mis Medicamentos" and the printable "Mis datos" ("Tu receta oficial es el PDF firmado que te envía la doctora"). |
 
-**Assessment.** Because art. 29 requires a printed name, address, cédula and a
-handwritten signature, a screen or JSON entry lacking all of them does not meet
-the definition of a receta médica, and the disclaimer removes any ambiguity for
-the patient. **NOT VERIFIED:** any COFEPRIS guidance on electronic
-prescriptions (none was read), and controlled-substance rules (the app must
-never be used for those — out of scope).
+**Assessment and open legal questions (lawyer review required).**
+
+- **Signature:** a drawn signature stored once and stamped on every PDF is a
+  simple electronic signature linked to the doctor's authenticated session.
+  Art. 29 speaks of the prescriber's signature; whether a simple electronic
+  signature on a PDF sent by WhatsApp satisfies it, and for which medicines,
+  is **NOT VERIFIED** — confirm with a lawyer before relying on it.
+- **Antibiotics (Grupo IV):** pharmacies may still require a printed copy
+  signed by hand, and may retain it. The doctor should be ready to print and
+  sign when a pharmacy asks. **NOT VERIFIED**: current COFEPRIS rules for
+  electronic antibiotic prescriptions.
+- **Controlled substances (Grupos I-III):** out of scope; never prescribed
+  here.
+- **WhatsApp as a channel:** the PDF goes through the doctor's own WhatsApp
+  (share sheet or wa.me link); no third-party service of the clinic receives
+  it. The message text and file name carry only the folio, never the
+  patient's name or medications.
 
 ## 5. Processors and cross-border transfer
 
@@ -185,13 +200,13 @@ Phase 3 (runbook, "Phase 3 — Verified booking"):
 | G2 | Medium (process) | Patients registered before Phase 2, and patients who never use the portal, have no `consents` row | No evidence of consent for them | Since Phase 3 a returning patient who books online must accept the current notice first (`accept_privacy_notice`). Since migration 23 the doctor records a notice signed ON PAPER with "El paciente firmó el aviso de privacidad en papel" (Nuevo paciente / Editar datos → `record_consent_in_person`, `consents.method = 'in_person'`), and the Directorio shows "Aviso firmado" / "Sin aviso firmado" per patient. Remaining: actually collect and file the signed paper notices (keep the originals) |
 | G3 | High (accepted risk) | The online notice omits the controller's address: the practice operates from the doctor's home and she will not publish it. The notice states the address is given when an appointment is confirmed and in the integral notice available on request. Supabase region disclosed: East US (North Virginia), i.e. a cross-border transfer to the United States | Art. 15 fr. I requires identity and address in the notice; omitting it online is a knowingly accepted gap, not compliance. Mitigations: a commercial/virtual office address for notifications would close it | Owner decision, 2026-09-24, with no legal counsel. Keep a printed integral notice (with an address) at the practice |
 | G4 | Fixed | The back arrow in the consultation screen used to call the same handler as "Finalizar Consulta", which would have permanently frozen an unfinished note | — | Fixed: the back arrow saves a draft only (`saveConsultation(false)`); only "Finalizar Consulta" finalizes |
-| G5 | Medium (partly fixed) | No electronic signature and no cédula on the note. The author's full name and the time are rendered since migration 20 | NOM-004 5.10, NOM-024 6.6.2 | e.firma (SAT) or an FEA provider for finalized notes; render the cédula on the note |
+| G5 | Medium (partly fixed) | No electronic signature and no cédula on the note. The author's full name and the time are rendered since migration 20. Since migration 25 the prescription PDF carries the cédula and a simple electronic signature (drawn image), but consultation notes do not | NOM-004 5.10, NOM-024 6.6.2 | e.firma (SAT) or an FEA provider for finalized notes and prescriptions; render the cédula on the note |
 | G6 | Medium | Reads are not audited (who viewed which record) | NOM-024 6.6.1 traceability | Log views through an RPC or edge function; Postgres triggers cannot see SELECTs |
 | G7 | Medium | Database owner can disable triggers and alter the log; no off-site copy | Append-only is only as strong as the owner account | Periodic export of `audit_log` to write-once storage; restrict who holds owner credentials |
 | G8 | Medium | MFA not enforced for staff | NOM-024 6.6.3 recommends additional factors | Enable Supabase Auth MFA (TOTP) for doctor/admin |
 | G9 | Medium | No breach-response procedure | LFPDPPP art. 19 requires immediate notice to titulares | Write an incident runbook: detection, assessment, WhatsApp/email notice template |
 | G10 | Medium (partly fixed) | Antecedentes and padecimiento actual exist since migration 20; no interrogatorio por aparatos y sistemas or structured exploración física | NOM-004 6.1 | Add those sections to a first-visit historia clínica form |
-| G11 | Medium (accepted for now) | Medication items lack route of administration and duration fields; the indications placeholder asks for them, nothing enforces them (owner decision: keep free text) | NOM-004 6.2; RIS art. 30 | Add structured fields to `MedicationItem` |
+| G11 | Fixed for new items | Medication items lacked route of administration and duration fields | NOM-004 6.2; RIS art. 30 | Fixed in migration 25: `MedicationItem` has `presentacion`, `via` (closed list), `frecuencia`, `duracion`; dose, route and frequency are required for new items. Items written before stay as they were |
 | G12 | Medium | Administrative/physical security measures, confidentiality agreements, designated data-protection person | LFPDPPP arts. 18, 20, 29 | Written policies; signed confidentiality agreements; formal designation |
 | G13 | Medium | No documented backup and restore test | NOM-024 5.6 | Confirm the Supabase plan's backups / PITR and run a restore drill |
 | G14 | Low | Anonymization is manual; no report of records past retention | LFPDPPP art. 10 | Staff report listing patients whose `last_clinical_act_at` is older than 5 years |
@@ -221,6 +236,8 @@ Phase 3 (runbook, "Phase 3 — Verified booking"):
 - [ ] Enable MFA for staff accounts (G8).
 - [ ] Confirm backups / point-in-time recovery on the Supabase plan and run one restore test (G13).
 - [ ] Each staff member has their own login — no shared accounts (non-repudiation).
+- [ ] **Lawyer review of the digital prescription** (migration 25): is the drawn simple electronic signature on a WhatsApp PDF valid under RIS art. 29, and for antibiotics (Grupo IV) must the doctor give a printed, hand-signed copy? Controlled substances (Grupos I-III) are never prescribed in the app.
+- [ ] The doctor fills "Datos de la receta" (Centro de Comando) with her full name, cédula profesional, institution, practice address and phone, and draws her signature, before sending the first prescription.
 
 ## Addendum — clinical notes are staff-only (migration 14)
 
@@ -286,3 +303,47 @@ requires a diagnosis and a plan to finalize, and adds to the patient record
   request the day it arrives, since the deadline counts from that moment.
 - "Mis datos" (export) is unavailable to the patient while the portal is
   closed; an access request is answered by the doctor directly.
+
+## Addendum — digital official prescription (migration 25)
+
+`20261005100000_digital_prescription.sql` turns a finalized prescription into
+an official PDF the doctor sends by WhatsApp:
+
+- **Prescriber data** (`prescriber_profile`, one row, doctor only, audited,
+  no delete): full name, cédula profesional, optional specialty and its
+  cédula, institution that issued the degree, practice address, phone and the
+  path of the signature. Filled in "Datos de la receta" (Centro de Comando).
+- **Signature:** drawn on the iPad (canvas, no library; only the first
+  finger draws, a minimum size is required, and rotating the iPad erases an
+  unsaved drawing). Each saved signature is a NEW version
+  `signature-<id>.png` in the private bucket `prescriber_private` (PNG only,
+  256 KB; doctor-only read and create policies, no update or delete, so
+  versions are never overwritten or removed; no public or signed URL is ever
+  handed out — the browser downloads it with the doctor's session). Simple
+  electronic signature: see §4 for the open legal questions.
+- **Issue snapshot and folio:** the first time a finalized prescription
+  becomes a PDF, `issue_prescription()` stores on it the printed prescriber
+  data, the signature version, the issue time and a sequential folio
+  ("Folio 000123", unique; numbers may skip after a failed issue). Every
+  later PDF of that prescription is rendered from this snapshot; nobody can
+  change it afterwards (write-once database guard).
+- **PDF:** built in the doctor's browser only when she asks (pdf-lib, loaded
+  on demand; standard Helvetica font, nothing fetched from outside). Letter
+  size; prescriber header, patient name, age and sex, date and folio,
+  numbered medications with every structured field, signature, printed name
+  and cédula, and the footer "Receta emitida electrónicamente. Firma
+  electrónica simple." Only finalized prescriptions; refused while the
+  prescriber data is incomplete. Medications copied from an older
+  prescription without route or frequency must be completed ("Completar")
+  before the consultation can be finalized; at most 30 medications.
+- **Sending:** on the iPad the share sheet (WhatsApp → the patient's chat);
+  elsewhere WhatsApp opens the patient's chat in the same tap and the PDF is
+  downloaded. If the chat cannot open (blocked pop-up, or the share sheet
+  failed), the app only downloads the PDF and says so ("ábrela en WhatsApp
+  manualmente"); it never claims WhatsApp opened. When the patient has no
+  valid phone the dialog warns the doctor to pick the contact. No paid
+  service. Every PDF that leaves the app (view/print, share sheet, WhatsApp,
+  download) is written to the Bitácora with channel, folio and issue time
+  only.
+- **Patients:** "Mis Medicamentos" and the printable "Mis datos" say the list
+  is a record and the official prescription is the PDF the doctor sends.

@@ -42,6 +42,7 @@ import {
   updatePatientNotes,
 } from "../../../lib/services/patientService";
 import {
+  fetchFinalizedPrescription,
   fetchPatientHistory,
   findConsultationDraft,
   saveSoapNote,
@@ -81,12 +82,29 @@ import {
 import { sexFromGender } from "../utils/bodyComposition";
 import { WeightTrackingTab } from "./weight/WeightTrackingTab";
 import { ConfirmDialog } from "./weight/ConfirmDialog";
+import { NewMedicationModal } from "../prescription/NewMedicationModal";
+import { PrescriptionPdfActions } from "../prescription/PrescriptionPdfActions";
+import { ConsultationFinishedModal } from "../prescription/ConsultationFinishedModal";
+import {
+  MAX_MEDICATIONS,
+  TOO_MANY_MEDICATIONS_MESSAGE,
+  describeMedicationSchedule,
+  isMedicationComplete,
+  sameMedication,
+} from "../prescription/medication";
 
 interface ConsultationWorkspaceProps {
   appointment?: DashboardAppointment;
   patient?: DashboardPatient;
   onClose: () => void;
-  onFinishConsultation?: (id: string) => void;
+  /**
+   * Called once after the consultation is finalized. With `keepOpen` the
+   * workspace stays mounted ("Consulta finalizada") until it calls onClose.
+   */
+  onFinishConsultation?: (
+    id: string,
+    options?: { keepOpen: boolean },
+  ) => void | Promise<void>;
 }
 
 type WorkspaceTab = "notas" | "receta" | "fotos" | "peso";
@@ -112,6 +130,12 @@ const WEIGHT_TAB: WorkspaceTabDef = {
 
 const FINALIZE_REQUIRES_MESSAGE =
   "Para finalizar la consulta, escribe el diagnóstico y el plan.";
+
+/** Start of the message that blocks finalizing with incomplete medications. */
+const INCOMPLETE_MEDICATIONS_PREFIX = "Completa la vía y la frecuencia de";
+
+const incompleteMedicationsMessage = (names: string[]): string =>
+  `${INCOMPLETE_MEDICATIONS_PREFIX}: ${names.join(", ")}. Toca «Completar» en Recetas e Indicaciones.`;
 
 type BackgroundKey = keyof PatientBackgroundFields;
 type BackgroundTextKey = Exclude<BackgroundKey, "blood_type">;
@@ -192,11 +216,6 @@ const formatNoteDateTime = (iso: string): string =>
     hour: "2-digit",
     minute: "2-digit",
   });
-
-const sameMedication = (a: MedicationItem, b: MedicationItem) =>
-  a.nombre === b.nombre &&
-  a.dosis === b.dosis &&
-  a.indicaciones === b.indicaciones;
 
 const supportsFieldSizing =
   typeof CSS !== "undefined" &&
@@ -315,12 +334,10 @@ export const ConsultationWorkspace = ({
 
   const [vitalSigns, setVitalSigns] =
     useState<VitalSignsForm>(EMPTY_VITAL_SIGNS);
-  const [isPrescriptionModalOpen, setIsPrescriptionModalOpen] = useState(false);
-  const [newMedication, setNewMedication] = useState<MedicationItem>({
-    nombre: "",
-    dosis: "",
-    indicaciones: "",
-  });
+  // "Nueva Indicación" (index null) or "Completar" on today's item `index`.
+  const [medicationDialog, setMedicationDialog] = useState<{
+    index: number | null;
+  } | null>(null);
   const [localPrescriptions, setLocalPrescriptions] = useState<
     MedicationItem[]
   >([]);
@@ -331,6 +348,9 @@ export const ConsultationWorkspace = ({
 
   const [isSaving, setIsSaving] = useState(false);
   const [isChargeOpen, setIsChargeOpen] = useState(false);
+  // Set after finalizing a consultation with a prescription ("Consulta finalizada").
+  const [finishedPrescription, setFinishedPrescription] =
+    useState<Prescription | null>(null);
 
   // Weight tracking (InBody). Null until read (or when the read failed):
   // then neither the tab nor the "Llevar control de peso" button is shown.
@@ -511,6 +531,14 @@ export const ConsultationWorkspace = ({
   const isBackgroundExpanded =
     canEditBackground && backgroundForm !== null && isBackgroundOpen;
 
+  // What the prescription PDF prints about the patient.
+  const prescriptionPatient = {
+    name: targetName,
+    dob: patientDetails?.dob ?? patient?.dob,
+    sex: patientDetails?.gender ?? patient?.gender,
+    phone: patientDetails?.phone ?? appointment?.phone ?? patient?.phone,
+  };
+
   const visibleTabs = weightTracking
     ? [...WORKSPACE_TABS, WEIGHT_TAB]
     : WORKSPACE_TABS;
@@ -592,11 +620,22 @@ export const ConsultationWorkspace = ({
     if (finalize && (!soapNotes.analisis.trim() || !soapNotes.plan.trim())) {
       return { error: FINALIZE_REQUIRES_MESSAGE };
     }
+    // Items copied from old prescriptions lack route and frequency; the
+    // prescription that becomes official must have them (NOM-004 6.2.6).
+    const incomplete = localPrescriptions.filter((m) => !isMedicationComplete(m));
+    if (finalize && incomplete.length > 0) {
+      return {
+        error: incompleteMedicationsMessage(
+          incomplete.map((m) => m.nombre?.trim() || "un medicamento"),
+        ),
+      };
+    }
     return { vitalSigns: vitals.value };
   };
 
   const reportCheck = (error: string) => {
     if (error === FINALIZE_REQUIRES_MESSAGE) setActiveTab("notas");
+    if (error.startsWith(INCOMPLETE_MEDICATIONS_PREFIX)) setActiveTab("receta");
     toast.error(error);
   };
 
@@ -706,6 +745,10 @@ export const ConsultationWorkspace = ({
     }
 
     setIsChargeOpen(false);
+    if (localPrescriptions.length > 0) {
+      await showFinishedPrescription(appointment.id);
+      return;
+    }
     if (onFinishConsultation) {
       onFinishConsultation(appointment.id);
     } else {
@@ -713,18 +756,64 @@ export const ConsultationWorkspace = ({
     }
   };
 
-  const handleAddPrescription = () => {
-    if (newMedication.nombre) {
-      setLocalPrescriptions([...localPrescriptions, { ...newMedication }]);
-      setNewMedication({ nombre: "", dosis: "", indicaciones: "" });
-      setIsPrescriptionModalOpen(false);
+  /**
+   * With a prescription the workspace stays open on "Consulta finalizada",
+   * so it can be sent right away; "Listo" closes it. The dashboard still
+   * marks the appointment completed and refreshes meanwhile.
+   */
+  const showFinishedPrescription = async (appointmentId: string) => {
+    const [, finalized] = await Promise.all([
+      onFinishConsultation?.(appointmentId, { keepOpen: true }),
+      fetchFinalizedPrescription(appointmentId).catch((err: unknown) => {
+        console.error(
+          "Error cargando la receta finalizada:",
+          err instanceof Error ? err.message : err,
+        );
+        return null;
+      }),
+    ]);
+    if (finalized && finalized.medications.length > 0) {
+      setFinishedPrescription(finalized);
+      return;
     }
+    toast.error("No se pudo cargar la receta. Puedes enviarla desde el Calendario.");
+    onClose();
+  };
+
+  /** "Nueva Indicación", refused at the cap with a clear message. */
+  const openNewMedication = () => {
+    if (localPrescriptions.length >= MAX_MEDICATIONS) {
+      toast.error(TOO_MANY_MEDICATIONS_MESSAGE);
+      return;
+    }
+    setMedicationDialog({ index: null });
+  };
+
+  /** Adds a new item, or replaces the item that was being completed. */
+  const handleSaveMedication = (medication: MedicationItem) => {
+    const index = medicationDialog?.index ?? null;
+    if (index === null) {
+      if (localPrescriptions.length >= MAX_MEDICATIONS) {
+        toast.error(TOO_MANY_MEDICATIONS_MESSAGE);
+        return;
+      }
+      setLocalPrescriptions([...localPrescriptions, medication]);
+    } else {
+      setLocalPrescriptions(
+        localPrescriptions.map((m, i) => (i === index ? medication : m)),
+      );
+    }
+    setMedicationDialog(null);
   };
 
   /** "Copiar": reuse one past medication in today's prescription. */
   const handleCopyMedication = (med: MedicationItem) => {
     if (localPrescriptions.some((m) => sameMedication(m, med))) {
       toast("Ese medicamento ya está en la receta de hoy.");
+      return;
+    }
+    if (localPrescriptions.length >= MAX_MEDICATIONS) {
+      toast.error(TOO_MANY_MEDICATIONS_MESSAGE);
       return;
     }
     setLocalPrescriptions([...localPrescriptions, { ...med }]);
@@ -740,6 +829,12 @@ export const ConsultationWorkspace = ({
     );
     if (toAdd.length === 0) {
       toast("Esos medicamentos ya están en la receta de hoy.");
+      return;
+    }
+    if (localPrescriptions.length + toAdd.length > MAX_MEDICATIONS) {
+      toast.error(
+        `${TOO_MANY_MEDICATIONS_MESSAGE} No se copió esta receta: quedan ${MAX_MEDICATIONS - localPrescriptions.length} lugares.`,
+      );
       return;
     }
     setLocalPrescriptions([
@@ -1489,7 +1584,7 @@ export const ConsultationWorkspace = ({
                   </div>
                   {!isReviewMode && (
                     <Button type="button"
-                      onClick={() => setIsPrescriptionModalOpen(true)}
+                      onClick={openNewMedication}
                       disabled={isEditorLocked}
                       className="w-full sm:w-auto px-5 py-3 text-sm rounded-lg cursor-pointer whitespace-nowrap shrink-0 flex items-center gap-2"
                     >
@@ -1506,7 +1601,7 @@ export const ConsultationWorkspace = ({
                     {localPrescriptions.map((med, idx) => (
                       <div
                         key={`local-${idx}`}
-                        className="bg-brand-light/10 border border-brand-primary/30 p-5 rounded-xl flex items-start justify-between"
+                        className="bg-brand-light/10 border border-brand-primary/30 p-5 rounded-xl flex items-start justify-between gap-3"
                       >
                         <div>
                           <p className="text-base font-bold text-brand-dark">
@@ -1515,15 +1610,41 @@ export const ConsultationWorkspace = ({
                               ({med.dosis})
                             </span>
                           </p>
+                          {describeMedicationSchedule(med) && (
+                            <p className="text-base text-brand-dark mt-1">
+                              {describeMedicationSchedule(med)}
+                            </p>
+                          )}
                           <p className="text-base text-brand-gray mt-1">
                             {med.indicaciones}
                           </p>
                           <span className="text-xs font-bold text-brand-primary mt-2 block">
                             Emitida: HOY
                           </span>
+                          {!isMedicationComplete(med) && (
+                            <p className="text-base font-medium text-amber-700 mt-2">
+                              Incompleto: falta la vía o la frecuencia.
+                            </p>
+                          )}
                         </div>
+                        {!isMedicationComplete(med) && !isReviewMode && (
+                          <button
+                            type="button"
+                            onClick={() => setMedicationDialog({ index: idx })}
+                            disabled={isEditorLocked}
+                            aria-label={`Completar ${med.nombre}`}
+                            className="min-h-11 text-sm font-bold py-2 px-4 rounded-lg bg-brand-primary hover:bg-brand-dark text-white border-none flex items-center gap-1.5 shrink-0 cursor-pointer shadow-sm disabled:opacity-50"
+                          >
+                            <Edit2 className="w-4 h-4" aria-hidden="true" /> Completar
+                          </button>
+                        )}
                       </div>
                     ))}
+                    {localPrescriptions.length > 0 && !isReviewMode && (
+                      <p className="text-sm text-brand-gray">
+                        Podrás enviar la receta en PDF al finalizar la consulta.
+                      </p>
+                    )}
                     {pastPrescriptions.map((pres) => {
                       const issuedOn = new Date(pres.createdAt).toLocaleDateString(
                         "es-MX",
@@ -1534,21 +1655,29 @@ export const ConsultationWorkspace = ({
                           aria-label={`Receta del ${issuedOn}`}
                           className="space-y-2"
                         >
-                          <div className="flex items-center justify-between gap-3">
+                          <div className="flex flex-wrap items-center justify-between gap-3">
                             <span className="text-xs font-bold text-slate-400 block">
                               Receta del {issuedOn}
                             </span>
-                            {!isReviewMode && (
-                              <button
-                                type="button"
-                                onClick={() => handleCopyPrescription(pres)}
-                                disabled={isEditorLocked}
-                                aria-label={`Copiar toda la receta del ${issuedOn}`}
-                                className="text-xs font-bold py-2 px-3 rounded-lg border border-slate-200 bg-white text-slate-600 hover:bg-slate-100 hover:text-brand-dark flex items-center gap-1.5 shrink-0 cursor-pointer shadow-sm"
-                              >
-                                <Copy className="w-4 h-4" /> Copiar todo
-                              </button>
-                            )}
+                            <div className="flex flex-wrap items-center gap-2">
+                              {pres.finalizedAt && !isAnonymized && (
+                                <PrescriptionPdfActions
+                                  prescription={pres}
+                                  patient={prescriptionPatient}
+                                />
+                              )}
+                              {!isReviewMode && (
+                                <button
+                                  type="button"
+                                  onClick={() => handleCopyPrescription(pres)}
+                                  disabled={isEditorLocked}
+                                  aria-label={`Copiar toda la receta del ${issuedOn}`}
+                                  className="text-xs font-bold py-2 px-3 rounded-lg border border-slate-200 bg-white text-slate-600 hover:bg-slate-100 hover:text-brand-dark flex items-center gap-1.5 shrink-0 cursor-pointer shadow-sm"
+                                >
+                                  <Copy className="w-4 h-4" /> Copiar todo
+                                </button>
+                              )}
+                            </div>
                           </div>
                           {pres.medications.map((med, mIdx) => (
                             <div
@@ -1562,6 +1691,11 @@ export const ConsultationWorkspace = ({
                                     ({med.dosis})
                                   </span>
                                 </p>
+                                {describeMedicationSchedule(med) && (
+                                  <p className="text-sm text-brand-dark mt-1">
+                                    {describeMedicationSchedule(med)}
+                                  </p>
+                                )}
                                 <p className="text-sm text-brand-gray mt-1 line-clamp-1">
                                   {med.indicaciones}
                                 </p>
@@ -1742,6 +1876,13 @@ export const ConsultationWorkspace = ({
         />
       )}
 
+      <ConsultationFinishedModal
+        prescription={finishedPrescription}
+        patient={prescriptionPatient}
+        canSend={!isAnonymized}
+        onDone={onClose}
+      />
+
       <ConfirmDialog
         isOpen={isTrackingConfirmOpen}
         onClose={() => setIsTrackingConfirmOpen(false)}
@@ -1754,76 +1895,18 @@ export const ConsultationWorkspace = ({
         confirmLabel="Sí, llevar control"
       />
 
-      <Modal
-        isOpen={isPrescriptionModalOpen}
-        onClose={() => setIsPrescriptionModalOpen(false)}
-        title="Nueva Indicación Médica"
-        icon={<Pill className="w-6 h-6 text-brand-primary" />}
-        hideFooter={true}
-      >
-        <div className="space-y-5 pb-2">
-          <div>
-            <label className="text-brand-dark font-bold text-base mb-2 block">
-              Nombre del Medicamento
-            </label>
-            <input
-              type="text"
-              value={newMedication.nombre}
-              onChange={(e) =>
-                setNewMedication({ ...newMedication, nombre: e.target.value })
-              }
-              placeholder="Ej. Ibuprofeno..."
-              className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl text-base focus:border-brand-primary outline-none"
-            />
-          </div>
-          <div>
-            <label className="text-brand-dark font-bold text-base mb-2 block">
-              Dosis y Presentación
-            </label>
-            <input
-              type="text"
-              value={newMedication.dosis}
-              onChange={(e) =>
-                setNewMedication({ ...newMedication, dosis: e.target.value })
-              }
-              placeholder="Ej. 400mg, 1 Tableta..."
-              className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl text-base focus:border-brand-primary outline-none"
-            />
-          </div>
-          <div>
-            <label className="text-brand-dark font-bold text-base mb-2 block">
-              Indicaciones / Frecuencia
-            </label>
-            <textarea
-              value={newMedication.indicaciones}
-              onChange={(e) =>
-                setNewMedication({
-                  ...newMedication,
-                  indicaciones: e.target.value,
-                })
-              }
-              placeholder="Ej. 1 tableta vía oral cada 8 h por 5 días"
-              className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl text-base focus:border-brand-primary outline-none resize-none h-32"
-            />
-          </div>
-          <div className="pt-4 border-t border-slate-100 flex gap-3 mt-4">
-            <Button type="button"
-              variant="outline"
-              onClick={() => setIsPrescriptionModalOpen(false)}
-              className="flex-1 py-4 rounded-xl cursor-pointer text-base"
-            >
-              Cancelar
-            </Button>
-            <Button type="button"
-              onClick={handleAddPrescription}
-              disabled={!newMedication.nombre}
-              className="flex-1 py-4 rounded-xl bg-brand-primary hover:bg-brand-dark text-white border-none shadow-md disabled:opacity-50 cursor-pointer text-base font-bold"
-            >
-              Añadir a la Receta
-            </Button>
-          </div>
-        </div>
-      </Modal>
+      {medicationDialog && (
+        <NewMedicationModal
+          isOpen={true}
+          onClose={() => setMedicationDialog(null)}
+          onAdd={handleSaveMedication}
+          initial={
+            medicationDialog.index === null
+              ? undefined
+              : localPrescriptions[medicationDialog.index]
+          }
+        />
+      )}
 
       <Modal
         isOpen={photoViewerIndex !== null}

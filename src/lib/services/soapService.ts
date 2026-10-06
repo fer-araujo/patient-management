@@ -38,10 +38,24 @@ export interface SoapNote {
   addenda: NoteAddendum[];
 }
 
+/**
+ * One medication of a prescription, stored in prescriptions.medications
+ * (jsonb). The structured fields (migration 25) are optional: prescriptions
+ * written before them stay valid, and an item copied from one of them into
+ * today's prescription has no via or frecuencia until the doctor completes
+ * it ("Completar"); the consultation cannot be finalized until every item of
+ * today's prescription is complete (isMedicationComplete).
+ */
 export interface MedicationItem {
+  /** Generic name (nombre genérico). */
   nombre: string;
   dosis: string;
   indicaciones: string;
+  presentacion?: string;
+  /** Route of administration, one of MEDICATION_ROUTES. */
+  via?: string;
+  frecuencia?: string;
+  duracion?: string;
 }
 
 export interface Prescription {
@@ -110,6 +124,24 @@ const fetchAuthorNames = async (
   }
   return names;
 };
+
+interface RawPrescription {
+  id: string;
+  appointment_id: string;
+  patient_id: string;
+  medications: unknown;
+  created_at: string;
+  finalized_at?: string | null;
+}
+
+const toPrescription = (p: RawPrescription): Prescription => ({
+  id: p.id,
+  appointmentId: p.appointment_id,
+  patientId: p.patient_id,
+  medications: (p.medications as MedicationItem[] | null) || [],
+  createdAt: p.created_at,
+  finalizedAt: p.finalized_at ?? null,
+});
 
 export const fetchPatientHistory = async (
   patientId: string,
@@ -184,16 +216,29 @@ export const fetchPatientHistory = async (
     addenda: addendaByNote.get(n.id) || [],
   }));
 
-  const prescriptions: Prescription[] = (presData || []).map((p) => ({
-    id: p.id,
-    appointmentId: p.appointment_id,
-    patientId: p.patient_id,
-    medications: (p.medications as MedicationItem[]) || [],
-    createdAt: p.created_at,
-    finalizedAt: p.finalized_at ?? null,
-  }));
+  const prescriptions: Prescription[] = (presData || []).map(toPrescription);
 
   return { notes, prescriptions };
+};
+
+/**
+ * The finalized prescription of one consultation, or null when it has none
+ * (no medication was prescribed, or it is not finalized yet).
+ */
+export const fetchFinalizedPrescription = async (
+  appointmentId: string,
+): Promise<Prescription | null> => {
+  const { data, error } = await supabase
+    .from("prescriptions")
+    .select("*")
+    .eq("appointment_id", appointmentId)
+    .not("finalized_at", "is", null)
+    .order("created_at", { ascending: true })
+    .limit(1)
+    .maybeSingle();
+
+  if (error) throw new Error(`Error cargando receta: ${error.message}`);
+  return data ? toPrescription(data) : null;
 };
 
 /** The editable content of a consultation note. */
