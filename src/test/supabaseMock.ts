@@ -58,9 +58,10 @@ export interface RecordedRpc {
 }
 
 type QueryResponder = MockResult | ((query: RecordedQuery) => MockResult);
+/** A function responder may return a promise, to hold an RPC "in flight". */
 type RpcResponder =
   | MockResult
-  | ((args: Record<string, unknown> | undefined) => MockResult);
+  | ((args: Record<string, unknown> | undefined) => MockResult | PromiseLike<MockResult>);
 
 const toResponse = (result: MockResult) => ({
   data: result.data ?? null,
@@ -76,7 +77,7 @@ const toResponse = (result: MockResult) => ({
  */
 const createChain = (
   query: RecordedQuery,
-  resolve: () => MockResult,
+  resolve: () => MockResult | PromiseLike<MockResult>,
 ): unknown => {
   const chain: object = new Proxy(
     {},
@@ -88,7 +89,8 @@ const createChain = (
             onRejected?: (reason: unknown) => unknown,
           ) =>
             Promise.resolve()
-              .then(() => toResponse(resolve()))
+              .then(() => resolve())
+              .then(toResponse)
               .then(onFulfilled, onRejected);
         }
         if (typeof prop === "symbol") return undefined;
@@ -141,7 +143,10 @@ const createSupabaseMock = () => {
     return typeof responder === "function" ? responder(query) : responder;
   };
 
-  const resolveRpc = (name: string, args: Record<string, unknown> | undefined) => {
+  const resolveRpc = (
+    name: string,
+    args: Record<string, unknown> | undefined,
+  ): MockResult | PromiseLike<MockResult> => {
     const responder = rpcResponders.get(name);
     if (!responder) return { data: null, error: null };
     return typeof responder === "function" ? responder(args) : responder;
@@ -158,9 +163,11 @@ const createSupabaseMock = () => {
 
     rpc: vi.fn((name: string, args?: Record<string, unknown>) => {
       recordedRpcs.push({ name, args });
-      return createChain(new RecordedQuery(`rpc:${name}`), () =>
-        resolveRpc(name, args),
-      );
+      // Chained calls on an RPC (order, range, ...) are kept as the
+      // "rpc:<name>" query, so paging can be asserted like a table read.
+      const query = new RecordedQuery(`rpc:${name}`);
+      recordedQueries.push(query);
+      return createChain(query, () => resolveRpc(name, args));
     }),
 
     storage: {

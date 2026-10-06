@@ -283,16 +283,21 @@ describe("ChargeModal supplies used (withSupplies)", () => {
     expect(screen.queryByLabelText("Cantidad de Jeringas")).toBeNull();
 
     await user.click(screen.getByRole("combobox", { name: "Insumos usados" }));
-    // Already listed and archived items are not offered.
-    expect(screen.queryByRole("option", { name: "Sculptra" })).toBeNull();
-    expect(screen.queryByRole("option", { name: "Toxina vieja" })).toBeNull();
+    // Archived items are not offered; listed ones are marked.
+    expect(screen.getByRole("option", { name: "Sculptra (ya en la lista)" })).toBeInTheDocument();
+    expect(screen.queryByRole("option", { name: /Toxina vieja/ })).toBeNull();
+    // Picking adds the row right away, with 1.
     await user.click(screen.getByRole("option", { name: "Gasas" }));
-    await user.clear(screen.getByLabelText("Cantidad a agregar"));
-    await user.type(screen.getByLabelText("Cantidad a agregar"), "2");
-    await user.click(screen.getByRole("button", { name: /Agregar/ }));
-
-    expect(quantityOf("Gasas")).toHaveValue(2);
+    expect(quantityOf("Gasas")).toHaveValue(1);
     expect(screen.getByText("En inventario: 50")).toBeInTheDocument();
+    // The picker is empty again, and there is no separate "Agregar" step.
+    expect(screen.getByRole("combobox", { name: "Insumos usados" })).toHaveTextContent(
+      "Elige un artículo para agregarlo...",
+    );
+    expect(screen.queryByRole("button", { name: /Agregar/ })).toBeNull();
+
+    await user.clear(quantityOf("Gasas"));
+    await user.type(quantityOf("Gasas"), "2");
 
     await user.click(screen.getByRole("radio", { name: "Tarjeta" }));
     await user.click(confirmButton());
@@ -309,6 +314,30 @@ describe("ChargeModal supplies used (withSupplies)", () => {
         ],
       }),
     );
+  });
+
+  it("picking a supply that is already listed focuses its row and does not add it twice", async () => {
+    const { user, onConfirm } = renderWithSupplies();
+    await screen.findByLabelText("Cantidad de Sculptra");
+
+    await user.click(screen.getByRole("combobox", { name: "Insumos usados" }));
+    await user.click(screen.getByRole("option", { name: "Jeringas (ya en la lista)" }));
+
+    expect(screen.getAllByLabelText("Cantidad de Jeringas")).toHaveLength(1);
+    expect(quantityOf("Jeringas")).toHaveFocus();
+    await user.keyboard("4");
+    expect(quantityOf("Jeringas")).toHaveValue(4);
+
+    await user.click(screen.getByRole("radio", { name: "Efectivo" }));
+    await user.click(confirmButton());
+    await waitFor(() => expect(onConfirm).toHaveBeenCalledTimes(1));
+    expect(onConfirm.mock.calls[0][0].supplies).toEqual(
+      expect.arrayContaining([
+        { itemId: "item-s", quantity: 1 },
+        { itemId: "item-j", quantity: 4 },
+      ]),
+    );
+    expect(onConfirm.mock.calls[0][0].supplies).toHaveLength(2);
   });
 
   it("confirming with every supply removed sends an EMPTY list (the step was done)", async () => {

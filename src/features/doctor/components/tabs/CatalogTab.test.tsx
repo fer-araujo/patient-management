@@ -63,16 +63,10 @@ const renderTab = async () => {
 const rowOf = (name: string) => screen.getByText(name).closest("tr")!;
 const quantityOf = (name: string) => screen.getByLabelText(`Cantidad de ${name}`);
 
-const addSupply = async (
-  user: ReturnType<typeof userEvent.setup>,
-  name: string,
-  quantity: string,
-) => {
+/** Picking an item adds its row right away; the quantity is set in the row. */
+const pickSupply = async (user: ReturnType<typeof userEvent.setup>, name: string) => {
   await user.click(screen.getByRole("combobox", { name: "Insumos que usa" }));
   await user.click(screen.getByRole("option", { name }));
-  await user.clear(screen.getByLabelText("Cantidad a agregar"));
-  await user.type(screen.getByLabelText("Cantidad a agregar"), quantity);
-  await user.click(screen.getByRole("button", { name: /Agregar/ }));
 };
 
 describe("CatalogTab supplies", () => {
@@ -99,7 +93,10 @@ describe("CatalogTab supplies", () => {
     await user.clear(quantityOf("Jeringas"));
     await user.type(quantityOf("Jeringas"), "3");
     await user.click(screen.getByRole("button", { name: "Quitar Sculptra" }));
-    await addSupply(user, "Gasas", "2");
+    await pickSupply(user, "Gasas");
+    expect(quantityOf("Gasas")).toHaveValue(1);
+    await user.clear(quantityOf("Gasas"));
+    await user.type(quantityOf("Gasas"), "2");
 
     expect(quantityOf("Gasas")).toHaveValue(2);
     expect(screen.queryByLabelText("Cantidad de Sculptra")).toBeNull();
@@ -118,7 +115,7 @@ describe("CatalogTab supplies", () => {
     expect(update.args("eq")).toEqual(["id", "svc-relleno"]);
   });
 
-  it("offers only active items that are not listed yet, showing the chosen item's unit", async () => {
+  it("offers only active items, marking the listed ones, and a pick adds a row of 1 with its unit", async () => {
     const { user } = await renderTab();
     await user.click(within(rowOf("Relleno")).getByTitle("Editar Tratamiento"));
     await screen.findByText("Insumos que usa");
@@ -127,10 +124,34 @@ describe("CatalogTab supplies", () => {
     const options = within(screen.getByRole("listbox", { name: "Insumos que usa" }))
       .getAllByRole("option")
       .map((o) => o.textContent);
-    expect(options).toEqual(["Gasas"]);
+    expect(options).toEqual([
+      "Sculptra (ya en la lista)",
+      "Jeringas (ya en la lista)",
+      "Gasas",
+    ]);
 
     await user.click(screen.getByRole("option", { name: "Gasas" }));
+    expect(quantityOf("Gasas")).toHaveValue(1);
     expect(screen.getByText("paquetes")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Agregar/ })).toBeNull();
+    // Every active item is listed now, so the picker gives way to a note.
+    expect(screen.getByText("No hay más artículos activos en el inventario.")).toBeInTheDocument();
+  });
+
+  it("picking an item that is already listed focuses its quantity instead of adding it twice", async () => {
+    const { user } = await renderTab();
+    await user.click(within(rowOf("Relleno")).getByTitle("Editar Tratamiento"));
+    await screen.findByText("Insumos que usa");
+
+    await pickSupply(user, "Jeringas (ya en la lista)");
+
+    expect(screen.getAllByLabelText("Cantidad de Jeringas")).toHaveLength(1);
+    expect(quantityOf("Jeringas")).toHaveValue(2);
+    expect(quantityOf("Jeringas")).toHaveFocus();
+
+    // Typing now replaces the selected quantity.
+    await user.keyboard("5");
+    expect(quantityOf("Jeringas")).toHaveValue(5);
   });
 
   it("does not save while a quantity is empty or 0", async () => {
@@ -151,7 +172,7 @@ describe("CatalogTab supplies", () => {
 
     await user.click(screen.getByRole("button", { name: /Añadir Tratamiento/ }));
     await user.type(await screen.findByLabelText("Nombre del Servicio"), "Bioestimulador");
-    await addSupply(user, "Sculptra", "1");
+    await pickSupply(user, "Sculptra");
     await user.click(screen.getByRole("button", { name: /Crear Servicio/ }));
 
     await waitFor(() => expect(supabaseMock.rpcCalls("set_service_supplies")).toHaveLength(1));

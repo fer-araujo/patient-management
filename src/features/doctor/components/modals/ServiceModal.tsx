@@ -16,7 +16,11 @@ import {
   fetchInventory,
   type InventoryItem,
 } from "../../../../lib/services/inventoryService";
-import { SupplyAdder, supplyQuantityClasses } from "./SupplyAdder";
+import { SupplyAdder } from "./SupplyAdder";
+import {
+  supplyQuantityClasses,
+  supplyQuantityInputId,
+} from "./supplyQuantityInput";
 
 /** A line of "Insumos que usa" while it is being edited. */
 interface SupplyLine {
@@ -116,21 +120,24 @@ export const ServiceModal = ({
     };
   }, [isOpen]);
 
-  const addableItems = inventory.filter(
-    (i) => i.is_active && !supplies.some((s) => s.itemId === i.id),
-  );
+  const activeItems = inventory.filter((i) => i.is_active);
   const suppliesAreValid = supplies.every((s) => isValidQuantity(s.quantity));
 
-  const addSupply = (item: InventoryItem, quantity: number) =>
-    setSupplies((current) => [
-      ...current,
-      {
-        itemId: item.id,
-        itemName: item.name,
-        unit: item.unit_measure,
-        quantity: String(quantity),
-      },
-    ]);
+  /** Adds the item with quantity 1; an item already listed is kept once. */
+  const addSupply = (item: InventoryItem) =>
+    setSupplies((current) =>
+      current.some((s) => s.itemId === item.id)
+        ? current
+        : [
+            ...current,
+            {
+              itemId: item.id,
+              itemName: item.name,
+              unit: item.unit_measure,
+              quantity: "1",
+            },
+          ],
+    );
 
   const changeSupplyQuantity = (itemId: string, quantity: string) =>
     setSupplies((current) =>
@@ -307,6 +314,10 @@ export const ServiceModal = ({
                     </span>
                     <div className="flex items-center gap-2">
                       <input
+                        id={supplyQuantityInputId(
+                          "service-supplies-label",
+                          s.itemId,
+                        )}
                         type="number"
                         min={1}
                         step={1}
@@ -339,7 +350,8 @@ export const ServiceModal = ({
             </ul>
           )}
           <SupplyAdder
-            items={addableItems}
+            items={activeItems}
+            listedIds={supplies.map((s) => s.itemId)}
             onAdd={addSupply}
             labelledBy="service-supplies-label"
           />

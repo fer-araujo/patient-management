@@ -1,5 +1,9 @@
 import { Loader2, Trash2 } from "lucide-react";
-import { SupplyAdder, supplyQuantityClasses } from "./SupplyAdder";
+import { SupplyAdder } from "./SupplyAdder";
+import {
+  supplyQuantityClasses,
+  supplyQuantityInputId,
+} from "./supplyQuantityInput";
 import type { SuppliesUsed } from "./useSuppliesUsed";
 
 interface Props {
@@ -57,6 +61,7 @@ export const SuppliesUsedList = ({
                     </div>
                     <div className="flex items-center gap-2">
                       <input
+                        id={supplyQuantityInputId(labelId, line.itemId)}
                         type="number"
                         min={0}
                         step={1}
@@ -98,7 +103,8 @@ export const SuppliesUsedList = ({
           </ul>
         )}
         <SupplyAdder
-          items={supplies.addableItems}
+          items={supplies.activeItems}
+          listedIds={supplies.lines.map((l) => l.itemId)}
           onAdd={supplies.add}
           labelledBy={labelId}
         />

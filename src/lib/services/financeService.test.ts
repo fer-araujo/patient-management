@@ -325,6 +325,56 @@ describe("getFinanceSummary", () => {
     expect(movements[0].amount).toBe(5500);
   });
 
+  it("sums every payment and purchase across pages, past the 1,000-row limit", async () => {
+    const paidRows = (start: number, count: number) =>
+      Array.from({ length: count }, (_, i) => ({
+        id: `p${start + i}`, status: "paid", amount_charged: "10.00", list_price: "10.00",
+        created_at: "2026-09-10T16:00:00+00:00", services: { name: "Toxina" },
+      }));
+    const purchaseRows = (start: number, count: number) =>
+      Array.from({ length: count }, (_, i) => ({
+        id: `m${start + i}`, quantity: 1, total_cost: "1.00",
+        created_at: "2026-09-11T16:00:00+00:00", inventory: { name: "Gasas" },
+      }));
+    supabaseMock.onFrom(
+      "payments",
+      { data: paidRows(0, 1000) },
+      { data: paidRows(1000, 1000) },
+      { data: paidRows(2000, 500) },
+      { data: [] },
+    );
+    supabaseMock.onFrom(
+      "inventory_movements",
+      { data: purchaseRows(0, 1000) },
+      { data: purchaseRows(1000, 1) },
+      { data: [] },
+    );
+
+    const summary = await getFinanceSummary("2026-09-01", "2026-10-01");
+
+    expect(summary.income).toBe(25_000);
+    expect(summary.expenses).toBe(1001);
+    expect(summary.movements).toHaveLength(3501);
+    const pages = supabaseMock.queries("payments");
+    expect(pages.map((q) => q.args("range"))).toEqual([
+      [0, 999],
+      [1000, 1999],
+      [2000, 2999],
+      // Only an empty page ends the read (a short page may be a server limit).
+      [2500, 3499],
+    ]);
+    // A stable order so no row repeats or goes missing between pages.
+    expect(pages[0].allArgs("order")).toEqual([
+      ["created_at", { ascending: true }],
+      ["id", { ascending: true }],
+    ]);
+    expect(supabaseMock.queries("inventory_movements").map((q) => q.args("range"))).toEqual([
+      [0, 999],
+      [1000, 1999],
+      [1001, 2000],
+    ]);
+  });
+
   it("fails with a readable message when a query fails", async () => {
     vi.spyOn(console, "error").mockImplementation(() => {});
     supabaseMock.onFrom("payments", { error: { message: "boom" } });

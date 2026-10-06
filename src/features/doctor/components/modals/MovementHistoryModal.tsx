@@ -4,6 +4,7 @@ import { Modal } from "../../../../components/ui/Modal";
 import {
   fetchMovements,
   formatMXN,
+  MOVEMENTS_MAX_ENTRIES,
   type InventoryItem,
   type InventoryMovement,
   type MovementType,
@@ -116,6 +117,11 @@ export const MovementHistoryModal = ({ isOpen, onClose, item }: Props) => {
             </li>
           ))}
         </ul>
+      )}
+      {current?.movements.length === MOVEMENTS_MAX_ENTRIES && (
+        <p className="text-xs text-brand-gray text-center">
+          Se muestran los {MOVEMENTS_MAX_ENTRIES} movimientos más recientes.
+        </p>
       )}
     </Modal>
   );
