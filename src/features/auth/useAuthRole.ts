@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import type { Session } from "@supabase/supabase-js";
 import { supabase } from "../../lib/supabase";
 
@@ -8,6 +8,13 @@ export interface AuthRoleState {
   session: Session | null;
   role: AppRole | null;
   loading: boolean;
+  /**
+   * True when the session exists but its role could not be READ (network,
+   * server). Not the same as "not staff": show a retry, never a denial.
+   */
+  roleError: boolean;
+  /** Reads the role of the current session again (after a roleError). */
+  retryRole: () => void;
 }
 
 /**
@@ -33,7 +40,10 @@ export const isBusinessRole = (role: AppRole | null): boolean =>
 export const isStaffRole = (role: AppRole | null): boolean =>
   isBusinessRole(role);
 
-const readRole = async (userId: string): Promise<AppRole | null> => {
+/** `failed` = the read itself failed; a missing row is `{ role: null }`. */
+const readRole = async (
+  userId: string,
+): Promise<{ role: AppRole | null; failed: boolean }> => {
   const { data, error } = await supabase
     .from("profiles")
     .select("role")
@@ -42,10 +52,10 @@ const readRole = async (userId: string): Promise<AppRole | null> => {
 
   if (error) {
     console.error("[useAuthRole] Could not read the profile role:", error);
-    return null;
+    return { role: null, failed: true };
   }
 
-  return (data?.role as AppRole | undefined) ?? null;
+  return { role: (data?.role as AppRole | undefined) ?? null, failed: false };
 };
 
 /**
@@ -60,6 +70,14 @@ export const useAuthRole = (): AuthRoleState => {
   const [session, setSession] = useState<Session | null>(null);
   const [role, setRole] = useState<AppRole | null>(null);
   const [loading, setLoading] = useState(true);
+  const [roleError, setRoleError] = useState(false);
+  const [attempt, setAttempt] = useState(0);
+  // Last role read successfully, and for which user. A background re-read for
+  // the same user (token refresh, tab focus) that fails keeps it instead of
+  // throwing the doctor out of the screen she is working in.
+  const lastKnown = useRef<{ userId: string; role: AppRole | null } | null>(
+    null,
+  );
 
   useEffect(() => {
     let cancelled = false;
@@ -70,15 +88,30 @@ export const useAuthRole = (): AuthRoleState => {
       setSession(nextSession);
 
       if (!nextSession?.user) {
+        lastKnown.current = null;
         setRole(null);
+        setRoleError(false);
         setLoading(false);
         return;
       }
 
-      const nextRole = await readRole(nextSession.user.id);
+      const userId = nextSession.user.id;
+      const { role: nextRole, failed } = await readRole(userId);
       if (cancelled) return;
 
+      const known = lastKnown.current;
+      if (failed && known?.userId === userId) {
+        // Failed background re-read: keep the last known role, no error.
+        setRole(known.role);
+        setRoleError(false);
+        setLoading(false);
+        return;
+      }
+
+      if (!failed) lastKnown.current = { userId, role: nextRole };
+      else lastKnown.current = null;
       setRole(nextRole);
+      setRoleError(failed);
       setLoading(false);
     };
 
@@ -87,7 +120,12 @@ export const useAuthRole = (): AuthRoleState => {
     const {
       data: { subscription },
     } = supabase.auth.onAuthStateChange((_event, nextSession) => {
-      setLoading(true);
+      // Same user with a known role (e.g. a token refresh): re-read in the
+      // background without the "checking access" screen. A different user
+      // or a sign-out waits for the new answer.
+      if (nextSession?.user?.id !== lastKnown.current?.userId) {
+        setLoading(true);
+      }
       void resolve(nextSession);
     });
 
@@ -95,7 +133,13 @@ export const useAuthRole = (): AuthRoleState => {
       cancelled = true;
       subscription.unsubscribe();
     };
+  }, [attempt]);
+
+  const retryRole = useCallback(() => {
+    setLoading(true);
+    setRoleError(false);
+    setAttempt((n) => n + 1);
   }, []);
 
-  return { session, role, loading };
+  return { session, role, loading, roleError, retryRole };
 };

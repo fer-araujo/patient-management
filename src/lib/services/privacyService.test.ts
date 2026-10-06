@@ -8,6 +8,7 @@ import {
   fetchMyArcoRequests,
   fetchMyData,
   resolveArcoRequest,
+  staffRegisterArcoRequest,
   submitArcoRequest,
 } from "./privacyService";
 
@@ -94,20 +95,25 @@ describe("ARCO request lists", () => {
       createdAt: "2026-09-20T16:00:00Z",
       resolvedAt: null,
       resolutionNote: null,
+      channel: null,
     });
     const query = supabaseMock.queries("arco_requests")[0];
     expect(String(query.args("select")?.[0])).not.toContain("patients");
     expect(query.args("order")).toEqual(["created_at", { ascending: false }]);
   });
 
-  it("joins the patient name for staff", async () => {
+  it("joins the patient name for staff, with how an offline request arrived", async () => {
     supabaseMock.onFrom("arco_requests", {
-      data: [{ ...raw, patients: { first_name: "Ana", last_name: "Pérez" } }],
+      data: [{ ...raw, channel: "telefono", patients: { first_name: "Ana", last_name: "Pérez" } }],
     });
 
     const [request] = await fetchArcoRequests();
 
     expect(request.patientName).toBe("Ana Pérez");
+    expect(request.channel).toBe("telefono");
+    expect(String(supabaseMock.queries("arco_requests")[0].args("select")?.[0])).toMatch(
+      /\bchannel\b/,
+    );
     expect(String(supabaseMock.queries("arco_requests")[0].args("select")?.[0])).toContain(
       "patients ( first_name, last_name )",
     );
@@ -122,6 +128,27 @@ describe("ARCO request lists", () => {
 });
 
 describe("staff actions", () => {
+  it("registers a request received offline, with its channel", async () => {
+    await staffRegisterArcoRequest("p1", "rectification", "Corregir su correo.", "correo");
+    expect(supabaseMock.lastRpc("staff_register_arco_request")?.args).toEqual({
+      p_patient_id: "p1",
+      p_request_type: "rectification",
+      p_details: "Corregir su correo.",
+      p_channel: "correo",
+    });
+  });
+
+  it("surfaces the server's reason when an offline request is refused", async () => {
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    supabaseMock.onRpc(
+      "staff_register_arco_request",
+      p0001("Este expediente fue anonimizado. No se puede registrar una solicitud."),
+    );
+    await expect(
+      staffRegisterArcoRequest("p1", "access", "Copia de sus datos.", "telefono"),
+    ).rejects.toThrow("Este expediente fue anonimizado. No se puede registrar una solicitud.");
+  });
+
   it("resolves a request with status and note", async () => {
     await resolveArcoRequest("r1", "resolved", "Se envió el resumen.");
     expect(supabaseMock.lastRpc("resolve_arco_request")?.args).toEqual({

@@ -1,4 +1,5 @@
 import { supabase } from "../supabase";
+import { fetchAllRows } from "./fetchAllRows";
 import { DEFAULT_SCHEDULE, type WeeklySchedule } from "./settingsService";
 
 /**
@@ -23,19 +24,26 @@ export const fetchPublicAvailability = async (
   from: Date,
   to: Date,
 ): Promise<BusyRange[]> => {
-  const { data, error } = await supabase.rpc("get_availability", {
-    p_from: from.toISOString(),
-    p_to: to.toISOString(),
-  });
+  // Up to 180 days of appointments and blocks: paged past max_rows (1000),
+  // or later busy windows would look free. Identical ranges are
+  // interchangeable, so start/end is a stable enough order.
+  const { data, error } = await fetchAllRows<RawBusyRange>((first, last) =>
+    supabase
+      .rpc("get_availability", {
+        p_from: from.toISOString(),
+        p_to: to.toISOString(),
+      })
+      .order("start_time", { ascending: true })
+      .order("end_time", { ascending: true })
+      .range(first, last),
+  );
 
   if (error) {
     console.error("[availabilityService] get_availability failed:", error);
     throw new Error("No se pudo consultar la disponibilidad de la agenda.");
   }
 
-  const rows = (data ?? []) as RawBusyRange[];
-
-  return rows.map((range) => ({
+  return data.map((range) => ({
     start: new Date(range.start_time),
     end: new Date(range.end_time),
   }));

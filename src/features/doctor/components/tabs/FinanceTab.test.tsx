@@ -89,7 +89,10 @@ describe("FinanceTab", () => {
 
   it("switching to this year reloads the whole year", async () => {
     const { user } = await renderTab();
-    const before = supabaseMock.queries("payments").length;
+    // Each load reads pages until an empty one; count the first pages.
+    const firstPages = () =>
+      supabaseMock.queries("payments").filter((q) => q.args("range")?.[0] === 0);
+    const before = firstPages().length;
 
     await user.click(screen.getByText("Este mes"));
     await user.click(screen.getAllByText("Este año").at(-1)!);
@@ -97,11 +100,11 @@ describe("FinanceTab", () => {
     await waitFor(() =>
       expect(screen.getByTestId("finance-chart").textContent?.split(",")).toHaveLength(12),
     );
-    const yearQuery = supabaseMock.queries("payments")[before];
+    const yearQuery = firstPages()[before];
     expect(yearQuery.args("gte")).toEqual(["created_at", "2026-01-01T06:00:00.000Z"]);
     expect(yearQuery.args("lt")).toEqual(["created_at", "2027-01-01T06:00:00.000Z"]);
     // One range covers both the cards and the chart.
-    expect(supabaseMock.queries("payments")).toHaveLength(before + 1);
+    expect(firstPages()).toHaveLength(before + 1);
   });
 
   it("the chart card switches between Gráfica and Tabla", async () => {

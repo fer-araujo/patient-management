@@ -25,6 +25,7 @@ import {
   type DashboardBlockedSlot,
 } from "../../../lib/services/blockedSlotsService";
 import { CalendarProvider } from "../context/CalendarProvider";
+import { ClinicModeSwitch } from "./ClinicModeSwitch";
 
 export const DoctorDashboard = () => {
   const [appointments, setAppointments] = useState<DashboardAppointment[]>([]);
@@ -123,9 +124,12 @@ export const DoctorDashboard = () => {
   return (
     <main className="max-w-360 mx-auto px-4 sm:px-6 lg:px-8 pt-8 xl:pt-10 pb-20">
       <div className="mb-8 border-b border-slate-200 pb-6">
-        <h1 className="text-3xl xl:text-4xl font-extrabold text-brand-dark tracking-tight mb-6">
-          Centro de Comando
-        </h1>
+        <div className="flex flex-wrap items-center justify-between gap-4 mb-6">
+          <h1 className="text-3xl xl:text-4xl font-extrabold text-brand-dark tracking-tight">
+            Centro de Comando
+          </h1>
+          <ClinicModeSwitch />
+        </div>
         <div className="flex items-center gap-2 sm:gap-4 overflow-x-auto hide-scrollbar">
           <button
             onClick={() => setActiveTab("inbox")}

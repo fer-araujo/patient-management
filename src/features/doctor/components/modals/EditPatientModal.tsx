@@ -21,6 +21,17 @@ import {
   splitStoredPhone,
   toE164Phone,
 } from "../../../../lib/phone";
+import {
+  fetchHasCurrentConsent,
+  recordInPersonConsent,
+} from "../../../../lib/services/privacyService";
+import {
+  getWeightTracking,
+  setWeightTracking,
+} from "../../../../lib/services/bodyMeasurementService";
+import { PaperConsentCheckbox } from "../PaperConsentCheckbox";
+import { TouchCheckbox } from "../TouchCheckbox";
+import { useClinicMode } from "../../../clinicMode/useClinicMode";
 
 const GENDER_OPTIONS = [
   { label: "Sin especificar", value: "" },
@@ -137,6 +148,51 @@ const EditPatientForm = ({ patientId, onClose, onSaved }: FormProps) => {
   const [form, setForm] = useState<FormState | null>(null);
   const [isSaving, setIsSaving] = useState(false);
   const [isDobPickerOpen, setIsDobPickerOpen] = useState(false);
+  // Privacy notice signed on paper: null while unknown.
+  const [hasConsent, setHasConsent] = useState<boolean | null>(null);
+  const [paperConsent, setPaperConsent] = useState(false);
+  // "Llevar control de peso": the saved flag (null while unknown or when it
+  // cannot be read; then the box is not offered) and the box.
+  const [savedWeightTracking, setSavedWeightTracking] = useState<boolean | null>(null);
+  const [trackWeight, setTrackWeight] = useState(false);
+  // No patient portal in doctor-only mode, so no portal note.
+  const { doctorOnlyMode } = useClinicMode();
+
+  useEffect(() => {
+    let active = true;
+    fetchHasCurrentConsent(patientId)
+      .then((signed) => {
+        if (active) setHasConsent(signed);
+      })
+      .catch(() => {
+        // Unknown: offer the checkbox; recording is idempotent on the server.
+        if (active) setHasConsent(false);
+      });
+    return () => {
+      active = false;
+    };
+  }, [patientId]);
+
+  // Same read and write as the consultation's weight tab
+  // (bodyMeasurementService), so both screens always agree.
+  useEffect(() => {
+    let active = true;
+    getWeightTracking(patientId)
+      .then((on) => {
+        if (!active) return;
+        setSavedWeightTracking(on);
+        setTrackWeight(on);
+      })
+      .catch((err: unknown) => {
+        console.error(
+          "Error cargando control de peso:",
+          err instanceof Error ? err.message : err,
+        );
+      });
+    return () => {
+      active = false;
+    };
+  }, [patientId]);
 
   useEffect(() => {
     let active = true;
@@ -256,8 +312,39 @@ const EditPatientForm = ({ patientId, onClose, onSaved }: FormProps) => {
         current_illness: form.currentIllness,
       });
       toast.success("Datos del paciente actualizados");
+
+      // The personal data is saved. A failed step below keeps the form open
+      // so the doctor can retry it; the list is refreshed either way.
+      let stepFailed = false;
+      if (savedWeightTracking !== null && trackWeight !== savedWeightTracking) {
+        try {
+          await setWeightTracking(patientId, trackWeight);
+          setSavedWeightTracking(trackWeight);
+        } catch (trackingError: unknown) {
+          stepFailed = true;
+          toast.error(
+            trackingError instanceof Error
+              ? trackingError.message
+              : "No se pudo cambiar el control de peso.",
+          );
+        }
+      }
+      if (paperConsent && !hasConsent) {
+        try {
+          await recordInPersonConsent(patientId);
+          setHasConsent(true);
+        } catch (consentError: unknown) {
+          stepFailed = true;
+          toast.error(
+            consentError instanceof Error
+              ? consentError.message
+              : "No se pudo registrar el aviso de privacidad firmado.",
+          );
+        }
+      }
+      // After every step, so the directory's badges show what was recorded.
       onSaved();
-      onClose();
+      if (!stepFailed) onClose();
     } catch (error: unknown) {
       toast.error(
         error instanceof Error
@@ -318,7 +405,7 @@ const EditPatientForm = ({ patientId, onClose, onSaved }: FormProps) => {
             className={compactInputClasses}
           />
         </div>
-        {phoneChanged && (
+        {phoneChanged && !doctorOnlyMode && (
           <p className="text-xs text-brand-gray mt-1 flex items-center">
             El paciente entrará a su portal con el nuevo número.
           </p>
@@ -381,6 +468,27 @@ const EditPatientForm = ({ patientId, onClose, onSaved }: FormProps) => {
         containerClassName={`w-full ${compactLabelClasses}`}
         className={compactInputClasses}
       />
+
+      {hasConsent !== null && (
+        <PaperConsentCheckbox
+          checked={paperConsent}
+          onChange={setPaperConsent}
+          alreadySigned={hasConsent}
+        />
+      )}
+
+      {savedWeightTracking !== null && (
+        <div>
+          <TouchCheckbox checked={trackWeight} onChange={setTrackWeight}>
+            Llevar control de peso
+          </TouchCheckbox>
+          {savedWeightTracking && !trackWeight && (
+            <p className="text-sm font-medium text-brand-gray mt-1">
+              Las mediciones guardadas no se borran.
+            </p>
+          )}
+        </div>
+      )}
 
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
         <div className="w-full">

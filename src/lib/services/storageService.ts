@@ -87,15 +87,37 @@ export const getClinicalFileDownloadUrl = async (
   return data.signedUrl;
 };
 
+/** Storage `list()` returns 100 objects unless told otherwise, so it is paged. */
+export const FILES_PAGE_SIZE = 100;
+/** Past this many files of one patient the list is refused, never shown partial. */
+export const FILES_MAX = 5000;
+
 export const getPatientFiles = async (
   patientId: string,
 ): Promise<ClinicalFile[]> => {
-  const { data, error } = await supabase.storage
-    .from("clinical_records")
-    .list(patientId);
-
-  if (error) throw new Error(`Error listando archivos: ${error.message}`);
-  if (!data || data.length === 0) return [];
+  type StoredObject = {
+    name: string;
+    created_at?: string | null;
+    metadata?: { mimetype?: string } | null;
+  };
+  const data: StoredObject[] = [];
+  for (let offset = 0; ; offset += FILES_PAGE_SIZE) {
+    const { data: page, error } = await supabase.storage
+      .from("clinical_records")
+      .list(patientId, {
+        limit: FILES_PAGE_SIZE,
+        offset,
+        sortBy: { column: "name", order: "asc" },
+      });
+    if (error) throw new Error(`Error listando archivos: ${error.message}`);
+    const batch = (page ?? []) as StoredObject[];
+    data.push(...batch);
+    if (data.length > FILES_MAX) {
+      throw new Error("El paciente tiene demasiados archivos para mostrarlos.");
+    }
+    if (batch.length < FILES_PAGE_SIZE) break;
+  }
+  if (data.length === 0) return [];
 
   const filesWithUrls = await Promise.all(
     data.map(async (file) => {

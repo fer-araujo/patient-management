@@ -198,7 +198,9 @@ export const DailyView = ({
                         >
                           {app.patientName}
                         </h4>
-                        {app.status === "pending" && <PendingBadge />}
+                        {app.status === "pending" && (
+                          <PendingBadge overdue={isPast} />
+                        )}
                         {app.suppliesPending && <SuppliesPendingBadge />}
                         {!isSmall && (
                           <div className="flex items-center gap-1 text-[10px] font-bold opacity-90 bg-white/60 px-1.5 py-0.5 rounded-md shrink-0">

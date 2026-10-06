@@ -1,5 +1,5 @@
-import { describe, expect, it } from "vitest";
-import { render, screen, within } from "@testing-library/react";
+import { describe, expect, it, vi } from "vitest";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { supabaseMock } from "../../../../test/supabaseMock";
 import { ArcoRequestsTab } from "./ArcoRequestsTab";
@@ -142,5 +142,181 @@ describe("ArcoRequestsTab rectification", () => {
     expect(await screen.findByText("Editar datos del paciente")).toBeInTheDocument();
     expect(await screen.findByLabelText("Nombre(s)")).toHaveValue("Ana");
     expect(supabaseMock.queries("patients")[0].args("eq")).toEqual(["id", "p-rect"]);
+  });
+});
+
+describe("ArcoRequestsTab correcting data from the request detail", () => {
+  it("keeps the detail and the edit form open when a save step fails, and still reloads", async () => {
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    supabaseMock.onFrom("arco_requests", {
+      data: [request("r1", "p-rect", "rectification", "Ana")],
+    });
+    supabaseMock.onFrom("patients", (q) =>
+      q.has("update")
+        ? { data: [{ id: "p-rect" }] }
+        : {
+            data: {
+              id: "p-rect",
+              first_name: "Ana",
+              last_name: "Pérez",
+              phone: "+525512345678",
+              email: null,
+              gender: null,
+              dob: null,
+              blood_type: null,
+              allergies: null,
+              chronic_conditions: null,
+              anonymized_at: null,
+            },
+          },
+    );
+    supabaseMock.onFrom("consents", { data: [] });
+    supabaseMock.onRpc("record_consent_in_person", {
+      error: { message: "No se pudo registrar el aviso.", code: "P0001" },
+    });
+    render(<ArcoRequestsTab />);
+    await screen.findByText("Ana Pérez");
+    const user = userEvent.setup();
+
+    // Todas (table) -> detail modal -> nested edit form.
+    await user.click(screen.getByRole("button", { name: "Ver solicitud de Ana Pérez" }));
+    expect(await screen.findByRole("heading", { name: "Solicitud" })).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Ver y corregir datos" }));
+    expect(await screen.findByLabelText("Nombre(s)")).toHaveValue("Ana");
+
+    await user.click(
+      await screen.findByRole("checkbox", {
+        name: "El paciente firmó el aviso de privacidad en papel",
+      }),
+    );
+    const readsBeforeSave = supabaseMock.queries("arco_requests").length;
+    await user.click(screen.getByRole("button", { name: /Guardar Cambios/ }));
+
+    // The data was saved, so the list reloads...
+    await waitFor(() =>
+      expect(supabaseMock.queries("arco_requests").length).toBeGreaterThan(readsBeforeSave),
+    );
+    // ...but the failed consent step keeps both the detail and the form open.
+    expect(screen.getByRole("heading", { name: "Solicitud" })).toBeInTheDocument();
+    expect(screen.getByText("Editar datos del paciente")).toBeInTheDocument();
+    expect(screen.getByLabelText("Nombre(s)")).toHaveValue("Ana");
+  });
+});
+
+describe("ArcoRequestsTab offline requests (Registrar solicitud)", () => {
+  const listRow = (id: string, first: string, last: string, extra: Record<string, unknown> = {}) => ({
+    id,
+    first_name: first,
+    last_name: last,
+    phone: null,
+    email: null,
+    dob: null,
+    gender: null,
+    blood_type: null,
+    allergies: null,
+    chronic_conditions: null,
+    notes: null,
+    status: "active",
+    anonymized_at: null,
+    appointments: [],
+    consents: [],
+    ...extra,
+  });
+
+  const renderRegister = async () => {
+    let registered = false;
+    supabaseMock.onFrom("arco_requests", () => ({
+      data: registered
+        ? [
+            request("r-phone", "p-luz", "rectification", "Luz", {
+              channel: "telefono",
+              created_at: "2026-10-04T17:00:00Z",
+            }),
+          ]
+        : [],
+    }));
+    supabaseMock.onFrom("patients", {
+      data: [
+        listRow("p-luz", "Luz", "Garza"),
+        listRow("p-mar", "Mario", "Treviño"),
+        listRow("p-anon", "Paciente", "Anonimizado", { anonymized_at: "2026-01-01T00:00:00Z" }),
+      ],
+    });
+    supabaseMock.onRpc("staff_register_arco_request", () => {
+      registered = true;
+      return { data: "r-phone" };
+    });
+    render(<ArcoRequestsTab />);
+    const user = userEvent.setup();
+    await user.click(await screen.findByRole("button", { name: /Registrar solicitud/ }));
+    await screen.findByText("Buscar paciente...");
+    return user;
+  };
+
+  it("records a request received by phone and lists it with its channel", async () => {
+    const user = await renderRegister();
+
+    await user.click(screen.getByRole("combobox", { name: /Paciente/ }));
+    await user.type(screen.getByPlaceholderText("Buscar..."), "luz");
+    await user.click(await screen.findByRole("option", { name: "Luz Garza" }));
+    await user.click(screen.getByRole("combobox", { name: /Tipo de solicitud/ }));
+    await user.click(await screen.findByRole("option", { name: "Corregir mis datos" }));
+    await user.click(screen.getByRole("combobox", { name: /Cómo llegó/ }));
+    await user.click(await screen.findByRole("option", { name: "Por teléfono" }));
+    await user.type(screen.getByLabelText(/Qué pidió/), "  Corregir su correo.  ");
+    await user.click(screen.getByRole("button", { name: "Registrar" }));
+
+    await waitFor(() =>
+      expect(supabaseMock.lastRpc("staff_register_arco_request")?.args).toEqual({
+        p_patient_id: "p-luz",
+        p_request_type: "rectification",
+        p_details: "Corregir su correo.",
+        p_channel: "telefono",
+      }),
+    );
+    await waitFor(() =>
+      expect(screen.queryByRole("button", { name: "Registrar" })).not.toBeInTheDocument(),
+    );
+    expect(await screen.findByText("Luz Pérez")).toBeInTheDocument();
+    await user.click(screen.getByRole("tab", { name: /Pendientes/ }));
+    expect(within(cardOf("Luz Pérez")).getByText(/Por teléfono/)).toBeInTheDocument();
+  });
+
+  it("never offers an anonymized record", async () => {
+    const user = await renderRegister();
+
+    await user.click(screen.getByRole("combobox", { name: /Paciente/ }));
+
+    expect(await screen.findByRole("option", { name: "Luz Garza" })).toBeInTheDocument();
+    expect(screen.queryByRole("option", { name: "Paciente Anonimizado" })).toBeNull();
+  });
+
+  it("asks for every field before calling the server", async () => {
+    const user = await renderRegister();
+
+    await user.click(screen.getByRole("button", { name: "Registrar" }));
+
+    expect(screen.getByRole("alert")).toHaveTextContent("Elige el paciente que hizo la solicitud.");
+    expect(supabaseMock.rpcCalls("staff_register_arco_request")).toHaveLength(0);
+  });
+
+  it("keeps the form open with the server's reason when it refuses", async () => {
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    const user = await renderRegister();
+    supabaseMock.onRpc("staff_register_arco_request", {
+      error: { message: "Este expediente fue anonimizado. No se puede registrar una solicitud.", code: "P0001" },
+    });
+
+    await user.click(screen.getByRole("combobox", { name: /Paciente/ }));
+    await user.click(await screen.findByRole("option", { name: "Mario Treviño" }));
+    await user.click(screen.getByRole("combobox", { name: /Tipo de solicitud/ }));
+    await user.click(await screen.findByRole("option", { name: "Resumen clínico" }));
+    await user.click(screen.getByRole("combobox", { name: /Cómo llegó/ }));
+    await user.click(await screen.findByRole("option", { name: "En persona" }));
+    await user.type(screen.getByLabelText(/Qué pidió/), "Copia de sus datos.");
+    await user.click(screen.getByRole("button", { name: "Registrar" }));
+
+    expect(await screen.findByRole("alert")).toHaveTextContent("fue anonimizado");
+    expect(screen.getByRole("button", { name: "Registrar" })).toBeInTheDocument();
   });
 });

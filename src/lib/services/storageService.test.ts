@@ -126,12 +126,39 @@ describe("getPatientFiles", () => {
 
     const files = await getPatientFiles("patient-1");
 
-    expect(bucket.list).toHaveBeenCalledWith("patient-1");
+    expect(bucket.list).toHaveBeenCalledWith("patient-1", {
+      limit: 100,
+      offset: 0,
+      sortBy: { column: "name", order: "asc" },
+    });
     expect(files.map((f) => [f.originalName, f.isImage])).toEqual([
       ["foto.png", true],
       ["old_scan.pdf", false],
     ]);
     expect(files[0].url).toBe("https://signed/patient-1/2000_foto.png");
+  });
+
+  it("pages past Storage's 100-object default so no file is left out", async () => {
+    const bucket = supabaseMock.bucket(BUCKET);
+    const named = (from: number, count: number) =>
+      Array.from({ length: count }, (_, i) => ({
+        name: `${from + i}_f${from + i}.pdf`,
+        created_at: "2026-09-01T16:00:00Z",
+        metadata: { mimetype: "application/pdf" },
+      }));
+    bucket.list
+      .mockResolvedValueOnce({ data: named(0, 100), error: null })
+      .mockResolvedValueOnce({ data: named(100, 5), error: null });
+    bucket.createSignedUrl.mockImplementation(async (path: string) => ({
+      data: { signedUrl: `https://signed/${path}` },
+      error: null,
+    }));
+
+    const files = await getPatientFiles("patient-1");
+
+    expect(files).toHaveLength(105);
+    expect(bucket.list).toHaveBeenCalledTimes(2);
+    expect(bucket.list.mock.calls[1][1]).toMatchObject({ limit: 100, offset: 100 });
   });
 
   it("returns an empty list for a patient without files", async () => {

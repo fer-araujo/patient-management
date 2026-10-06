@@ -31,6 +31,22 @@
 begin;
 
 -- -----------------------------------------------------------------------------
+-- Doctor-only mode (migration 23) closes the patient RPCs and keeps staff
+-- reschedules confirmed. This check proves the normal (mode off) rules, so the
+-- mode is turned off INSIDE this transaction; the ROLLBACK restores it.
+-- -----------------------------------------------------------------------------
+do $$
+begin
+  if exists (
+    select 1 from information_schema.columns
+    where table_schema = 'public' and table_name = 'clinic_settings'
+      and column_name = 'doctor_only_mode'
+  ) then
+    execute 'update public.clinic_settings set doctor_only_mode = false where doctor_only_mode';
+  end if;
+end $$;
+
+-- -----------------------------------------------------------------------------
 -- 0. No outbound side effects
 -- -----------------------------------------------------------------------------
 do $$

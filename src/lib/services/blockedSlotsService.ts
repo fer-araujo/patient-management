@@ -1,4 +1,5 @@
 import { supabase } from "../supabase";
+import { fetchAllRows } from "./fetchAllRows";
 import {
   combineIsoDateAndTime,
   timeToDecimal,
@@ -15,7 +16,15 @@ export interface DashboardBlockedSlot {
 }
 
 export const fetchBlockedSlots = async (): Promise<DashboardBlockedSlot[]> => {
-  const { data, error } = await supabase.from("blocked_slots").select("*");
+  // Every block ever (one row per blocked day), paged past max_rows (1000).
+  const { data, error } = await fetchAllRows((from, to) =>
+    supabase
+      .from("blocked_slots")
+      .select("*")
+      .order("start_time", { ascending: true })
+      .order("id", { ascending: true })
+      .range(from, to),
+  );
 
   if (error) {
     console.error("Error al obtener bloqueos:", error.message);

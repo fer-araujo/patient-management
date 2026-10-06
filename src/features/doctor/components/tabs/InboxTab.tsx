@@ -29,16 +29,17 @@ import {
 import { type DashboardBlockedSlot } from "../../../../lib/services/blockedSlotsService";
 import {
   combineIsoDateAndTime,
-  getAvailableTimeOptions,
+  getBookableTimeOptions,
+  hasAppointmentStarted,
   parseVisualDateToISO,
 } from "../../utils/calendarUtils";
 import { useCalendar } from "../../hooks/useCalendar";
+import { useClinicMode } from "../../../clinicMode/useClinicMode";
 import { toast } from "react-hot-toast/headless";
+import { nowInClinic } from "../../../../lib/clinicTime";
 
-const getISODate = () => {
-  const d = new Date();
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
-};
+/** How often "Vencida" labels, cards and bookable slots are re-evaluated. */
+const NOW_REFRESH_MS = 60_000;
 
 /**
  * The Agenda shows appointments from 30 days ago onward (past ones for
@@ -69,10 +70,22 @@ export const InboxTab = ({
 
   // FIX BUG: Extraemos correctamente el workingSchedule (JSON) en lugar del workingHours viejo
   const { workingSchedule } = useCalendar();
+  // Doctor-only mode: no online requests arrive, so there is nothing to
+  // approve, suggest or reject. A request left from before the switch is
+  // handled like any appointment (confirm, move or cancel).
+  const { doctorOnlyMode } = useClinicMode();
 
   useEffect(() => {
     setAppointments(initialAppointments);
   }, [initialAppointments]);
+
+  // One shared clock for the cards, the row labels and the bookable slots,
+  // so they always agree on what is "Vencida". Refreshed every minute.
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    const id = setInterval(() => setNow(Date.now()), NOW_REFRESH_MS);
+    return () => clearInterval(id);
+  }, []);
 
   const [searchTerm, setSearchTerm] = useState("");
   const [isFilterModalOpen, setIsFilterModalOpen] = useState(false);
@@ -105,8 +118,9 @@ export const InboxTab = ({
 
   const availableTimeOptions = useMemo(() => {
     if (!newDateISO || !workingSchedule) return [];
-    // FIX BUG: Pasamos workingSchedule correctamente a la función de cálculo
-    return getAvailableTimeOptions(
+    // Only slots that have not started yet: the server refuses a start at or
+    // before now(). `now` is a dependency so the list follows the clock.
+    return getBookableTimeOptions(
       newDateISO,
       appointments,
       blockedSlots,
@@ -114,6 +128,7 @@ export const InboxTab = ({
       durationMins,
       // The request being moved must not block its own current slot.
       rescheduleData?.id,
+      now,
     );
   }, [
     newDateISO,
@@ -122,16 +137,18 @@ export const InboxTab = ({
     workingSchedule,
     durationMins,
     rescheduleData,
+    now,
   ]);
 
+  const isNewTimeBookable = availableTimeOptions.some(
+    (opt) => opt.value === newTime,
+  );
+
   useEffect(() => {
-    if (
-      availableTimeOptions.length > 0 &&
-      !availableTimeOptions.find((opt) => opt.value === newTime)
-    ) {
-      setNewTime(availableTimeOptions[0].value);
-    }
-  }, [availableTimeOptions, newTime]);
+    if (isNewTimeBookable) return;
+    // Fall back to the first bookable slot, or to none ("Sin horarios").
+    setNewTime(availableTimeOptions[0]?.value ?? "");
+  }, [availableTimeOptions, isNewTimeBookable]);
 
   // =========================================================================
   // ACCIONES CON TIPADO STRICTO Y MANEJO DE ERRORES
@@ -151,7 +168,11 @@ export const InboxTab = ({
 
   const openRescheduleModal = (appointment: DashboardAppointment) => {
     setRescheduleData(appointment);
-    setNewDateISO(parseVisualDateToISO(appointment.date));
+    // A past ("Vencida") appointment cannot be moved to its own day: start
+    // from the clinic's today instead.
+    const clinicToday = nowInClinic().isoDate;
+    const currentDate = parseVisualDateToISO(appointment.date);
+    setNewDateISO(currentDate < clinicToday ? clinicToday : currentDate);
     setNewTime(appointment.time);
   };
 
@@ -193,7 +214,7 @@ export const InboxTab = ({
   };
 
   const handleConfirmReschedule = async () => {
-    if (!rescheduleData || !newTime) return;
+    if (!rescheduleData || !newTime || !isNewTimeBookable) return;
     try {
       setIsSubmitting(true);
       const utcIsoDateTime = combineIsoDateAndTime(newDateISO, newTime);
@@ -218,11 +239,8 @@ export const InboxTab = ({
   // "Por revisar" / "Confirmadas" only count what is still ahead: a pending
   // request or a confirmed visit whose time already passed needs no action.
   const stats = useMemo(() => {
-    const now = Date.now();
     const upcoming = (a: DashboardAppointment) =>
-      new Date(
-        combineIsoDateAndTime(parseVisualDateToISO(a.date), a.time),
-      ).getTime() >= now;
+      !hasAppointmentStarted(a, now);
     const inWindow = appointments.filter(isWithinInboxWindow);
     return {
       pending: appointments.filter((a) => a.status === "pending" && upcoming(a))
@@ -233,7 +251,7 @@ export const InboxTab = ({
       newPatients: inWindow.filter((a) => a.isNewPatient).length,
       total: inWindow.length,
     };
-  }, [appointments]);
+  }, [appointments, now]);
 
   const filteredData = useMemo(() => {
     const filtered = appointments.filter((app) => {
@@ -330,6 +348,10 @@ export const InboxTab = ({
       sortable: true,
       className: "w-[15%]",
       cell: (row) => {
+        // A pending appointment whose start already passed cannot be
+        // confirmed any more; it is labelled "Vencida" in the same pill.
+        const overdue =
+          row.status === "pending" && hasAppointmentStarted(row, now);
         const statusConfig = {
           pending: {
             color: "text-amber-600 bg-amber-50 border-amber-200",
@@ -357,7 +379,7 @@ export const InboxTab = ({
           <span
             className={`text-[11px] font-bold uppercase tracking-wider px-2.5 py-1 rounded-md border ${config.color}`}
           >
-            {config.label}
+            {overdue ? "Vencida" : config.label}
           </span>
         );
       },
@@ -365,67 +387,94 @@ export const InboxTab = ({
     {
       header: "Acciones",
       className: "w-[15%] text-right",
-      cell: (row) => (
-        <div className="flex items-center justify-end gap-2">
-          {row.status === "pending" && (
-            <>
+      cell: (row) => {
+        // Pending with its start already passed: only move or cancel it.
+        const overdue =
+          row.status === "pending" && hasAppointmentStarted(row, now);
+        const awaitingAction = row.status === "pending" && !overdue;
+        return (
+          <div className="flex items-center justify-end gap-2">
+            {awaitingAction && doctorOnlyMode && (
               <button
+                type="button"
                 onClick={() => handleApprove(row.id)}
-                className="flex items-center justify-center w-10 h-10 bg-teal-50 text-teal-600 hover:bg-teal-500 hover:text-white rounded-xl transition-all border border-teal-100 hover:border-teal-500 shadow-sm cursor-pointer"
-                title="Aprobar"
+                className="flex items-center justify-center gap-1.5 min-h-11 px-3 bg-teal-50 text-teal-600 hover:bg-teal-500 hover:text-white rounded-xl transition-all border border-teal-100 hover:border-teal-500 shadow-sm cursor-pointer text-base font-bold"
               >
-                <Check className="w-5 h-5" strokeWidth={2.5} />
+                <Check className="w-5 h-5" strokeWidth={2.5} /> Confirmar
               </button>
-              <button
-                onClick={() => openRescheduleModal(row)}
-                className="flex items-center justify-center w-10 h-10 bg-amber-50 text-amber-600 hover:bg-amber-500 hover:text-white rounded-xl transition-all border border-amber-100 hover:border-amber-500 shadow-sm cursor-pointer"
-                title="Sugerir horario"
-              >
-                <CalendarClock className="w-5 h-5" strokeWidth={2.5} />
-              </button>
-              <button
-                onClick={() => setRejectModalData(row)}
-                className="flex items-center justify-center w-10 h-10 bg-red-50 text-red-600 hover:bg-red-500 hover:text-white rounded-xl transition-all border border-red-100 hover:border-red-500 shadow-sm cursor-pointer"
-                title="Rechazar Solicitud"
-              >
-                <X className="w-5 h-5" strokeWidth={2.5} />
-              </button>
-            </>
-          )}
-          {row.status === "confirmed" && (
-            <>
-              <button
-                onClick={() => openRescheduleModal(row)}
-                className="flex items-center justify-center w-10 h-10 bg-blue-50 text-blue-600 hover:bg-blue-500 hover:text-white rounded-xl transition-all border border-blue-100 hover:border-blue-500 shadow-sm cursor-pointer"
-                title="Reprogramar"
-              >
-                <CalendarClock className="w-5 h-5" strokeWidth={2.5} />
-              </button>
-              <button
-                onClick={() => {
-                  setCancelModalData(row);
-                  setCancelReason("");
-                }}
-                className="flex items-center justify-center w-10 h-10 bg-rose-50 text-rose-600 hover:bg-rose-500 hover:text-white rounded-xl transition-all border border-rose-100 hover:border-rose-500 shadow-sm cursor-pointer"
-                title="Cancelar Cita"
-              >
-                <CalendarX2 className="w-5 h-5" strokeWidth={2.5} />
-              </button>
-            </>
-          )}
-          {(row.status === "completed" ||
-            row.status === "cancelled" ||
-            row.status === "rejected") && (
-            <span className="text-sm font-bold text-slate-400 mr-2">
-              {row.status === "completed"
-                ? "Finalizada"
-                : row.status === "cancelled"
-                  ? "Cancelada"
-                  : "Rechazada"}
-            </span>
-          )}
-        </div>
-      ),
+            )}
+            {awaitingAction && !doctorOnlyMode && (
+              <>
+                <button
+                  type="button"
+                  onClick={() => handleApprove(row.id)}
+                  className="flex items-center justify-center w-11 h-11 bg-teal-50 text-teal-600 hover:bg-teal-500 hover:text-white rounded-xl transition-all border border-teal-100 hover:border-teal-500 shadow-sm cursor-pointer"
+                  title="Aprobar"
+                  aria-label="Aprobar"
+                >
+                  <Check className="w-5 h-5" strokeWidth={2.5} />
+                </button>
+                <button
+                  type="button"
+                  onClick={() => openRescheduleModal(row)}
+                  className="flex items-center justify-center w-11 h-11 bg-amber-50 text-amber-600 hover:bg-amber-500 hover:text-white rounded-xl transition-all border border-amber-100 hover:border-amber-500 shadow-sm cursor-pointer"
+                  title="Sugerir horario"
+                  aria-label="Sugerir horario"
+                >
+                  <CalendarClock className="w-5 h-5" strokeWidth={2.5} />
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setRejectModalData(row)}
+                  className="flex items-center justify-center w-11 h-11 bg-red-50 text-red-600 hover:bg-red-500 hover:text-white rounded-xl transition-all border border-red-100 hover:border-red-500 shadow-sm cursor-pointer"
+                  title="Rechazar Solicitud"
+                  aria-label="Rechazar Solicitud"
+                >
+                  <X className="w-5 h-5" strokeWidth={2.5} />
+                </button>
+              </>
+            )}
+            {(row.status === "confirmed" ||
+              overdue ||
+              (row.status === "pending" && doctorOnlyMode)) && (
+              <>
+                <button
+                  type="button"
+                  onClick={() => openRescheduleModal(row)}
+                  className="flex items-center justify-center w-11 h-11 bg-blue-50 text-blue-600 hover:bg-blue-500 hover:text-white rounded-xl transition-all border border-blue-100 hover:border-blue-500 shadow-sm cursor-pointer"
+                  title="Reprogramar"
+                  aria-label="Reprogramar"
+                >
+                  <CalendarClock className="w-5 h-5" strokeWidth={2.5} />
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setCancelModalData(row);
+                    setCancelReason("");
+                  }}
+                  className="flex items-center justify-center w-11 h-11 bg-rose-50 text-rose-600 hover:bg-rose-500 hover:text-white rounded-xl transition-all border border-rose-100 hover:border-rose-500 shadow-sm cursor-pointer"
+                  title="Cancelar Cita"
+                  aria-label="Cancelar Cita"
+                >
+                  <CalendarX2 className="w-5 h-5" strokeWidth={2.5} />
+                </button>
+              </>
+            )}
+            {(row.status === "completed" ||
+              row.status === "cancelled" ||
+              row.status === "rejected") && (
+              <span className="text-sm font-bold text-slate-400 mr-2">
+                {row.status === "completed"
+                  ? "Finalizada"
+                  : row.status === "cancelled"
+                    ? "Cancelada"
+                    : "Rechazada"}
+              </span>
+            )}
+          </div>
+        );
+      },
     },
   ];
 
@@ -442,7 +491,7 @@ export const InboxTab = ({
           </div>
           <div>
             <p className="text-sm font-bold text-brand-gray uppercase tracking-wider mb-1">
-              Por Revisar
+              {doctorOnlyMode ? "Sin confirmar" : "Por Revisar"}
             </p>
             <h4 className="text-3xl font-black text-brand-dark leading-none">
               {stats.pending}
@@ -635,7 +684,9 @@ export const InboxTab = ({
         isOpen={!!rescheduleData}
         onClose={() => setRescheduleData(null)}
         title={
-          rescheduleData?.status === "pending"
+          rescheduleData?.status === "pending" &&
+          !doctorOnlyMode &&
+          !hasAppointmentStarted(rescheduleData, now)
             ? "Sugerir Horario"
             : "Reprogramar Cita"
         }
@@ -675,7 +726,7 @@ export const InboxTab = ({
                     isOpen={isRescheduleDatePickerOpen}
                     onClose={() => setIsRescheduleDatePickerOpen(false)}
                     selectedDate={newDateISO}
-                    minDate={getISODate()}
+                    minDate={nowInClinic(new Date(now)).isoDate}
                     onSelectDate={(d) => {
                       setNewDateISO(d);
                       setIsRescheduleDatePickerOpen(false);
@@ -708,7 +759,7 @@ export const InboxTab = ({
               </Button>
               <Button
                 onClick={handleConfirmReschedule}
-                disabled={!newTime || isSubmitting}
+                disabled={!isNewTimeBookable || isSubmitting}
                 className="flex-1 py-3 rounded-xl bg-amber-500 hover:bg-amber-600 text-white cursor-pointer border-none disabled:opacity-50"
               >
                 {isSubmitting ? "Enviando..." : "Confirmar y Avisar"}

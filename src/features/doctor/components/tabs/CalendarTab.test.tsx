@@ -117,6 +117,32 @@ describe("CalendarTab pending appointments", () => {
     expect(screen.getAllByText("Pendiente")).toHaveLength(1);
     expect(screen.queryByText("01:00 PM - Rosa")).toBeNull();
   });
+
+  it("labels a pending appointment whose start already passed as Vencida", async () => {
+    // 12:00 PM: Luis (11:00 AM) already started, Sofía (03:00 PM) is ahead.
+    setNow(new Date(2026, 9, 15, 12, 0));
+    const { user } = renderTab([
+      appt({
+        id: "a-luis",
+        patientName: "Luis Pérez",
+        time: "11:00 AM",
+        status: "pending",
+      }),
+      appt({
+        id: "a-sofia",
+        patientName: "Sofía Ruiz",
+        time: "03:00 PM",
+        status: "pending",
+      }),
+    ]);
+
+    expect(screen.getAllByText("Vencida")).toHaveLength(1);
+    expect(screen.getAllByText("Pendiente")).toHaveLength(1);
+
+    await openMonth(user);
+    expect(screen.getAllByText("Vencida")).toHaveLength(1);
+    expect(screen.getAllByText("Pendiente")).toHaveLength(1);
+  });
 });
 
 describe("CalendarTab scheduling", () => {
@@ -353,6 +379,10 @@ describe("CalendarTab consultations without recorded supplies", () => {
           id: "item-s", name: "Sculptra", category: "Medicamentos", stock_quantity: 3,
           min_alert_level: 1, unit_measure: "viales", last_restock_date: "2026-09-01", is_active: true,
         },
+        {
+          id: "item-g", name: "Gasas", category: "Insumos", stock_quantity: 50,
+          min_alert_level: 1, unit_measure: "paquetes", last_restock_date: "2026-09-01", is_active: true,
+        },
       ],
     });
     supabaseMock.onFrom("service_supplies", {
@@ -413,13 +443,29 @@ describe("CalendarTab consultations without recorded supplies", () => {
     await user.clear(screen.getByLabelText("Cantidad de Sculptra"));
     await user.type(screen.getByLabelText("Cantidad de Sculptra"), "2");
 
+    // Picking an item adds it right away with 1; a listed one jumps to its row.
+    await user.click(screen.getByRole("combobox", { name: "Insumos usados" }));
+    await user.click(screen.getByRole("option", { name: "Sculptra (ya en la lista)" }));
+    expect(screen.getAllByLabelText("Cantidad de Sculptra")).toHaveLength(1);
+    expect(screen.getByLabelText("Cantidad de Sculptra")).toHaveFocus();
+    await user.click(screen.getByRole("combobox", { name: "Insumos usados" }));
+    await user.click(screen.getByRole("option", { name: "Gasas" }));
+    expect(screen.getByLabelText("Cantidad de Gasas")).toHaveValue(1);
+    expect(screen.getByLabelText("Cantidad de Sculptra")).toHaveValue(2);
+
     await user.click(screen.getByRole("button", { name: /Guardar insumos/ }));
 
     await waitFor(() => expect(onDataChange).toHaveBeenCalledTimes(1));
     expect(supabaseMock.rpcCalls("record_consultation_supplies")).toEqual([
       {
         name: "record_consultation_supplies",
-        args: { p_appointment_id: "a-ana", p_supplies: [{ item_id: "item-s", quantity: 2 }] },
+        args: {
+          p_appointment_id: "a-ana",
+          p_supplies: [
+            { item_id: "item-s", quantity: 2 },
+            { item_id: "item-g", quantity: 1 },
+          ],
+        },
       },
     ]);
     await waitFor(() => expect(screen.queryByLabelText("Cantidad de Sculptra")).toBeNull());

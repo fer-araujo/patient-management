@@ -1,5 +1,6 @@
 import { supabase } from "../supabase";
 import { combineIsoDateAndTime } from "../../features/doctor/utils/calendarUtils";
+import { fetchAllRows } from "./fetchAllRows";
 
 export type PaymentStatus = "paid" | "courtesy";
 export type PaymentMethod = "cash" | "card" | "transfer";
@@ -268,6 +269,9 @@ interface PurchaseRow {
 
 const roundCents = (n: number) => Math.round(n * 100) / 100;
 
+const TOO_MANY_FINANCE_ROWS =
+  "Hay demasiados movimientos en este periodo para calcular los totales. Elige un periodo más corto.";
+
 /**
  * Income, supply spending and courtesies between two clinic-time dates
  * (`from` inclusive, `to` exclusive). Payments count on the day they were
@@ -281,26 +285,41 @@ export const getFinanceSummary = async (
   const fromUtc = dayStartUtc(from);
   const toUtc = dayStartUtc(to);
 
+  // Paged: a single request stops at PostgREST's max_rows (1000) and the
+  // totals would be silently short. Ascending by creation, id as tiebreaker,
+  // so the pages are stable; the movements are sorted below anyway.
   const [paymentsRes, purchasesRes] = await Promise.all([
-    supabase
-      .from("payments")
-      .select(
-        includePatientNames
-          ? `${PAYMENT_COLUMNS}, patients ( first_name, last_name )`
-          : PAYMENT_COLUMNS,
-      )
-      .gte("created_at", fromUtc)
-      .lt("created_at", toUtc)
-      .order("created_at", { ascending: false })
-      .returns<PaymentSummaryRow[]>(),
-    supabase
-      .from("inventory_movements")
-      .select("id, quantity, total_cost, created_at, inventory ( name )")
-      .eq("type", "purchase")
-      .gte("created_at", fromUtc)
-      .lt("created_at", toUtc)
-      .order("created_at", { ascending: false })
-      .returns<PurchaseRow[]>(),
+    fetchAllRows<PaymentSummaryRow>(
+      (first, last) =>
+        supabase
+          .from("payments")
+          .select(
+            includePatientNames
+              ? `${PAYMENT_COLUMNS}, patients ( first_name, last_name )`
+              : PAYMENT_COLUMNS,
+          )
+          .gte("created_at", fromUtc)
+          .lt("created_at", toUtc)
+          .order("created_at", { ascending: true })
+          .order("id", { ascending: true })
+          .range(first, last)
+          .returns<PaymentSummaryRow[]>(),
+      { tooManyMessage: TOO_MANY_FINANCE_ROWS },
+    ),
+    fetchAllRows<PurchaseRow>(
+      (first, last) =>
+        supabase
+          .from("inventory_movements")
+          .select("id, quantity, total_cost, created_at, inventory ( name )")
+          .eq("type", "purchase")
+          .gte("created_at", fromUtc)
+          .lt("created_at", toUtc)
+          .order("created_at", { ascending: true })
+          .order("id", { ascending: true })
+          .range(first, last)
+          .returns<PurchaseRow[]>(),
+      { tooManyMessage: TOO_MANY_FINANCE_ROWS },
+    ),
   ]);
 
   if (paymentsRes.error || purchasesRes.error) {
@@ -311,8 +330,8 @@ export const getFinanceSummary = async (
     throw new Error("No se pudieron cargar las finanzas.");
   }
 
-  const payments = paymentsRes.data ?? [];
-  const purchases = purchasesRes.data ?? [];
+  const payments = paymentsRes.data;
+  const purchases = purchasesRes.data;
 
   const monthly = new Map<string, MonthlyFinance>(
     monthsInRange({ from, to }).map((month) => [

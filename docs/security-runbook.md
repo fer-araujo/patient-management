@@ -1673,3 +1673,254 @@ rows add up to
 the payments and the uses; `anon` reads nothing and cannot call the new RPCs;
 the ledger still matches the stock and every `service_supplies` write is
 audited.
+
+# Doctor-only mode ("Modo solo doctora")
+
+## Migration 23 — Doctor-only mode and paper consent
+
+**File:** `supabase/migrations/20261004100000_doctor_only_mode.sql`.
+Idempotent; paste it into the SQL editor after migration 22
+(`20260928110000_service_supplies.sql`).
+
+- Expected: one notice starting with `Migration 23 PASSED` (it also prints
+  whether the mode is currently ON or OFF; it is OFF after the first run).
+- `Migration 23 ABORTED: clinic_settings has N rows` means nothing changed:
+  the table must hold one row. The message lists them; the public booking
+  page uses the most recently updated row with `has_schedule=true`. Delete the
+  others (`delete from public.clinic_settings where id = '…';`), then run it
+  again.
+- A failure raises `Migration 23 FAILED: …` naming the broken rule.
+
+What it adds:
+
+- `clinic_settings.doctor_only_mode` (boolean, not null, default false) and
+  the unique index `clinic_settings_single_row`, so the table can never hold
+  a second row. The "Horarios de Clínica" save (update the row, insert only
+  when there is none) is unchanged.
+- RPC `get_clinic_mode()`: returns only that boolean. `anon`,
+  `authenticated` and `service_role` may call it (the public site decides
+  what to show before sign-in; the WhatsApp edge function reads it).
+- RPC `set_clinic_mode(boolean)`: doctor only (`is_staff()`; the admin gets
+  42501). Updates the single row, or creates it when the schedule was never
+  saved. `clinic_settings_staff_all` is unchanged: the doctor could also write
+  the column directly, nobody else can.
+- Internal helper `assert_patient_portal_open(message)` (no API grant). While
+  the mode is ON, these RPCs refuse FIRST with a Spanish P0001:
+  `request_my_appointment`, `reschedule_my_appointment`,
+  `cancel_my_appointment` ("La clínica no está recibiendo citas en línea.
+  Comunícate por teléfono."), `register_me`, `accept_privacy_notice` ("… no
+  está recibiendo registros en línea …"), `submit_arco_request` ("… no está
+  recibiendo solicitudes en línea …"), `register_my_upload` ("… no está
+  recibiendo archivos en línea …"). Their bodies are copied verbatim from
+  migrations 21, 06, 18, 13, 11 and 12; nothing else changes.
+- Storage policy `clinical_records_patient_upload_own` (migration 03) is
+  re-created with `and not public.get_clinic_mode()`: with the mode ON a
+  patient cannot upload into their folder either. The doctor's
+  `clinical_records_staff_all` is unchanged.
+- `arco_requests.channel` (nullable; `presencial` | `telefono` | `correo` |
+  `escrito`; null = filed in the portal) and RPC
+  `staff_register_arco_request(patient, type, details, channel)`: doctor only
+  (`is_staff()`), works with the mode ON or OFF, same type list and details
+  limits as the portal form, refuses an anonymized record, no per-patient
+  cap; `created_at` is the server's `now()`, so the legal deadline counts
+  from when it is recorded. Shown as "Registrar solicitud" in "Solicitudes
+  ARCO".
+- `staff_reschedule_appointment()` (verbatim from migration 19): with the
+  mode ON the moved appointment stays (or becomes) `confirmed`; OFF it goes
+  back to `pending` as before.
+- `consents.method` (`online` | `in_person`, not null, default `online`;
+  every existing row is an online acceptance). RPC
+  `record_consent_in_person(patient)`: doctor only; records the CURRENT
+  notice version with method `in_person`; returns false and records nothing
+  when the patient already holds a consent for that version; refuses an
+  anonymized record. `consents` stays append-only with no direct write for
+  any API role; the insert is in the Bitácora with the doctor as actor.
+- `cancel_my_appointment` is now revoked from `anon` explicitly, like its
+  siblings (it was only revoked from `public`).
+
+**Deploy order:**
+
+1. Run the migration (the mode stays OFF: nothing changes for patients).
+2. Deploy the frontend (switch in Centro de Comando, `/` follows the mode,
+   paper-consent checkbox, directory indicator, "Registrar solicitud"). The
+   "Solicitudes ARCO" list selects `arco_requests.channel`, so it needs the
+   migration first.
+3. Deploy the edge function: `supabase functions deploy notify-appointment --no-verify-jwt`.
+   With the mode ON it never sends "pendiente de confirmación" and replaces
+   every "entra a tu portal" with "Si necesitas cambiarla, comunícate con la
+   clínica." (or "Para agendar otra cita, …" after a cancellation). If it
+   cannot read the mode it uses that wording too but skips nothing (the
+   pending notice does not mention the portal; a 500 would make the webhook
+   retry and could send the other messages twice). OFF: unchanged messages.
+4. Only then turn the mode ON from Centro de Comando.
+
+The frontend reads the mode once per page load (two retries on a failed
+read): a browser that was already open shows the old screens until it is
+reloaded, but the database refuses every patient action immediately. If the
+mode still cannot be read the site falls back to the normal screens (the
+database keeps refusing patient actions if it is ON) and the doctor's switch
+says "No se pudo leer el modo" with "Reintentar" instead of a state.
+
+**Re-running older files:** re-running migrations 03, 06, 11, 12, 13, 18, 19
+or 21 after this file restores bodies (or the storage policy) without the
+doctor-only checks (and 19 the `pending`-only staff reschedule). Run this
+file again afterwards; its gate reports any missing check.
+
+**Rollback:** turn the mode off (`select public.set_clinic_mode(false);` as
+the doctor, or `update public.clinic_settings set doctor_only_mode = false where id is not null;`
+in the SQL editor). That alone restores the previous behavior. To remove the
+objects: re-run migrations 21, 06 (only `cancel_my_appointment` matters),
+18, 13, 11, 12 and 19 in that order, re-create the migration 03
+`clinical_records_patient_upload_own` policy, then
+
+```sql
+drop function public.staff_register_arco_request(uuid, text, text, text);
+drop function public.record_consent_in_person(uuid);
+drop function public.set_clinic_mode(boolean);
+drop function public.assert_patient_portal_open(text);
+drop function public.get_clinic_mode();
+```
+
+Keep `consents.method` (it is evidence of how each consent was given),
+`arco_requests.channel` (how each recorded request arrived) and the column
+and index on `clinic_settings` (harmless when OFF).
+
+## Doctor-only mode check — `supabase/tests/doctor_only_mode_check.sql`
+
+**Run:** paste the whole file into the SQL editor after migration 23. It runs
+inside `begin; … rollback;` with throwaway doctor and admin users, three
+patients, a service and two appointments, turns the mode ON inside the
+transaction and disables the `whatsapp_notifications` trigger there, so
+nothing is committed or sent and the clinic's real mode is untouched.
+
+- Expected: one notice starting with `DOCTOR ONLY MODE CHECK PASSED`.
+- A failure raises `DOCTOR ONLY MODE CHECK FAILED: …` naming the broken rule.
+
+It proves: `anon` reads the mode but cannot change it (RPC or table write)
+nor record consents; with the mode ON the seven patient RPCs refuse with
+their Spanish message and write nothing (no appointment, consent, ARCO
+request, file record or new patient) and a direct patient insert into their
+storage folder is refused; the patient and the admin cannot change the mode,
+record consents or call `staff_register_arco_request`; the doctor records an
+offline request (channel, trimmed details, `created_at` = now, status
+received) in both modes, and a missing patient, an anonymized record, an
+unknown type or channel and too-short details are refused; a staff reschedule keeps a pending and a confirmed
+appointment `confirmed`; `record_consent_in_person()` records exactly one
+`in_person` row for the current notice, records nothing the second time,
+refuses an anonymized record, and a direct insert into `consents` is refused;
+the doctor turns the mode OFF, after which a staff reschedule goes back to
+`pending` and every patient RPC works again (online consents carry method
+`online`; a portal request has no channel; a file the owner placed in the
+patient's folder is registered by the patient).
+
+`archived_booking_check.sql` and `staff_booking_check.sql` now turn the mode
+off inside their own transaction first (they prove the mode-OFF rules), so
+they keep passing whatever the clinic's current mode is.
+
+# Weight tracking (InBody)
+
+## Migration 24 — Body composition measurements
+
+**File:** `supabase/migrations/20261004110000_body_measurements.sql`.
+Idempotent; paste it into the SQL editor after migration 23
+(`20261004100000_*`). It does not depend on migration 23.
+
+- Expected: one notice starting with `Migration 24 PASSED`.
+- A failure raises `Migration 24 FAILED: …` naming the broken rule.
+
+What it adds:
+
+- `patients.weight_tracking` (boolean, not null, default false): the doctor
+  marks the patients whose weight she follows ("Llevar control de peso").
+  Written through the existing `patients_staff_all` policy (doctor only); the
+  patient has no write policy on `patients` and the admin has no access to
+  `patients`, and the gate fails if that ever changes. The change is written
+  to the Bitácora by the `patients` audit trigger.
+- Table `public.body_measurements`: date (`measured_at`, clinic calendar,
+  never in the future), weight (required), and the optional InBody values:
+  height, BMI, body fat % and kg, skeletal muscle, lean mass, waist-hip
+  ratio, visceral fat level, basal metabolic rate, upper/lower balance, body
+  type, C/I/D shape, and a note. `bmi` is a stored generated column
+  (weight / height², one decimal), so nobody can write a BMI that disagrees
+  with the weight and height. Range checks catch typos (e.g. 700 kg) and
+  masses heavier than the weight; balance, body type and C/I/D are closed
+  lists.
+- `body_type` and `cid_type` are two columns because the InBody sheet prints
+  both readings and they are independent (the body-type chart uses BMI and
+  body fat %, the C/I/D shape compares weight, muscle and fat).
+- RLS policy `body_measurements_staff_all`: `is_staff()` only — the doctor
+  reads and writes; the admin never sees it; the patient never reads the
+  table directly; `anon` has no privilege at all.
+- Measurements are follow-up data, not a frozen consultation note: the doctor
+  may correct or delete one. Every insert, update and delete is written to
+  the Bitácora by `audit_row_change` (column names only).
+- Trigger `body_measurements_guard` (SECURITY DEFINER, pinned `search_path`,
+  no API grant): refuses any write on an anonymized record ("Este expediente
+  fue anonimizado. Sus datos ya no se pueden editar."), a future date, a
+  measurement moved to another patient and an appointment of another
+  patient; the server sets `author_id` (the caller, never changed later),
+  `created_at` and `updated_at`.
+- `anonymize_patient()` re-created from its migration 20 body: it also
+  clears `body_measurements.note` (free text that can name the patient)
+  BEFORE it sets `anonymized_at` — after that the guard freezes the record.
+  The measurements themselves stay. The ANONYMIZE audit event lists
+  `body_measurements.note`.
+- Trigger `patients_keep_weight_tracking` (BEFORE UPDATE OF
+  `weight_tracking`, SECURITY DEFINER, no API grant): the flag cannot change
+  on an anonymized record.
+- `export_my_data()` re-created from its migration 20 body with a new
+  `body_measurements` list (the patient's own rows, oldest first, with BMI).
+  The doctor's note on a measurement is not exported, like the SOAP notes and
+  the internal reminders. The printable "Mis datos" document shows them.
+
+**Deploy order:** run the migration BEFORE deploying the frontend. The
+Directorio list selects `patients.weight_tracking` (its "Control de peso"
+label) and fails to load without it; the consultation screen and "Editar
+datos" read the flag and `body_measurements`.
+
+**Re-running older files:** re-running migration 20 would restore the
+`export_my_data()` without measurements and the `anonymize_patient()` that
+leaves measurement notes; run this file again afterwards.
+
+**Rollback:**
+
+```sql
+drop trigger patients_keep_weight_tracking on public.patients;
+drop function public.patients_keep_weight_tracking();
+drop table public.body_measurements;
+drop function public.body_measurements_guard();
+alter table public.patients drop column weight_tracking;
+```
+
+then re-run migration 20 (restores the previous `export_my_data()` and
+`anonymize_patient()`; the latter must be restored, since it references the
+dropped table). Dropping
+the table deletes every recorded measurement: export them first.
+
+## Body measurements check — `supabase/tests/body_measurements_check.sql`
+
+**Run:** paste the whole file into the SQL editor after migration 24. It runs
+inside `begin; … rollback;` with throwaway doctor, admin and patient users,
+three patients (one anonymized), a service and two appointments, and disables
+the `whatsapp_notifications` and `appointments_prevent_overlap` triggers
+inside the transaction, so nothing is committed or sent.
+
+- Expected: one notice starting with `BODY MEASUREMENTS CHECK PASSED`.
+- A failure raises `BODY MEASUREMENTS CHECK FAILED: …` naming the broken rule.
+
+It proves: the doctor turns weight tracking on and off; she records a
+measurement (BMI 24.2 for 70 kg at 170 cm, no BMI without a height, the
+author is her even when another id is sent), corrects it (BMI follows, the
+author does not change, BMI cannot be written) and deletes one; 700 kg, 95 %
+body fat, muscle heavier than the weight, unknown closed-list values, a
+visceral level of 0, a 1999 date, a future date, another patient's
+appointment and moving a measurement to another patient are refused; an
+anonymized record refuses new measurements, corrections, deletes and turning
+`weight_tracking` on; `anonymize_patient()` run by the doctor clears the
+note of the record's measurement, keeps the measurement, and then the flag
+is frozen; the
+admin reads none, cannot write one and cannot change `weight_tracking`; the
+patient reads none directly, cannot write one or change their own
+`weight_tracking`, and their export carries both measurements (oldest first,
+with BMI) without the doctor's note; `anon` reads nothing; the Bitácora has 3
+inserts, 1 update and 1 delete by the doctor and the `weight_tracking` change.

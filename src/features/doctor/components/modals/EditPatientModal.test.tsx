@@ -5,6 +5,7 @@ import toast from "react-hot-toast";
 import { supabaseMock, type RecordedQuery } from "../../../../test/supabaseMock";
 import type { PatientDetails } from "../../../../lib/services/patientService";
 import { EditPatientModal } from "./EditPatientModal";
+import { PRIVACY_NOTICE_VERSION } from "../../../../lib/legal/privacyNotice";
 
 const patient: PatientDetails = {
   id: "p1",
@@ -185,5 +186,173 @@ describe("EditPatientModal", () => {
     expect(screen.getByText(/fue anonimizado/)).toBeInTheDocument();
     expect(screen.queryByLabelText("Nombre(s)")).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /Guardar Cambios/ })).not.toBeInTheDocument();
+  });
+});
+
+describe("EditPatientModal privacy notice signed on paper", () => {
+  const PAPER = "El paciente firmó el aviso de privacidad en papel";
+
+  it("records the paper consent after saving when the box is ticked", async () => {
+    supabaseMock.onFrom("consents", { data: [] });
+    supabaseMock.onRpc("record_consent_in_person", { data: true });
+    const { onClose, user } = await renderModal();
+
+    const box = await screen.findByRole("checkbox", { name: PAPER });
+    await user.click(box);
+    await user.click(screen.getByRole("button", { name: /Guardar Cambios/ }));
+
+    await waitFor(() => expect(onClose).toHaveBeenCalledTimes(1));
+    expect(updates()).toHaveLength(1);
+    expect(supabaseMock.rpcCalls("record_consent_in_person")).toEqual([
+      { name: "record_consent_in_person", args: { p_patient_id: "p1" } },
+    ]);
+    // The lookup asked for the CURRENT notice of this patient.
+    const lookup = supabaseMock.queries("consents")[0];
+    expect(lookup.allArgs("eq")).toEqual([
+      ["patient_id", "p1"],
+      ["document", "aviso_privacidad"],
+      ["version", PRIVACY_NOTICE_VERSION],
+    ]);
+  });
+
+  it("does not record anything when the box is left empty", async () => {
+    supabaseMock.onFrom("consents", { data: [] });
+    const { onClose, user } = await renderModal();
+
+    await screen.findByRole("checkbox", { name: PAPER });
+    await user.click(screen.getByRole("button", { name: /Guardar Cambios/ }));
+
+    await waitFor(() => expect(onClose).toHaveBeenCalledTimes(1));
+    expect(supabaseMock.rpcCalls("record_consent_in_person")).toHaveLength(0);
+  });
+
+  it("says the notice is already signed instead of offering the box", async () => {
+    supabaseMock.onFrom("consents", { data: [{ id: "c1" }] });
+    await renderModal();
+
+    expect(await screen.findByText("Aviso de privacidad firmado.")).toBeInTheDocument();
+    expect(screen.queryByRole("checkbox", { name: PAPER })).not.toBeInTheDocument();
+  });
+
+  it("refreshes the list only after the consent step", async () => {
+    supabaseMock.onFrom("consents", { data: [] });
+    supabaseMock.onRpc("record_consent_in_person", { data: true });
+    const { onSaved, user } = await renderModal();
+    let consentCallsWhenSaved = -1;
+    onSaved.mockImplementation(() => {
+      consentCallsWhenSaved = supabaseMock.rpcCalls("record_consent_in_person").length;
+    });
+
+    await user.click(await screen.findByRole("checkbox", { name: PAPER }));
+    await user.click(screen.getByRole("button", { name: /Guardar Cambios/ }));
+
+    await waitFor(() => expect(onSaved).toHaveBeenCalledTimes(1));
+    expect(consentCallsWhenSaved).toBe(1);
+  });
+
+  it("keeps the form open with the reason when the consent cannot be recorded", async () => {
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    const toastError = vi.spyOn(toast, "error");
+    supabaseMock.onFrom("consents", { data: [] });
+    supabaseMock.onRpc("record_consent_in_person", {
+      error: { message: "Este expediente fue anonimizado. No se puede registrar un consentimiento.", code: "P0001" },
+    });
+    const { onClose, onSaved, user } = await renderModal();
+
+    await user.click(await screen.findByRole("checkbox", { name: PAPER }));
+    await user.click(screen.getByRole("button", { name: /Guardar Cambios/ }));
+
+    await waitFor(() =>
+      expect(toastError).toHaveBeenCalledWith(
+        "Este expediente fue anonimizado. No se puede registrar un consentimiento.",
+      ),
+    );
+    // The personal data was saved; only the consent failed.
+    expect(onSaved).toHaveBeenCalledTimes(1);
+    expect(onClose).not.toHaveBeenCalled();
+  });
+});
+
+describe("EditPatientModal weight tracking", () => {
+  const WEIGHT = "Llevar control de peso";
+  const trackingWrites = () =>
+    updates().filter((q) => "weight_tracking" in ((q.args("update")?.[0] as object) ?? {}));
+
+  it("shows the saved flag and turns it on with the save, then refreshes the list", async () => {
+    const { onSaved, onClose, user } = await renderModal();
+
+    const box = await screen.findByRole("checkbox", { name: WEIGHT });
+    expect(box).not.toBeChecked();
+    await user.click(box);
+    await user.click(screen.getByRole("button", { name: /Guardar Cambios/ }));
+
+    await waitFor(() => expect(onClose).toHaveBeenCalledTimes(1));
+    expect(onSaved).toHaveBeenCalledTimes(1);
+    expect(trackingWrites()).toHaveLength(1);
+    expect(trackingWrites()[0].args("update")).toEqual([{ weight_tracking: true }]);
+    // Never on an anonymized record.
+    expect(trackingWrites()[0].allArgs("is")).toEqual([["anonymized_at", null]]);
+  });
+
+  it("does not write the flag when it did not change", async () => {
+    const { onClose, user } = await renderModal();
+
+    await screen.findByRole("checkbox", { name: WEIGHT });
+    await user.click(screen.getByRole("button", { name: /Guardar Cambios/ }));
+
+    await waitFor(() => expect(onClose).toHaveBeenCalledTimes(1));
+    expect(trackingWrites()).toHaveLength(0);
+  });
+
+  it("says the measurements are kept when turning it off", async () => {
+    const { user } = await renderModal({
+      ...patient,
+      weight_tracking: true,
+    } as PatientDetails);
+
+    const box = await screen.findByRole("checkbox", { name: WEIGHT });
+    expect(box).toBeChecked();
+    await user.click(box);
+
+    expect(screen.getByText("Las mediciones guardadas no se borran.")).toBeInTheDocument();
+  });
+
+  it("keeps the form open when the flag cannot be changed, still refreshing the list once", async () => {
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    const toastError = vi.spyOn(toast, "error");
+    const { onSaved, onClose, user } = await renderModal();
+    supabaseMock.onFrom("patients", (q: RecordedQuery) => {
+      if (q.has("update")) {
+        const values = q.args("update")?.[0] as Record<string, unknown>;
+        return "weight_tracking" in values
+          ? { error: { message: "boom", code: "500" } }
+          : { data: [{ id: "p1" }] };
+      }
+      return { data: patient };
+    });
+
+    await user.click(await screen.findByRole("checkbox", { name: WEIGHT }));
+    await user.click(screen.getByRole("button", { name: /Guardar Cambios/ }));
+
+    await waitFor(() =>
+      expect(toastError).toHaveBeenCalledWith(
+        "No se pudo cambiar el control de peso. Intenta de nuevo.",
+      ),
+    );
+    expect(onSaved).toHaveBeenCalledTimes(1);
+    expect(onClose).not.toHaveBeenCalled();
+  });
+
+  it("does not offer the box when the flag cannot be read", async () => {
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    supabaseMock.onFrom("patients", (q: RecordedQuery) =>
+      q.args("select")?.[0] === "weight_tracking"
+        ? { error: { message: "boom", code: "500" } }
+        : { data: patient },
+    );
+    render(<EditPatientModal isOpen patientId="p1" onClose={vi.fn()} onSaved={vi.fn()} />);
+
+    expect(await screen.findByLabelText("Nombre(s)")).toHaveValue("María");
+    expect(screen.queryByRole("checkbox", { name: WEIGHT })).not.toBeInTheDocument();
   });
 });

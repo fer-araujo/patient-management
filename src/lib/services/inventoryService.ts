@@ -1,4 +1,5 @@
 import { supabase } from "../supabase";
+import { fetchAllRows } from "./fetchAllRows";
 
 export interface InventoryItem {
   id: string;
@@ -76,11 +77,17 @@ const rpcError = (error: { code?: string; message: string }, fallback: string) =
   new Error(error.code === "P0001" ? error.message : fallback);
 
 export const fetchInventory = async (): Promise<InventoryItem[]> => {
-  const { data, error } = await supabase
-    .from("inventory")
-    .select("*")
-    .order("is_active", { ascending: false })
-    .order("name", { ascending: true });
+  // Paged: the restock count and the pickers need every item.
+  const { data, error } = await fetchAllRows<InventoryItem>((from, to) =>
+    supabase
+      .from("inventory")
+      .select("*")
+      .order("is_active", { ascending: false })
+      .order("name", { ascending: true })
+      .order("id", { ascending: true })
+      .range(from, to)
+      .returns<InventoryItem[]>(),
+  );
 
   if (error) {
     console.error("Error fetching inventory:", error);
@@ -180,7 +187,10 @@ export const registerPurchase = async (
   return adjustStock(itemId, quantity, "purchase", totalCost, note);
 };
 
-/** Latest movements of one item, newest first. */
+/** The item history shows at most this many movements (it says so when capped). */
+export const MOVEMENTS_MAX_ENTRIES = 100;
+
+/** Latest movements of one item, newest first (up to MOVEMENTS_MAX_ENTRIES). */
 export const fetchMovements = async (
   itemId: string,
 ): Promise<InventoryMovement[]> => {
@@ -189,7 +199,7 @@ export const fetchMovements = async (
     .select("*")
     .eq("item_id", itemId)
     .order("created_at", { ascending: false })
-    .limit(100);
+    .limit(MOVEMENTS_MAX_ENTRIES);
 
   if (error) {
     console.error("Error fetching inventory movements:", error);

@@ -24,6 +24,7 @@ import {
   ClipboardList,
   Edit2,
   ChevronUp,
+  Scale,
 } from "lucide-react";
 import { Button } from "../../../components/ui/Button";
 import { Modal } from "../../../components/ui/Modal";
@@ -73,6 +74,13 @@ import {
 import { PrescriptionDisclaimer } from "../../../components/legal/PrescriptionDisclaimer";
 import { NoteAddenda } from "./NoteAddenda";
 import { ChargeModal, type ChargeInput } from "./modals/ChargeModal";
+import {
+  getWeightTracking,
+  setWeightTracking,
+} from "../../../lib/services/bodyMeasurementService";
+import { sexFromGender } from "../utils/bodyComposition";
+import { WeightTrackingTab } from "./weight/WeightTrackingTab";
+import { ConfirmDialog } from "./weight/ConfirmDialog";
 
 interface ConsultationWorkspaceProps {
   appointment?: DashboardAppointment;
@@ -81,17 +89,26 @@ interface ConsultationWorkspaceProps {
   onFinishConsultation?: (id: string) => void;
 }
 
-type WorkspaceTab = "notas" | "receta" | "fotos";
+type WorkspaceTab = "notas" | "receta" | "fotos" | "peso";
 
-const WORKSPACE_TABS: {
+interface WorkspaceTabDef {
   id: WorkspaceTab;
   label: string;
   icon: React.ElementType;
-}[] = [
+}
+
+const WORKSPACE_TABS: WorkspaceTabDef[] = [
   { id: "notas", label: "Notas Clínicas (SOAP)", icon: FileText },
   { id: "receta", label: "Recetas e Indicaciones", icon: Pill },
   { id: "fotos", label: "Galería y Estudios", icon: Camera },
 ];
+
+/** Shown only for patients with weight tracking on (patients.weight_tracking). */
+const WEIGHT_TAB: WorkspaceTabDef = {
+  id: "peso",
+  label: "Control de peso",
+  icon: Scale,
+};
 
 const FINALIZE_REQUIRES_MESSAGE =
   "Para finalizar la consulta, escribe el diagnóstico y el plan.";
@@ -315,6 +332,14 @@ export const ConsultationWorkspace = ({
   const [isSaving, setIsSaving] = useState(false);
   const [isChargeOpen, setIsChargeOpen] = useState(false);
 
+  // Weight tracking (InBody). Null until read (or when the read failed):
+  // then neither the tab nor the "Llevar control de peso" button is shown.
+  const [weightTracking, setWeightTrackingState] = useState<boolean | null>(
+    null,
+  );
+  const [isTrackingConfirmOpen, setIsTrackingConfirmOpen] = useState(false);
+  const [isTrackingBusy, setIsTrackingBusy] = useState(false);
+
   //ESTADO PARA EL ZOOM
   const [zoomLevel, setZoomLevel] = useState(100);
 
@@ -422,6 +447,25 @@ export const ConsultationWorkspace = ({
     };
   }, [targetId]);
 
+  // Not critical either: a failure only hides weight tracking.
+  useEffect(() => {
+    if (!targetId) return;
+    let active = true;
+    getWeightTracking(targetId)
+      .then((on) => {
+        if (active) setWeightTrackingState(on);
+      })
+      .catch((err: unknown) => {
+        console.error(
+          "Error cargando control de peso:",
+          err instanceof Error ? err.message : err,
+        );
+      });
+    return () => {
+      active = false;
+    };
+  }, [targetId]);
+
   const ageAndSex = describeAgeAndSex(
     patientDetails?.dob ?? patient?.dob,
     patientDetails?.gender ?? patient?.gender,
@@ -455,6 +499,9 @@ export const ConsultationWorkspace = ({
   const isEditorLocked = !isReviewMode && (isLoadingHistory || loadFailed);
 
   const isAnonymized = !!patientDetails?.anonymized_at;
+  // Weight tracking writes wait for the patient's details: until they are
+  // read, "not anonymized" is unknown, not true.
+  const canEditWeightTracking = patientDetails !== null && !isAnonymized;
   const canEditBackground = !isReviewMode && !isAnonymized;
   const isBackgroundLocked = isEditorLocked || backgroundForm === null;
   const hasNoBackground =
@@ -463,6 +510,39 @@ export const ConsultationWorkspace = ({
   // in the notes area exists only while it is being filled in or edited.
   const isBackgroundExpanded =
     canEditBackground && backgroundForm !== null && isBackgroundOpen;
+
+  const visibleTabs = weightTracking
+    ? [...WORKSPACE_TABS, WEIGHT_TAB]
+    : WORKSPACE_TABS;
+  const bodySex = sexFromGender(patientDetails?.gender ?? patient?.gender);
+
+  /** "Llevar control de peso" (after confirmation): shows the tab. */
+  const startWeightTracking = async () => {
+    setIsTrackingBusy(true);
+    try {
+      await setWeightTracking(targetId, true);
+      setWeightTrackingState(true);
+      setIsTrackingConfirmOpen(false);
+      setActiveTab("peso");
+      toast.success("Listo: ya puedes registrar sus mediciones.");
+    } catch (err: unknown) {
+      toast.error(
+        err instanceof Error && err.message
+          ? err.message
+          : "No se pudo activar el control de peso.",
+      );
+    } finally {
+      setIsTrackingBusy(false);
+    }
+  };
+
+  /** "Dejar de llevar control": hides the tab; measurements are kept. */
+  const stopWeightTracking = async () => {
+    await setWeightTracking(targetId, false);
+    setWeightTrackingState(false);
+    setActiveTab("notas");
+    toast.success("Se dejó de llevar el control de peso.");
+  };
 
   const setBackgroundField = (key: BackgroundKey, value: string) =>
     setBackgroundForm((prev) => (prev ? { ...prev, [key]: value } : prev));
@@ -813,6 +893,15 @@ export const ConsultationWorkspace = ({
             <p className="text-sm font-medium text-brand-gray mt-0.5">
               {targetPhone}
             </p>
+            {weightTracking === false && canEditWeightTracking && (
+              <button
+                type="button"
+                onClick={() => setIsTrackingConfirmOpen(true)}
+                className="mt-3 w-full min-h-11 text-sm font-bold py-2 px-3 rounded-lg border border-slate-200 bg-white text-slate-600 hover:bg-slate-100 hover:text-brand-dark flex items-center justify-center gap-1.5 cursor-pointer shadow-sm relative z-10"
+              >
+                <Scale className="w-4 h-4" /> Llevar control de peso
+              </button>
+            )}
           </div>
 
           <div className="bg-white rounded-2xl p-5 border border-slate-200 shadow-sm">
@@ -1037,7 +1126,7 @@ export const ConsultationWorkspace = ({
             column's height; the notes fill that space (Plan grows). */}
         <div className="lg:col-span-9 bg-white border border-slate-200 rounded-3xl shadow-sm overflow-hidden flex flex-col">
           <div className="flex border-b border-slate-200 bg-slate-50/80 px-2 pt-2 overflow-x-auto hide-scrollbar shrink-0">
-            {WORKSPACE_TABS.map((tab) => {
+            {visibleTabs.map((tab) => {
               const Icon = tab.icon;
               return (
                 <button type="button"
@@ -1505,6 +1594,27 @@ export const ConsultationWorkspace = ({
               </div>
             )}
 
+            {activeTab === "peso" && weightTracking && (
+              <WeightTrackingTab
+                key={targetId}
+                patientId={targetId}
+                patientName={targetName}
+                sex={bodySex}
+                appointment={
+                  appointment?.isoDate
+                    ? { id: appointment.id, date: appointment.isoDate }
+                    : undefined
+                }
+                prefill={
+                  isReviewMode
+                    ? undefined
+                    : { weight: vitalSigns.weight, height: vitalSigns.height }
+                }
+                readOnly={!canEditWeightTracking}
+                onStopTracking={stopWeightTracking}
+              />
+            )}
+
             {activeTab === "fotos" && (
               <div className="space-y-8">
                 <label
@@ -1631,6 +1741,18 @@ export const ConsultationWorkspace = ({
           confirmLabel="Guardar y finalizar"
         />
       )}
+
+      <ConfirmDialog
+        isOpen={isTrackingConfirmOpen}
+        onClose={() => setIsTrackingConfirmOpen(false)}
+        onConfirm={startWeightTracking}
+        isBusy={isTrackingBusy}
+        title="Control de peso"
+        icon={<Scale className="w-8 h-8" strokeWidth={2.5} />}
+        question={`¿Llevar el control de peso de ${targetName}?`}
+        description="Aparecerá la pestaña «Control de peso» para registrar sus mediciones de la báscula InBody."
+        confirmLabel="Sí, llevar control"
+      />
 
       <Modal
         isOpen={isPrescriptionModalOpen}

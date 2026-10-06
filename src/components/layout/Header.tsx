@@ -30,6 +30,9 @@ export const Header = () => {
       const loadingToast = toast.loading("Cerrando sesión...");
       await supabase.auth.signOut();
       toast.success("Sesión cerrada de forma segura.", { id: loadingToast });
+      // "/" follows the clinic mode (App.tsx HomeRoute): the public booking
+      // page normally, the clinic's sign-in in doctor-only mode. Never the
+      // patient portal.
       navigate("/");
     } catch (error: unknown) {
       console.error("[Header] Error al cerrar sesión:", error);

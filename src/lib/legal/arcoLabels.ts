@@ -1,7 +1,16 @@
 import type {
+  ArcoChannel,
   ArcoRequestStatus,
   ArcoRequestType,
 } from "../services/privacyService";
+
+/** How a request recorded by the doctor reached the clinic. */
+export const ARCO_CHANNEL_LABELS: Record<ArcoChannel, string> = {
+  presencial: "En persona",
+  telefono: "Por teléfono",
+  correo: "Por correo",
+  escrito: "Por escrito",
+};
 
 /** Plain-Spanish labels shared by the patient portal and the admin panel. */
 export const ARCO_TYPE_LABELS: Record<

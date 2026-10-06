@@ -44,7 +44,7 @@ const expectNoDirectStockWrite = () => {
 };
 
 describe("fetchInventory", () => {
-  it("lists active items first, then by name", async () => {
+  it("lists active items first, then by name (id as a stable tiebreaker for paging)", async () => {
     supabaseMock.onFrom("inventory", { data: [{ id: "i1" }] });
 
     await expect(fetchInventory()).resolves.toEqual([{ id: "i1" }]);
@@ -53,7 +53,9 @@ describe("fetchInventory", () => {
     expect(query.allArgs("order")).toEqual([
       ["is_active", { ascending: false }],
       ["name", { ascending: true }],
+      ["id", { ascending: true }],
     ]);
+    expect(query.args("range")).toEqual([0, 999]);
   });
 
   it("returns an empty list when there is no data", async () => {

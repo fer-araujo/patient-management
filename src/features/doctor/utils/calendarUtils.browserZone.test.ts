@@ -5,6 +5,7 @@ import {
   filterFutureTimesOnly,
   getAvailableTimeOptionsFromBusy,
   getSmartStartDate,
+  hasAppointmentStarted,
   isTimeSlotInPast,
   isTimeStrInPast,
 } from "./calendarUtils";
@@ -163,6 +164,20 @@ describe("the doctor calendar in a Chicago summer browser", () => {
       expect(extractHoursMinutes(block.startTime)).toEqual({ hours: 9, minutes: 30 });
       expect(extractHoursMinutes(block.endTime)).toEqual({ hours: 10, minutes: 0 });
       expect(block.durationMins).toBe(30);
+    });
+  });
+});
+
+describe.each(BROWSER_ZONES)("hasAppointmentStarted from %s", (_, zone, isoDate) => {
+  it("uses the clinic clock, not the browser's", async () => {
+    await withBrowserTimeZone(zone, () => {
+      const [y, m, d] = isoDate.split("-");
+      const months = ["ene", "feb", "mar", "abr", "may", "jun", "jul", "ago", "sep", "oct", "nov", "dic"];
+      const app = { date: `${d} ${months[Number(m) - 1]} ${y}`, time: "10:00 AM" };
+      // 10:00 AM Monterrey is 16:00Z, whatever zone the browser is in.
+      const start = Date.parse(`${isoDate}T16:00:00.000Z`);
+      expect(hasAppointmentStarted(app, start - 60_000)).toBe(false);
+      expect(hasAppointmentStarted(app, start)).toBe(true);
     });
   });
 });

@@ -146,7 +146,7 @@ export const Dropdown = ({
                       placeholder="Buscar..."
                       value={searchTerm}
                       onChange={(e) => setSearchTerm(e.target.value)}
-                      className="w-full pl-8 pr-3 py-2 bg-slate-50 border-none rounded-lg text-sm focus:outline-none focus:ring-1 focus:ring-brand-primary/30"
+                      className="w-full pl-8 pr-3 py-2 bg-slate-50 border-none rounded-lg text-base focus:outline-none focus:ring-1 focus:ring-brand-primary/30"
                       onClick={(e) => e.stopPropagation()}
                       autoFocus
                     />

@@ -101,20 +101,21 @@ export const useSuppliesUsed = ({
     lineProblem,
     /** Loaded, and every quantity is a whole number within the stock. */
     isValid: state !== null && lines.every((l) => lineProblem(l) === null),
-    addableItems: (state?.inventory ?? []).filter(
-      (i) => i.is_active && !lines.some((l) => l.itemId === i.id),
-    ),
+    /** Items that can be picked (archived ones cannot be used). */
+    activeItems: (state?.inventory ?? []).filter((i) => i.is_active),
     setQuantity: (itemId: string, quantity: string) =>
       updateLines((current) =>
         current.map((l) => (l.itemId === itemId ? { ...l, quantity } : l)),
       ),
     remove: (itemId: string) =>
       updateLines((current) => current.filter((l) => l.itemId !== itemId)),
-    add: (item: InventoryItem, quantity: number) =>
-      updateLines((current) => [
-        ...current,
-        { itemId: item.id, quantity: String(quantity) },
-      ]),
+    /** Adds the item with quantity 1; an item already listed is kept once. */
+    add: (item: InventoryItem) =>
+      updateLines((current) =>
+        current.some((l) => l.itemId === item.id)
+          ? current
+          : [...current, { itemId: item.id, quantity: "1" }],
+      ),
     /**
      * What to send: the lines above 0 (possibly none). Undefined when the list
      * could not be loaded, i.e. the supplies step was not done.

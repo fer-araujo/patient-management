@@ -10,6 +10,8 @@ import {
   FileText,
   UserPlus,
   UserPen,
+  ShieldCheck,
+  Scale,
   Calendar as CalendarIcon,
 } from "lucide-react";
 import { Button } from "../../../../components/ui/Button";
@@ -26,12 +28,23 @@ import {
 } from "../../../../lib/services/patientService";
 import { ConsultationWorkspace } from "../ConsultationWorkspace";
 import { EditPatientModal } from "../modals/EditPatientModal";
+import { PaperConsentCheckbox } from "../PaperConsentCheckbox";
+import { recordInPersonConsent } from "../../../../lib/services/privacyService";
 import { toast } from "react-hot-toast/headless";
 
 const GENDER_OPTIONS = [
   { label: "Sin especificar", value: "" },
   ...PATIENT_GENDERS.map((g) => ({ label: g, value: g })),
 ];
+
+const EMPTY_NEW_PATIENT = {
+  firstName: "",
+  lastName: "",
+  phone: "",
+  email: "",
+  dob: "",
+  gender: "",
+};
 
 const todayIso = (): string => {
   const now = new Date();
@@ -70,14 +83,29 @@ export const PatientsTab = () => {
 
   const [isNewPatientModalOpen, setIsNewPatientModalOpen] = useState(false);
   const [isNewDobPickerOpen, setIsNewDobPickerOpen] = useState(false);
-  const [newPatientForm, setNewPatientForm] = useState({
-    firstName: "",
-    lastName: "",
-    phone: "",
-    email: "",
-    dob: "",
-    gender: "",
-  });
+  const [newPatientForm, setNewPatientForm] = useState(EMPTY_NEW_PATIENT);
+  const [newPatientPaperConsent, setNewPatientPaperConsent] = useState(false);
+
+  /**
+   * "Nuevo Paciente" open/close. A ticked "firmó el aviso" box never carries
+   * over: it is cleared on every open and close. The typed fields survive an
+   * accidental close (backdrop or X) and are only cleared when the doctor
+   * discards them (Cancelar) or the patient is created.
+   */
+  const openNewPatientModal = () => {
+    setNewPatientPaperConsent(false);
+    setIsNewDobPickerOpen(false);
+    setIsNewPatientModalOpen(true);
+  };
+  const closeNewPatientModal = () => {
+    setNewPatientPaperConsent(false);
+    setIsNewDobPickerOpen(false);
+    setIsNewPatientModalOpen(false);
+  };
+  const resetNewPatientModal = () => {
+    setNewPatientForm(EMPTY_NEW_PATIENT);
+    closeNewPatientModal();
+  };
 
   const loadData = async () => {
     setIsLoading(true);
@@ -146,7 +174,7 @@ export const PatientsTab = () => {
     if (!newPatientForm.firstName || !newPatientForm.lastName) return;
     try {
       setIsSubmitting(true);
-      await createPatient(
+      const patientId = await createPatient(
         newPatientForm.firstName,
         newPatientForm.lastName,
         newPatientForm.phone,
@@ -154,16 +182,23 @@ export const PatientsTab = () => {
         newPatientForm.dob,
         newPatientForm.gender,
       );
+      if (newPatientPaperConsent) {
+        try {
+          if (!patientId) throw new Error("Missing patient id.");
+          await recordInPersonConsent(patientId);
+        } catch (consentErr: unknown) {
+          console.error(
+            "Error al registrar el aviso firmado:",
+            consentErr instanceof Error ? consentErr.message : consentErr,
+          );
+          // The record exists; the doctor can tick the box again in "Editar datos".
+          toast.error(
+            "El paciente se creó, pero no se registró el aviso de privacidad. Márcalo de nuevo en Editar datos.",
+          );
+        }
+      }
       await loadData();
-      setIsNewPatientModalOpen(false);
-      setNewPatientForm({
-        firstName: "",
-        lastName: "",
-        phone: "",
-        email: "",
-        dob: "",
-        gender: "",
-      });
+      resetNewPatientModal();
     } catch (err: unknown) {
       console.error(
         "Error al crear paciente:",
@@ -182,11 +217,33 @@ export const PatientsTab = () => {
       sortable: true,
       className: "w-[30%]",
       cell: (row) => (
-        <span
-          className={`font-bold text-base ${row.status === "archived" ? "text-slate-400" : "text-brand-dark"}`}
-        >
-          {row.name}
-        </span>
+        <div className="flex flex-col items-start">
+          <span
+            className={`font-bold text-base ${row.status === "archived" ? "text-slate-400" : "text-brand-dark"}`}
+          >
+            {row.name}
+          </span>
+          {/* Text labels, not only a color: the privacy notice is signed or
+              not, and the doctor follows the patient's weight. */}
+          {!row.anonymizedAt && (
+            <div className="flex flex-wrap items-center gap-1.5">
+              {row.hasPrivacyConsent ? (
+                <span className="text-[11px] font-bold text-teal-700 bg-teal-50 border border-teal-100 px-2 py-0.5 rounded-md mt-1 inline-flex items-center gap-1">
+                  <ShieldCheck className="w-3.5 h-3.5" /> Aviso firmado
+                </span>
+              ) : (
+                <span className="text-[11px] font-bold text-amber-700 bg-amber-50 border border-amber-100 px-2 py-0.5 rounded-md mt-1 inline-flex items-center gap-1">
+                  <ShieldAlert className="w-3.5 h-3.5" /> Sin aviso firmado
+                </span>
+              )}
+              {row.weightTracking && (
+                <span className="text-[11px] font-bold text-brand-dark bg-slate-50 border border-slate-200 px-2 py-0.5 rounded-md mt-1 inline-flex items-center gap-1">
+                  <Scale className="w-3.5 h-3.5" aria-hidden="true" /> Control de peso
+                </span>
+              )}
+            </div>
+          )}
+        </div>
       ),
     },
     {
@@ -360,7 +417,7 @@ export const PatientsTab = () => {
             />
           </div>
           <Button type="button"
-            onClick={() => setIsNewPatientModalOpen(true)}
+            onClick={openNewPatientModal}
             className="w-full sm:w-auto py-2.5 px-5 rounded-xl bg-brand-primary hover:bg-brand-dark text-white font-bold shadow-md cursor-pointer border-none"
           >
             + Nuevo Paciente
@@ -385,7 +442,7 @@ export const PatientsTab = () => {
 
       <Modal
         isOpen={isNewPatientModalOpen}
-        onClose={() => setIsNewPatientModalOpen(false)}
+        onClose={closeNewPatientModal}
         title="Nuevo Paciente"
         icon={<UserPlus className="w-5 h-5 text-brand-primary" />}
         hideFooter={true}
@@ -528,11 +585,15 @@ export const PatientsTab = () => {
               />
             </div>
           </div>
+          <PaperConsentCheckbox
+            checked={newPatientPaperConsent}
+            onChange={setNewPatientPaperConsent}
+          />
           <div className="pt-4 flex gap-3 border-t border-slate-100 mt-2">
             <Button
               type="button"
               variant="outline"
-              onClick={() => setIsNewPatientModalOpen(false)}
+              onClick={resetNewPatientModal}
               className="flex-1 py-3.5 rounded-xl cursor-pointer"
             >
               Cancelar
