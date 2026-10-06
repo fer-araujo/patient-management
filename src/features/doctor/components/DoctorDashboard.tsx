@@ -26,6 +26,7 @@ import {
 } from "../../../lib/services/blockedSlotsService";
 import { CalendarProvider } from "../context/CalendarProvider";
 import { ClinicModeSwitch } from "./ClinicModeSwitch";
+import { PrescriberProfileButton } from "../prescription/PrescriberProfileButton";
 
 export const DoctorDashboard = () => {
   const [appointments, setAppointments] = useState<DashboardAppointment[]>([]);
@@ -79,7 +80,12 @@ export const DoctorDashboard = () => {
   };
 
   // FIX FASE A: Lógica real de finalización de cita
-  const handleFinishConsultation = async (id: string) => {
+  // With `keepOpen` the workspace shows "Consulta finalizada" (to send the
+  // prescription) and closes itself through onClose ("Listo").
+  const handleFinishConsultation = async (
+    id: string,
+    options?: { keepOpen: boolean },
+  ) => {
     try {
       // 1. Cambiamos el estatus en la BD a "completed"
       await updateAppointmentStatus(id, "completed");
@@ -91,7 +97,7 @@ export const DoctorDashboard = () => {
       toast.success("¡Expediente guardado y cita finalizada!");
 
       // 4. Cerramos el Workspace
-      setActiveConsultation(null);
+      if (!options?.keepOpen) setActiveConsultation(null);
     } catch (error) {
       console.error("Error al completar cita:", error);
       toast.error("No se pudo marcar la cita como completada.");
@@ -128,7 +134,10 @@ export const DoctorDashboard = () => {
           <h1 className="text-3xl xl:text-4xl font-extrabold text-brand-dark tracking-tight">
             Centro de Comando
           </h1>
-          <ClinicModeSwitch />
+          <div className="flex flex-wrap items-center gap-3">
+            <PrescriberProfileButton />
+            <ClinicModeSwitch />
+          </div>
         </div>
         <div className="flex items-center gap-2 sm:gap-4 overflow-x-auto hide-scrollbar">
           <button

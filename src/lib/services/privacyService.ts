@@ -131,7 +131,16 @@ export interface MyDataExport {
   }[];
   prescriptions: {
     created_at: string;
-    medications: { nombre?: string; dosis?: string; indicaciones?: string }[];
+    medications: {
+      nombre?: string;
+      dosis?: string;
+      indicaciones?: string;
+      // Structured fields since migration 25; absent on older items.
+      presentacion?: string;
+      via?: string;
+      frecuencia?: string;
+      duracion?: string;
+    }[];
   }[];
   files: { name: string; uploaded_at: string }[];
   arco_requests: {

@@ -23,6 +23,24 @@ const TABLE_LABELS: Record<string, string> = {
   arco_requests: "una solicitud de datos personales",
   payments: "un cobro",
   service_supplies: "los insumos de un tratamiento",
+  prescriber_profile: "los datos de la receta",
+};
+
+/** log_prescription_shared (migration 25): how the prescription PDF left. */
+const PRESCRIPTION_CHANNEL_LABELS: Record<string, string> = {
+  share_sheet: "Compartió la receta en PDF",
+  whatsapp_link: "Descargó la receta en PDF y abrió WhatsApp",
+  download: "Descargó la receta en PDF",
+  print: "Abrió la receta en PDF para ver o imprimir",
+};
+
+/** "folio:000123" in a prescription EXPORT event -> " (folio 000123)". */
+const folioSuffix = (entry: AuditEntry): string => {
+  const folio = entry.changedColumns
+    .find((c) => c.startsWith("folio:"))
+    ?.slice("folio:".length)
+    .trim();
+  return folio ? ` (folio ${folio})` : "";
 };
 
 const ACTION_LABELS: Record<string, string> = {
@@ -73,6 +91,17 @@ const COLUMN_LABELS: Record<string, string> = {
   non_pathological_history: "antecedentes personales no patológicos",
   current_illness: "padecimiento actual",
   anonymized_at: "anonimización",
+  full_name: "nombre completo",
+  cedula_profesional: "cédula profesional",
+  especialidad: "especialidad",
+  cedula_especialidad: "cédula de especialidad",
+  institucion_titulo: "institución del título",
+  consultorio_domicilio: "domicilio del consultorio",
+  telefono: "teléfono",
+  signature_path: "firma",
+  prescriber_snapshot: "datos impresos de la receta",
+  issued_at: "emisión",
+  folio: "folio",
 };
 
 const actorLabel = (entry: AuditEntry): string =>
@@ -82,6 +111,20 @@ const capitalize = (text: string) => text.charAt(0).toUpperCase() + text.slice(1
 
 const actionLabel = (entry: AuditEntry): string => {
   if (entry.action === "FINALIZE") return "Cerró la consulta (nota e indicaciones)";
+  if (entry.action === "EXPORT" && entry.tableName === "prescriptions") {
+    return (
+      (PRESCRIPTION_CHANNEL_LABELS[entry.changedColumns[0] ?? ""] ??
+        "Emitió la receta en PDF") + folioSuffix(entry)
+    );
+  }
+  // issue_prescription(): the first issue stores the snapshot and the folio.
+  if (
+    entry.action === "UPDATE" &&
+    entry.tableName === "prescriptions" &&
+    entry.changedColumns.includes("issued_at")
+  ) {
+    return "Emitió la receta oficial (asignó folio)";
+  }
   if (entry.action === "EXPORT") return "Descargó una copia de sus datos";
   if (entry.action === "ANONYMIZE") return "Anonimizó el expediente";
   const verb = ACTION_LABELS[entry.action] ?? entry.action;

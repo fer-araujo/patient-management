@@ -245,6 +245,44 @@ describe("renderMyDataDocument", () => {
     expect(render(baseExport())).not.toContain("Control de peso");
   });
 
+  it("lists an old, a structured and a whitespace-only medication without empty lines", () => {
+    const html = render(
+      baseExport({
+        prescriptions: [
+          {
+            created_at: "2026-09-20T16:00:00.000Z",
+            medications: [
+              { nombre: "Ibuprofeno", dosis: "400 mg", indicaciones: "Cada 8 horas" },
+              {
+                nombre: "Amoxicilina",
+                presentacion: "Cápsulas 500 mg",
+                dosis: "1 cápsula",
+                via: "Oral",
+                frecuencia: "Cada 8 h",
+                duracion: "por 7 días",
+                indicaciones: "Con alimentos",
+              },
+              { nombre: "Crema", dosis: "  ", presentacion: " ", via: " ", frecuencia: " ", duracion: " ", indicaciones: "  " },
+            ],
+          },
+        ],
+      }),
+    );
+    const items = Array.from(parse(html).querySelectorAll("li")).map((li) => li.innerHTML);
+    const old = items.find((i) => i.includes("Ibuprofeno"))!;
+    const structured = items.find((i) => i.includes("Amoxicilina"))!;
+    const blank = items.find((i) => i.includes("Crema"))!;
+
+    // Old item: dose and indications, no schedule line.
+    expect(old).toBe("<strong>Ibuprofeno</strong> — 400 mg<br>Cada 8 horas");
+    // Structured item: the schedule line, with "Por" written once.
+    expect(structured).toBe(
+      "<strong>Amoxicilina</strong> — 1 cápsula<br>Cápsulas 500 mg · Vía oral · Cada 8 h · Por 7 días<br>Con alimentos",
+    );
+    // Blanks print nothing: no dash, no empty line, no lone separator.
+    expect(blank).toBe("<strong>Crema</strong>");
+  });
+
   it("shows placeholders for empty sections and translates statuses", () => {
     const html = render(
       baseExport({ appointments: [], prescriptions: [], files: [], consents: [] }),

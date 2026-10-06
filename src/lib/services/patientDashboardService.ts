@@ -52,7 +52,21 @@ interface RawJsonbMedication {
   nombre?: string;
   dosis?: string;
   indicaciones?: string;
+  // Structured fields since migration 25; absent on older items.
+  via?: string;
+  frecuencia?: string;
+  duracion?: string;
 }
+
+/** "Cada 8 h · Vía oral · Con alimentos": what the patient has to do. */
+const structuredInstruction = (med: RawJsonbMedication): string | undefined =>
+  [
+    med.frecuencia?.trim(),
+    med.via?.trim() ? `Vía ${med.via.trim().toLowerCase()}` : "",
+    med.indicaciones?.trim(),
+  ]
+    .filter(Boolean)
+    .join(" · ") || undefined;
 
 // 1. OBTENER EL PERFIL DEL PACIENTE LOGUEADO
 export const fetchMyProfile = async (): Promise<
@@ -178,15 +192,15 @@ export const fetchMyCarePlan = async (
     name:
       med.name ??
       med.medicationName ??
-      ([med.nombre, med.dosis ? `(${med.dosis})` : ""]
+      ([med.nombre?.trim(), med.dosis?.trim() ? `(${med.dosis.trim()})` : ""]
         .filter(Boolean)
         .join(" ") ||
         "Tratamiento / Medicamento"),
     instruction:
       med.instruction ??
       med.dosage ??
-      med.indicaciones ??
+      structuredInstruction(med) ??
       "Ver indicaciones de la doctora",
-    daysLeft: med.daysLeft ?? med.duration ?? "Continuo",
+    daysLeft: med.daysLeft ?? med.duration ?? (med.duracion?.trim() || "Continuo"),
   }));
 };
