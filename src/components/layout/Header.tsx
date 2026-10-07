@@ -41,27 +41,28 @@ export const Header = () => {
   };
 
   return (
-    <header className="bg-white border-b border-brand-light/50 sticky top-0 z-30 px-6 py-4 flex justify-between items-center shadow-sm shadow-brand-primary/5">
+    <header className="bg-white border-b border-brand-light/50 sticky top-0 z-30 px-6 max-md:px-4 py-4 max-md:py-3 flex justify-between items-center shadow-sm shadow-brand-primary/5">
       {/* LOGO */}
-      <div className="flex items-center gap-3">
-        <div className="bg-brand-light/50 p-2 rounded-xl text-brand-primary">
+      <div className="flex items-center gap-3 max-md:gap-2 min-w-0">
+        <div className="bg-brand-light/50 p-2 rounded-xl text-brand-primary shrink-0">
           <HeartPulse className="w-6 h-6" strokeWidth={2.5} />
         </div>
-        <span className="font-extrabold text-brand-dark tracking-tight text-xl">
+        <span className="font-extrabold text-brand-dark tracking-tight text-xl max-md:text-lg truncate">
           Clínica Torres
         </span>
       </div>
 
       {/* CONTROLES DERECHOS */}
-      <div className="flex items-center gap-2 sm:gap-4">
+      <div className="flex items-center gap-2 sm:gap-4 shrink-0">
         {/* 2. LOS BOTONES DE ADMIN SOLO SE RENDERIZAN SI LA CUENTA ES DEL EQUIPO MÉDICO */}
         {isStaff && (
           <>
             {showClinicalEntry ? (
               <button
                 onClick={() => navigate("/doctor/dashboard")}
-                className="flex items-center gap-2 px-3 py-2 sm:px-4 bg-brand-primary/10 text-brand-primary hover:bg-brand-primary hover:text-white rounded-xl transition-all cursor-pointer font-bold text-sm group"
+                className="flex items-center gap-2 px-3 py-2 sm:px-4 pointer-coarse:min-h-11 bg-brand-primary/10 text-brand-primary hover:bg-brand-primary hover:text-white rounded-xl transition-all cursor-pointer font-bold text-sm group"
                 title="Volver a Consultas"
+                aria-label="Centro Clínico"
               >
                 <LayoutDashboard
                   className="w-5 h-5 group-hover:scale-105 transition-transform"
@@ -72,8 +73,9 @@ export const Header = () => {
             ) : (
               <button
                 onClick={() => navigate("/doctor/admin")}
-                className="flex items-center gap-2 px-3 py-2 sm:px-4 bg-slate-100 text-brand-dark hover:bg-slate-200 rounded-xl transition-all cursor-pointer font-bold text-sm group"
+                className="flex items-center gap-2 px-3 py-2 sm:px-4 pointer-coarse:min-h-11 bg-slate-100 text-brand-dark hover:bg-slate-200 rounded-xl transition-all cursor-pointer font-bold text-sm group"
                 title="Administración del Negocio"
+                aria-label="Administración"
               >
                 <Settings
                   className="w-5 h-5 text-brand-gray group-hover:rotate-45 transition-transform"
@@ -91,8 +93,9 @@ export const Header = () => {
         {/* BOTÓN DE CERRAR SESIÓN (Este sí lo ven todos) */}
         <button
           onClick={handleLogout}
-          className="flex items-center gap-2 p-2 sm:px-4 sm:py-2 text-brand-gray/50 hover:text-red-500 hover:bg-red-50 rounded-xl transition-all cursor-pointer group"
+          className="flex items-center gap-2 p-2 sm:px-4 sm:py-2 pointer-coarse:min-h-11 pointer-coarse:min-w-11 justify-center text-brand-gray/50 hover:text-red-500 hover:bg-red-50 rounded-xl transition-all cursor-pointer group"
           title="Cerrar sesión"
+          aria-label="Cerrar sesión"
         >
           <span className="hidden sm:inline font-bold text-sm">
             Cerrar sesión

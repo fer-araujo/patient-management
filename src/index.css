@@ -32,3 +32,41 @@ body {
   -ms-overflow-style: none;
   scrollbar-width: none;
 }
+
+/*
+  Touch devices (iPad). Lives in the base layer on purpose: an !important
+  declaration in an earlier cascade layer beats an !important utility such as
+  `!text-sm`, so this wins over compact input classes. Inputs that already use
+  a larger size class are left alone.
+*/
+@layer base {
+  html {
+    -webkit-tap-highlight-color: color-mix(
+      in srgb,
+      var(--color-brand-primary) 15%,
+      transparent
+    );
+  }
+
+  /* No double-tap zoom delay on controls. */
+  button,
+  a,
+  [role="button"],
+  [role="option"],
+  [role="combobox"] {
+    touch-action: manipulation;
+  }
+
+  @media (pointer: coarse) {
+    /* iOS Safari zooms the page when a focused field is under 16px. */
+    :is(input, select, textarea):not(
+        [class*="text-lg"],
+        [class*="text-xl"],
+        [class*="text-2xl"],
+        [class*="text-3xl"],
+        [class*="text-4xl"]
+      ) {
+      font-size: 16px !important;
+    }
+  }
+}

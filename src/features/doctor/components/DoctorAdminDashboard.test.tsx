@@ -25,7 +25,7 @@ const openFinances = async (role: "doctor" | "admin") => {
   supabaseMock.onFrom("inventory_movements", { data: [] });
 
   render(<DoctorAdminDashboard />);
-  await userEvent.setup().click(screen.getByText("Finanzas y Métricas"));
+  await userEvent.setup().click(screen.getByRole("button", { name: "Finanzas y Métricas" }));
   await screen.findByText("Movimientos recientes");
 };
 

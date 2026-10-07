@@ -14,6 +14,7 @@ import {
 } from "../../../../lib/services/financeService";
 import { formatMXN } from "../../../../lib/services/inventoryService";
 import { COURTESY_COLOR, EXPENSES_COLOR, INCOME_COLOR } from "./financeColors";
+import { useIsPhone } from "../../../../components/ui/useIsPhone";
 
 // SVG fills cannot read the Tailwind tokens, so the hex values live here
 // (colors chosen by the owner for legibility on this doctor-only screen):
@@ -43,10 +44,13 @@ interface ChartRow extends MonthlyFinance {
   fullLabel: string;
 }
 
-/** About four round steps (1, 2, 2.5 or 5 × 10^n) from 0 up past `max`. */
-const niceTicks = (max: number): number[] => {
+/**
+ * About `steps` round steps (1, 2, 2.5 or 5 × 10^n) from 0 up past `max`:
+ * four on wide screens, three on a phone so the labels stay readable.
+ */
+const niceTicks = (max: number, steps = 4): number[] => {
   if (max <= 0) return [0];
-  const raw = max / 4;
+  const raw = max / steps;
   const pow = 10 ** Math.floor(Math.log10(raw));
   const step = [1, 2, 2.5, 5, 10].map((m) => m * pow).find((s) => s >= raw)!;
   const top = Math.ceil(max / step) * step;
@@ -149,17 +153,19 @@ interface Props {
  * could have been earned — beside a separate supply-spending bar.
  */
 export const FinanceChart = ({ data }: Props) => {
+  const isPhone = useIsPhone();
   const rows: ChartRow[] = data.map((d) => ({ ...d, ...monthLabels(d.month) }));
   const isEmpty = rows.every(
     (r) => r.income === 0 && r.courtesy === 0 && r.expenses === 0,
   );
   const ticks = niceTicks(
     Math.max(0, ...rows.map((r) => Math.max(r.income + r.courtesy, r.expenses))),
+    isPhone ? 3 : 4,
   );
 
   return (
     <figure className="space-y-4">
-      <div className="flex flex-wrap items-center gap-4" aria-hidden="true">
+      <div className="flex flex-wrap items-center gap-4 max-md:gap-x-4 max-md:gap-y-2" aria-hidden="true">
         {SERIES.map((s) => (
           <span key={s.key} className="flex items-center gap-2 text-sm font-bold text-brand-gray">
             <span className="w-3 h-3 rounded-sm" style={{ backgroundColor: s.color }} />
@@ -177,7 +183,7 @@ export const FinanceChart = ({ data }: Props) => {
           <ResponsiveContainer width="100%" height="100%">
             <BarChart
               data={rows}
-              margin={{ top: 8, right: 8, bottom: 0, left: 0 }}
+              margin={{ top: 8, right: isPhone ? 4 : 8, bottom: 0, left: 0 }}
               barGap={2}
               barCategoryGap="30%"
               title="Ingresos, cortesías y gastos por mes"
@@ -187,7 +193,7 @@ export const FinanceChart = ({ data }: Props) => {
                 dataKey="label"
                 tickLine={false}
                 axisLine={{ stroke: AXIS_COLOR }}
-                tick={{ fill: TEXT_COLOR, fontSize: 14, fontWeight: 700 }}
+                tick={{ fill: TEXT_COLOR, fontSize: isPhone ? 13 : 14, fontWeight: 700 }}
                 tickMargin={8}
                 // On a phone, skip labels evenly instead of leaving odd gaps.
                 interval="equidistantPreserveStart"
@@ -199,7 +205,8 @@ export const FinanceChart = ({ data }: Props) => {
                 tickLine={false}
                 axisLine={false}
                 tick={{ fill: TEXT_COLOR, fontSize: 13 }}
-                width={64}
+                // Short "$12k" labels: a narrower gutter leaves the bars more room.
+                width={isPhone ? 48 : 64}
               />
               <Tooltip
                 content={FinanceTooltip}
@@ -211,7 +218,7 @@ export const FinanceChart = ({ data }: Props) => {
                 name="Ingresos"
                 stackId="revenue"
                 fill={INCOME_COLOR}
-                maxBarSize={24}
+                maxBarSize={isPhone ? 16 : 24}
                 shape={IncomeShape}
               />
               <Bar
@@ -219,14 +226,14 @@ export const FinanceChart = ({ data }: Props) => {
                 name="Cortesías (no cobrado)"
                 stackId="revenue"
                 fill={COURTESY_COLOR}
-                maxBarSize={24}
+                maxBarSize={isPhone ? 16 : 24}
                 shape={TopShape}
               />
               <Bar
                 dataKey="expenses"
                 name="Gastos"
                 fill={EXPENSES_COLOR}
-                maxBarSize={24}
+                maxBarSize={isPhone ? 16 : 24}
                 shape={TopShape}
               />
             </BarChart>

@@ -1,11 +1,12 @@
 import { describe, expect, it, vi } from "vitest";
-import { render, screen, waitFor, within } from "@testing-library/react";
+import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import toast from "react-hot-toast";
 import { supabaseMock } from "../../../../test/supabaseMock";
 import { CalendarProvider } from "../../context/CalendarProvider";
 import type { DashboardAppointment } from "../../../../lib/services/clinicService";
 import { CalendarTab } from "./CalendarTab";
+import { mockPhoneViewport } from "../../../../test/viewport";
 
 // Default schedule: Mon-Fri 08:00 AM - 06:00 PM, Sat 09:00 AM - 02:00 PM,
 // Sunday closed. October 2026: the 15th is a Thursday, the 18th a Sunday.
@@ -557,5 +558,89 @@ describe("CalendarTab prescription of a finalized consultation", () => {
 
     expect(screen.getByRole("button", { name: "Iniciar" })).toBeInTheDocument();
     expect(supabaseMock.queries("prescriptions")).toHaveLength(0);
+  });
+});
+
+describe("CalendarTab on a touch screen", () => {
+  it("tapping an appointment in the month view opens it, not the day's booking flow", async () => {
+    setNow(new Date(2026, 9, 14, 7, 0));
+    const { user } = renderTab([appt({})]);
+
+    await openMonth(user);
+    await user.click(screen.getByText("10:00 AM - Ana"));
+
+    expect(await screen.findByText("Detalles de la Cita")).toBeInTheDocument();
+    expect(screen.queryByText("Gestión de Agenda")).toBeNull();
+    expect(screen.queryByRole("button", { name: "Agendar Cita" })).toBeNull();
+  });
+
+  it('"Ir a hoy" is a button that brings the calendar back to the current month', async () => {
+    setNow(new Date(2026, 9, 14, 7, 0));
+    const { user } = renderTab([]);
+
+    for (let i = 0; i < 3; i++) {
+      await user.click(screen.getByRole("button", { name: "Siguiente" }));
+    }
+    expect(screen.getByRole("heading", { name: /noviembre 2026/i })).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "Ir a hoy" }));
+    expect(screen.getByRole("heading", { name: /octubre 2026/i })).toBeInTheDocument();
+  });
+
+  it('"Horarios de Clínica" is reachable below desktop widths and opens the weekly schedule', async () => {
+    setNow(new Date(2026, 9, 14, 7, 0));
+    const { user } = renderTab([]);
+
+    const settings = screen.getByRole("button", { name: "Horarios de Clínica" });
+    expect(settings).not.toHaveClass("hidden");
+
+    await user.click(settings);
+    expect(await screen.findByText("Configuración Semanal")).toBeInTheDocument();
+  });
+});
+
+describe("CalendarTab on a phone (440 px)", () => {
+  it("opens on Día, offers no Semana, and a month day opens that day", async () => {
+    mockPhoneViewport();
+    setNow(new Date(2026, 9, 14, 7, 0));
+    const { user } = renderTab([
+      appt({}),
+      appt({ id: "a-luis", patientName: "Luis Pérez", time: "11:00 AM" }),
+    ]);
+
+    expect(screen.getByRole("button", { name: "Día" })).toHaveAttribute("aria-pressed", "true");
+    expect(screen.queryByRole("button", { name: "Semana" })).toBeNull();
+
+    await user.click(screen.getByRole("button", { name: "Mes" }));
+    // Compact cells: a count per day instead of appointment chips.
+    const thursday = await screen.findByRole("button", {
+      name: "jueves, 15 de octubre: 2 citas",
+    });
+    expect(screen.queryByText("10:00 AM - Ana")).toBeNull();
+    expect(within(thursday).getByText("2")).toBeInTheDocument();
+
+    await user.click(thursday);
+    expect(screen.getByRole("button", { name: "Día" })).toHaveAttribute("aria-pressed", "true");
+    expect(await screen.findByText("Luis Pérez")).toBeInTheDocument();
+    expect(screen.getByText("Ana Pérez")).toBeInTheDocument();
+  });
+
+  it("a Semana chosen in landscape shows as Día in portrait and comes back after rotating again", async () => {
+    // Landscape (956 px) is the tablet layout, with Semana.
+    const viewport = mockPhoneViewport("landscape");
+    setNow(new Date(2026, 9, 14, 7, 0));
+    renderTab([]);
+    expect(screen.getByRole("button", { name: "Semana" })).toHaveAttribute("aria-pressed", "true");
+
+    act(() => viewport.rotate("portrait"));
+    expect(screen.queryByRole("button", { name: "Semana" })).toBeNull();
+    expect(screen.getByRole("button", { name: "Día" })).toHaveAttribute("aria-pressed", "true");
+
+    act(() => viewport.rotate("landscape"));
+    expect(await screen.findByRole("button", { name: "Semana" })).toHaveAttribute(
+      "aria-pressed",
+      "true",
+    );
+    expect(screen.getByRole("button", { name: "Día" })).toHaveAttribute("aria-pressed", "false");
   });
 });

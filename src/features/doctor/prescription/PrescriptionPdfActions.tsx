@@ -331,7 +331,7 @@ export const PrescriptionPdfActions = ({
                     ? "Se abrirá WhatsApp con el chat del paciente y se descargará el PDF. Adjunta ahí el archivo descargado."
                     : "Se abrirá WhatsApp y se descargará el PDF. Elige el contacto y adjunta ahí el archivo descargado."}
               </p>
-              <div className="pt-4 border-t border-slate-100 flex gap-3">
+              <div className="pt-4 border-t border-slate-100 flex gap-3 max-md:flex-col-reverse max-md:*:w-full max-md:*:flex-none">
                 <Button
                   type="button"
                   variant="outline"
@@ -364,7 +364,7 @@ export const PrescriptionPdfActions = ({
               <p className="text-base text-brand-dark leading-relaxed">
                 Para emitir la receta en PDF falta: {missing?.join(", ")}.
               </p>
-              <div className="pt-4 border-t border-slate-100 flex gap-3">
+              <div className="pt-4 border-t border-slate-100 flex gap-3 max-md:flex-col-reverse max-md:*:w-full max-md:*:flex-none">
                 <Button
                   type="button"
                   variant="outline"

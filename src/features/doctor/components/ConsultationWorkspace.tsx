@@ -29,6 +29,7 @@ import {
 import { Button } from "../../../components/ui/Button";
 import { Modal } from "../../../components/ui/Modal";
 import { Dropdown } from "../../../components/ui/Dropdown";
+import { TOUCH_ICON_BUTTON } from "../../../components/ui/touchTargets";
 import { type DashboardAppointment } from "../../../lib/services/clinicService";
 import {
   ANONYMIZED_PATIENT_MESSAGE,
@@ -92,6 +93,15 @@ import {
   isMedicationComplete,
   sameMedication,
 } from "../prescription/medication";
+import {
+  EMPTY_GESTURE,
+  isIgnoredPointer,
+  pointerDown,
+  pointerMove,
+  pointerUp,
+  type GestureState,
+  type PanChange,
+} from "./photoViewerGestures";
 
 interface ConsultationWorkspaceProps {
   appointment?: DashboardAppointment;
@@ -112,19 +122,22 @@ type WorkspaceTab = "notas" | "receta" | "fotos" | "peso";
 interface WorkspaceTabDef {
   id: WorkspaceTab;
   label: string;
+  /** Visible label on phones, where all tabs must fit one row. */
+  shortLabel: string;
   icon: React.ElementType;
 }
 
 const WORKSPACE_TABS: WorkspaceTabDef[] = [
-  { id: "notas", label: "Notas Clínicas (SOAP)", icon: FileText },
-  { id: "receta", label: "Recetas e Indicaciones", icon: Pill },
-  { id: "fotos", label: "Galería y Estudios", icon: Camera },
+  { id: "notas", label: "Notas Clínicas (SOAP)", shortLabel: "Notas", icon: FileText },
+  { id: "receta", label: "Recetas e Indicaciones", shortLabel: "Recetas", icon: Pill },
+  { id: "fotos", label: "Galería y Estudios", shortLabel: "Galería", icon: Camera },
 ];
 
 /** Shown only for patients with weight tracking on (patients.weight_tracking). */
 const WEIGHT_TAB: WorkspaceTabDef = {
   id: "peso",
   label: "Control de peso",
+  shortLabel: "Peso",
   icon: Scale,
 };
 
@@ -261,6 +274,10 @@ const AutoGrowTextarea = ({
   );
 };
 
+/** Photo viewer zoom range, in percent. */
+const MIN_ZOOM = 50;
+const MAX_ZOOM = 300;
+
 /**
  * Height of the app's sticky header, so the consultation bar sticks right
  * below it instead of covering it. Follows browser zoom and text wrapping.
@@ -367,6 +384,8 @@ export const ConsultationWorkspace = ({
   const [isDragging, setIsDragging] = useState(false);
   const [dragStart, setDragStart] = useState({ x: 0, y: 0 });
   const [scrollStart, setScrollStart] = useState({ left: 0, top: 0 });
+  // Fingers (or mouse) currently on the photo, and the pinch being made.
+  const gestureRef = useRef<GestureState>(EMPTY_GESTURE);
 
   const appointmentId = appointment?.id;
   const stickyTop = useStickyHeaderOffset();
@@ -883,32 +902,80 @@ export const ConsultationWorkspace = ({
     }
   };
 
+  // Forgets every pointer on the photo, e.g. when the photo changes mid-pinch.
+  const resetGesture = () => {
+    gestureRef.current = EMPTY_GESTURE;
+    setIsDragging(false);
+  };
+
   // Función para cambiar de foto y resetear el zoom
   const handleChangePhoto = (newIndex: number) => {
     setPhotoViewerIndex(newIndex);
     setZoomLevel(100); // Resetea el zoom al cambiar de imagen
+    resetGesture();
   };
 
-  const handleMouseDown = (e: React.MouseEvent) => {
+  // Pointer events so the same code pans with a mouse, a pen or a finger.
+  // The image area has `touch-action: none`: one finger drags the photo, two
+  // fingers pinch-zoom it (instead of zooming the whole page).
+  const startPan = (x: number, y: number) => {
     if (!imageContainerRef.current) return;
     setIsDragging(true);
-    setDragStart({ x: e.pageX, y: e.pageY });
+    setDragStart({ x, y });
     setScrollStart({
       left: imageContainerRef.current.scrollLeft,
       top: imageContainerRef.current.scrollTop,
     });
   };
 
-  const handleMouseMove = (e: React.MouseEvent) => {
-    if (!isDragging || !imageContainerRef.current) return;
+  const applyPan = (pan: PanChange) => {
+    if (pan.type === "start") startPan(pan.from.x, pan.from.y);
+    else if (pan.type === "stop") setIsDragging(false);
+  };
+
+  const handlePointerDown = (e: React.PointerEvent<HTMLDivElement>) => {
+    if (!imageContainerRef.current || isIgnoredPointer(e)) return;
+    imageContainerRef.current.setPointerCapture?.(e.pointerId);
+    const next = pointerDown(
+      gestureRef.current,
+      e.pointerId,
+      { x: e.clientX, y: e.clientY },
+      zoomLevel,
+    );
+    gestureRef.current = next.state;
+    applyPan(next.pan);
+  };
+
+  const handlePointerMove = (e: React.PointerEvent<HTMLDivElement>) => {
+    if (!imageContainerRef.current) return;
+    const next = pointerMove(
+      gestureRef.current,
+      e.pointerId,
+      { x: e.clientX, y: e.clientY },
+      { min: MIN_ZOOM, max: MAX_ZOOM },
+    );
+    gestureRef.current = next.state;
+    const { result } = next;
+    if (result.type === "ignore") return;
+    if (result.type === "pinch") {
+      if (result.zoom !== null) setZoomLevel(result.zoom);
+      return;
+    }
+    if (!isDragging) return;
     e.preventDefault();
-    const dx = e.pageX - dragStart.x;
-    const dy = e.pageY - dragStart.y;
+    const dx = e.clientX - dragStart.x;
+    const dy = e.clientY - dragStart.y;
     imageContainerRef.current.scrollLeft = scrollStart.left - dx;
     imageContainerRef.current.scrollTop = scrollStart.top - dy;
   };
 
-  const handleMouseUp = () => setIsDragging(false);
+  // Also runs on lostpointercapture, which follows every pointerup; releasing
+  // an already-released pointer is a no-op, so the other finger keeps panning.
+  const handlePointerUp = (e: React.PointerEvent<HTMLDivElement>) => {
+    const next = pointerUp(gestureRef.current, e.pointerId, zoomLevel);
+    gestureRef.current = next.state;
+    applyPan(next.pan);
+  };
 
   const imageFiles = patientFiles.filter((f) => f.isImage);
   const docFiles = patientFiles.filter((f) => !f.isImage);
@@ -923,24 +990,24 @@ export const ConsultationWorkspace = ({
       {/* The page is the only scroll area; this bar stays in view below the
           app header so "Finalizar Consulta" is always one click away. */}
       <div
-        className="bg-white border-b border-slate-200 px-6 py-3 sticky z-40 shadow-sm flex items-center justify-between shrink-0"
+        className="bg-white border-b border-slate-200 px-6 max-md:px-3 py-3 max-md:py-2 [@media(pointer:coarse)_and_(max-height:900px)]:py-1 sticky z-40 shadow-sm flex items-center justify-between gap-3 max-md:gap-2 shrink-0"
         style={{ top: stickyTop }}
       >
-        <div className="flex items-center gap-4">
+        <div className="flex items-center gap-4 max-md:gap-2 min-w-0">
           <button type="button"
             onClick={handleBackClick}
             disabled={isSaving || (!isReviewMode && isLoadingHistory)}
             aria-label="Guardar borrador y volver"
-            className="p-2 rounded-xl hover:bg-slate-100 text-brand-gray transition-colors cursor-pointer shrink-0 disabled:opacity-50"
+            className={`p-2 ${TOUCH_ICON_BUTTON} flex items-center justify-center rounded-xl hover:bg-slate-100 text-brand-gray transition-colors cursor-pointer shrink-0 disabled:opacity-50`}
           >
             <ArrowLeft className="w-5 h-5" />
           </button>
-          <div>
+          <div className="min-w-0">
             <div className="flex items-center gap-2">
               {!isReviewMode && (
                 <span className="animate-pulse w-2 h-2 bg-rose-500 rounded-full"></span>
               )}
-              <h2 className="text-base font-bold text-brand-dark leading-none truncate max-w-50 sm:max-w-xs">
+              <h2 className="text-base font-bold text-brand-dark leading-none truncate max-w-50 sm:max-w-xs max-md:max-w-none">
                 {isReviewMode ? "Revisión de Expediente" : "Consulta Activa"}
               </h2>
             </div>
@@ -952,11 +1019,11 @@ export const ConsultationWorkspace = ({
           </div>
         </div>
 
-        <div className="flex items-center gap-3">
+        <div className="flex items-center gap-3 shrink-0">
           <Button type="button"
             onClick={handleFinishClick}
             disabled={isSaving || isEditorLocked}
-            className={`flex items-center gap-2 px-5 py-2.5 rounded-xl text-white cursor-pointer font-bold border-none shadow-sm text-sm whitespace-nowrap disabled:opacity-70 ${isReviewMode ? "bg-slate-800 hover:bg-slate-900" : "bg-teal-500 hover:bg-teal-600"}`}
+            className={`flex items-center gap-2 px-5 max-md:px-3 py-2.5 pointer-coarse:min-h-11 max-md:min-h-11 rounded-xl text-white cursor-pointer font-bold border-none shadow-sm text-sm whitespace-nowrap disabled:opacity-70 ${isReviewMode ? "bg-slate-800 hover:bg-slate-900" : "bg-teal-500 hover:bg-teal-600"}`}
           >
             {isSaving ? (
               <Loader2 className="w-4 h-4 animate-spin shrink-0" />
@@ -967,13 +1034,22 @@ export const ConsultationWorkspace = ({
               ? "Guardando..."
               : isReviewMode
                 ? "Cerrar Expediente"
-                : "Finalizar Consulta"}
+                : (
+                  // "Finalizar" alone on phones, so the bar fits one row.
+                  <>
+                    Finalizar{" "}
+                    <span className="max-md:hidden">Consulta</span>
+                  </>
+                )}
           </Button>
         </div>
       </div>
 
-      <div className="max-w-360 mx-auto px-4 sm:px-6 pt-6 grid grid-cols-1 lg:grid-cols-12 gap-6 flex-1 w-full">
-        <div className="lg:col-span-3 space-y-4">
+      <div className="max-w-360 mx-auto px-4 sm:px-6 pt-6 grid grid-cols-1 md:grid-cols-2 lg:grid-cols-12 gap-6 flex-1 w-full">
+        {/* Portrait iPad (md): the side cards join the page grid two per row
+            above the notes, instead of a tall single column; lg+ keeps the
+            3/9 sidebar. */}
+        <div className="max-md:contents md:contents lg:block lg:col-span-3 space-y-4 md:space-y-0 lg:space-y-4">
           <div className="bg-white rounded-2xl p-5 border border-slate-200 shadow-sm text-center relative overflow-hidden">
             <div className="absolute top-0 left-0 w-full h-12 bg-brand-light/30"></div>
             <div className="w-16 h-16 bg-white border-4 border-white rounded-full mx-auto relative z-10 shadow-sm flex items-center justify-center text-brand-gray mt-1">
@@ -1010,7 +1086,7 @@ export const ConsultationWorkspace = ({
                   type="button"
                   onClick={() => setIsBackgroundOpen(true)}
                   disabled={backgroundForm === null}
-                  className="text-xs font-bold py-2 px-3 rounded-lg border border-slate-200 bg-white text-slate-600 hover:bg-slate-100 hover:text-brand-dark flex items-center gap-1.5 shrink-0 cursor-pointer shadow-sm"
+                  className="text-xs font-bold py-2 px-3 pointer-coarse:min-h-11 pointer-coarse:text-sm rounded-lg border border-slate-200 bg-white text-slate-600 hover:bg-slate-100 hover:text-brand-dark flex items-center gap-1.5 shrink-0 cursor-pointer shadow-sm"
                 >
                   <Edit2 className="w-4 h-4" /> Editar
                 </button>
@@ -1066,14 +1142,16 @@ export const ConsultationWorkspace = ({
                 Vitales
               </h4>
               <div className="grid grid-cols-2 gap-2">
-                <div className="bg-slate-50 p-2 rounded-lg border border-slate-100">
+                {/* Touch, narrow sidebar (iPad landscape): the two 64 px pressure
+                    inputs need the full width of the card. */}
+                <div className="bg-slate-50 p-2 rounded-lg border border-slate-100 pointer-coarse:lg:col-span-2">
                   <p className="text-[10px] font-bold text-brand-gray uppercase">
                     Presión arterial
                   </p>
                   <div className="flex items-center gap-1 mt-0.5 text-base font-bold text-brand-dark">
                     <input
                       type="text"
-                      inputMode="numeric"
+                      inputMode="decimal"
                       aria-label="Presión sistólica"
                       disabled={isEditorLocked}
                       placeholder="—"
@@ -1084,12 +1162,12 @@ export const ConsultationWorkspace = ({
                           bpSys: e.target.value.replace(/\D/g, "").slice(0, 3),
                         })
                       }
-                      className="w-8 bg-transparent text-center focus:outline-none focus:bg-white focus:ring-1 focus:ring-brand-primary/30 rounded placeholder:font-normal placeholder:text-brand-dark/50"
+                      className="w-8 pointer-coarse:w-16 pointer-coarse:min-h-11 bg-transparent text-center focus:outline-none focus:bg-white focus:ring-1 focus:ring-brand-primary/30 rounded placeholder:font-normal placeholder:text-brand-dark/50"
                     />
                     <span className="text-slate-400">/</span>
                     <input
                       type="text"
-                      inputMode="numeric"
+                      inputMode="decimal"
                       aria-label="Presión diastólica"
                       disabled={isEditorLocked}
                       placeholder="—"
@@ -1100,7 +1178,7 @@ export const ConsultationWorkspace = ({
                           bpDia: e.target.value.replace(/\D/g, "").slice(0, 3),
                         })
                       }
-                      className="w-8 bg-transparent text-center focus:outline-none focus:bg-white focus:ring-1 focus:ring-brand-primary/30 rounded placeholder:font-normal placeholder:text-brand-dark/50"
+                      className="w-8 pointer-coarse:w-16 pointer-coarse:min-h-11 bg-transparent text-center focus:outline-none focus:bg-white focus:ring-1 focus:ring-brand-primary/30 rounded placeholder:font-normal placeholder:text-brand-dark/50"
                     />
                   </div>
                 </div>
@@ -1110,7 +1188,7 @@ export const ConsultationWorkspace = ({
                   </p>
                   <input
                     type="text"
-                    inputMode="numeric"
+                    inputMode="decimal"
                     aria-label="Oxigenación"
                       disabled={isEditorLocked}
                     placeholder="—"
@@ -1121,7 +1199,7 @@ export const ConsultationWorkspace = ({
                         spo2: e.target.value.replace(/\D/g, "").slice(0, 3),
                       })
                     }
-                    className="w-full bg-transparent text-base font-bold text-brand-dark focus:outline-none mt-0.5 placeholder:font-normal placeholder:text-brand-dark/50"
+                    className="w-full pointer-coarse:min-h-11 bg-transparent text-base font-bold text-brand-dark focus:outline-none mt-0.5 placeholder:font-normal placeholder:text-brand-dark/50"
                   />
                 </div>
                 <div className="bg-slate-50 p-2 rounded-lg border border-slate-100">
@@ -1141,7 +1219,7 @@ export const ConsultationWorkspace = ({
                         weight: e.target.value.replace(/[^\d.]/g, "").slice(0, 5),
                       })
                     }
-                    className="w-full bg-transparent text-base font-bold text-brand-dark focus:outline-none mt-0.5 placeholder:font-normal placeholder:text-brand-dark/50"
+                    className="w-full pointer-coarse:min-h-11 bg-transparent text-base font-bold text-brand-dark focus:outline-none mt-0.5 placeholder:font-normal placeholder:text-brand-dark/50"
                   />
                 </div>
                 <div className="bg-slate-50 p-2 rounded-lg border border-slate-100">
@@ -1150,7 +1228,7 @@ export const ConsultationWorkspace = ({
                   </p>
                   <input
                     type="text"
-                    inputMode="numeric"
+                    inputMode="decimal"
                     aria-label="Talla"
                       disabled={isEditorLocked}
                     placeholder="Opcional"
@@ -1161,14 +1239,18 @@ export const ConsultationWorkspace = ({
                         height: e.target.value.replace(/\D/g, "").slice(0, 3),
                       })
                     }
-                    className="w-full bg-transparent text-base font-bold text-brand-dark focus:outline-none mt-0.5 placeholder:font-normal placeholder:text-brand-dark/50"
+                    className="w-full pointer-coarse:min-h-11 bg-transparent text-base font-bold text-brand-dark focus:outline-none mt-0.5 placeholder:font-normal placeholder:text-brand-dark/50"
                   />
                 </div>
               </div>
             </div>
           )}
 
-          <div className="bg-white rounded-2xl p-5 border border-slate-200 shadow-sm">
+          {/* Portrait iPad: during a consultation the visit list goes below the
+              notes, so the SOAP fields start on the first screen. */}
+          <div
+            className={`bg-white rounded-2xl p-5 border border-slate-200 shadow-sm ${isReviewMode ? "" : "max-md:order-last md:order-last md:col-span-2 lg:order-none lg:col-span-1"}`}
+          >
             <h4 className="text-xs font-black text-brand-gray uppercase tracking-widest flex items-center gap-1.5 mb-3">
               <Clock className="w-4 h-4 text-brand-primary" /> Historial de
               Visitas
@@ -1219,7 +1301,7 @@ export const ConsultationWorkspace = ({
 
         {/* Natural height, stretched by the grid row to at least the left
             column's height; the notes fill that space (Plan grows). */}
-        <div className="lg:col-span-9 bg-white border border-slate-200 rounded-3xl shadow-sm overflow-hidden flex flex-col">
+        <div className="md:col-span-2 lg:col-span-9 bg-white border border-slate-200 rounded-3xl shadow-sm overflow-hidden flex flex-col">
           <div className="flex border-b border-slate-200 bg-slate-50/80 px-2 pt-2 overflow-x-auto hide-scrollbar shrink-0">
             {visibleTabs.map((tab) => {
               const Icon = tab.icon;
@@ -1227,21 +1309,24 @@ export const ConsultationWorkspace = ({
                 <button type="button"
                   key={tab.id}
                   onClick={() => setActiveTab(tab.id)}
-                  className={`flex items-center gap-2 px-5 py-3 text-sm font-bold border-b-2 transition-all cursor-pointer whitespace-nowrap ${activeTab === tab.id ? "border-brand-primary text-brand-primary bg-white rounded-t-xl" : "border-transparent text-brand-gray hover:text-brand-dark hover:bg-slate-100 rounded-t-xl"}`}
+                  aria-label={tab.label}
+                  className={`flex items-center gap-2 max-md:gap-1.5 px-5 max-md:px-3 py-3 max-md:min-h-11 text-sm font-bold border-b-2 transition-all cursor-pointer whitespace-nowrap ${activeTab === tab.id ? "border-brand-primary text-brand-primary bg-white rounded-t-xl" : "border-transparent text-brand-gray hover:text-brand-dark hover:bg-slate-100 rounded-t-xl"}`}
                 >
-                  <Icon className="w-4 h-4 shrink-0" /> {tab.label}
+                  <Icon className="w-4 h-4 shrink-0" aria-hidden="true" />
+                  <span className="max-md:hidden">{tab.label}</span>
+                  <span className="hidden max-md:inline">{tab.shortLabel}</span>
                 </button>
               );
             })}
           </div>
 
-          <div className="grow flex flex-col p-6">
+          <div className="grow flex flex-col p-6 max-md:p-4">
             {activeTab === "notas" && (
               <div className="flex flex-col grow gap-5">
                 {isReviewMode ? (
                   viewingHistoricalNote ? (
                     <>
-                      <div className="bg-brand-light/10 border border-brand-primary/20 rounded-xl p-4 mb-2 flex items-center justify-between">
+                      <div className="bg-brand-light/10 border border-brand-primary/20 rounded-xl p-4 mb-2 flex items-center justify-between max-md:flex-col max-md:items-start max-md:gap-3">
                         <div>
                           <h3 className="font-bold text-brand-dark text-base">
                             Mostrando expediente del:{" "}
@@ -1401,7 +1486,7 @@ export const ConsultationWorkspace = ({
                           <button
                             type="button"
                             onClick={() => setIsBackgroundOpen(false)}
-                            className="text-xs font-bold py-2 px-3 rounded-lg border border-slate-200 bg-white text-slate-600 hover:bg-slate-100 hover:text-brand-dark flex items-center gap-1.5 shrink-0 cursor-pointer shadow-sm"
+                            className="text-xs font-bold py-2 px-3 pointer-coarse:min-h-11 pointer-coarse:text-sm rounded-lg border border-slate-200 bg-white text-slate-600 hover:bg-slate-100 hover:text-brand-dark flex items-center gap-1.5 shrink-0 cursor-pointer shadow-sm"
                           >
                             <ChevronUp className="w-4 h-4" /> Listo
                           </button>
@@ -1601,9 +1686,9 @@ export const ConsultationWorkspace = ({
                     {localPrescriptions.map((med, idx) => (
                       <div
                         key={`local-${idx}`}
-                        className="bg-brand-light/10 border border-brand-primary/30 p-5 rounded-xl flex items-start justify-between gap-3"
+                        className="bg-brand-light/10 border border-brand-primary/30 p-5 max-md:p-4 rounded-xl flex items-start justify-between gap-3 max-md:flex-wrap"
                       >
-                        <div>
+                        <div className="min-w-0 wrap-break-word">
                           <p className="text-base font-bold text-brand-dark">
                             {med.nombre}{" "}
                             <span className="text-brand-primary font-medium">
@@ -1672,7 +1757,7 @@ export const ConsultationWorkspace = ({
                                   onClick={() => handleCopyPrescription(pres)}
                                   disabled={isEditorLocked}
                                   aria-label={`Copiar toda la receta del ${issuedOn}`}
-                                  className="text-xs font-bold py-2 px-3 rounded-lg border border-slate-200 bg-white text-slate-600 hover:bg-slate-100 hover:text-brand-dark flex items-center gap-1.5 shrink-0 cursor-pointer shadow-sm"
+                                  className="text-xs font-bold py-2 px-3 pointer-coarse:min-h-11 pointer-coarse:text-sm rounded-lg border border-slate-200 bg-white text-slate-600 hover:bg-slate-100 hover:text-brand-dark flex items-center gap-1.5 shrink-0 cursor-pointer shadow-sm"
                                 >
                                   <Copy className="w-4 h-4" /> Copiar todo
                                 </button>
@@ -1682,9 +1767,9 @@ export const ConsultationWorkspace = ({
                           {pres.medications.map((med, mIdx) => (
                             <div
                               key={`hist-${pres.id}-${mIdx}`}
-                              className="bg-slate-50 border border-slate-200 p-5 rounded-xl flex items-start justify-between transition-colors"
+                              className="bg-slate-50 border border-slate-200 p-5 max-md:p-4 rounded-xl flex items-start justify-between max-md:gap-2 transition-colors"
                             >
-                              <div className="flex-1 pr-4">
+                              <div className="flex-1 pr-4 max-md:pr-0 min-w-0 wrap-break-word">
                                 <p className="text-base font-bold text-brand-dark">
                                   {med.nombre}{" "}
                                   <span className="text-brand-gray font-medium">
@@ -1706,7 +1791,7 @@ export const ConsultationWorkspace = ({
                                   onClick={() => handleCopyMedication(med)}
                                   disabled={isEditorLocked}
                                   aria-label={`Copiar ${med.nombre} a la receta de hoy`}
-                                  className="text-xs font-bold py-2 px-3 rounded-lg border border-slate-200 bg-white text-slate-600 hover:bg-slate-100 hover:text-brand-dark flex items-center gap-1.5 shrink-0 cursor-pointer shadow-sm"
+                                  className="text-xs font-bold py-2 px-3 pointer-coarse:min-h-11 pointer-coarse:text-sm rounded-lg border border-slate-200 bg-white text-slate-600 hover:bg-slate-100 hover:text-brand-dark flex items-center gap-1.5 shrink-0 cursor-pointer shadow-sm"
                                 >
                                   <Copy className="w-4 h-4" /> Copiar
                                 </button>
@@ -1913,6 +1998,7 @@ export const ConsultationWorkspace = ({
         onClose={() => {
           setPhotoViewerIndex(null);
           setZoomLevel(100); // Reseteamos el zoom al cerrar
+          resetGesture();
         }}
         title="Visor de Imagen y Estudios"
         hideFooter={true}
@@ -1923,23 +2009,25 @@ export const ConsultationWorkspace = ({
             {/* BARRA DE HERRAMIENTAS FLOTANTE (ZOOM) */}
             <div className="absolute top-4 right-4 z-20 flex bg-white/90 backdrop-blur-md rounded-xl shadow-md border border-slate-200 p-1">
               <button type="button"
-                onClick={() => setZoomLevel((prev) => Math.max(50, prev - 25))}
-                className="p-2 hover:bg-slate-100 text-brand-dark rounded-lg transition-colors cursor-pointer"
+                onClick={() => setZoomLevel((prev) => Math.max(MIN_ZOOM, prev - 25))}
+                className={`p-2 ${TOUCH_ICON_BUTTON} flex items-center justify-center hover:bg-slate-100 text-brand-dark rounded-lg transition-colors cursor-pointer`}
                 title="Alejar"
+                aria-label="Alejar"
               >
                 <ZoomOut className="w-5 h-5" />
               </button>
               <button type="button"
                 onClick={() => setZoomLevel(100)}
-                className="px-3 hover:bg-slate-100 text-brand-dark font-bold text-xs rounded-lg transition-colors cursor-pointer w-14 text-center"
+                className="px-3 pointer-coarse:min-h-11 pointer-coarse:w-16 pointer-coarse:text-sm hover:bg-slate-100 text-brand-dark font-bold text-xs rounded-lg transition-colors cursor-pointer w-14 text-center"
                 title="Restaurar tamaño"
               >
                 {zoomLevel}%
               </button>
               <button type="button"
-                onClick={() => setZoomLevel((prev) => Math.min(300, prev + 25))}
-                className="p-2 hover:bg-slate-100 text-brand-dark rounded-lg transition-colors cursor-pointer"
+                onClick={() => setZoomLevel((prev) => Math.min(MAX_ZOOM, prev + 25))}
+                className={`p-2 ${TOUCH_ICON_BUTTON} flex items-center justify-center hover:bg-slate-100 text-brand-dark rounded-lg transition-colors cursor-pointer`}
                 title="Acercar"
+                aria-label="Acercar"
               >
                 <ZoomIn className="w-5 h-5" />
               </button>
@@ -1953,7 +2041,7 @@ export const ConsultationWorkspace = ({
                     imageFiles.length,
                 )
               }
-              className="absolute left-4 top-1/2 -translate-y-1/2 p-3 bg-white/80 hover:bg-white text-brand-dark shadow-lg border border-slate-200 rounded-full transition-all cursor-pointer z-20"
+              className="absolute left-4 max-md:left-2 top-1/2 -translate-y-1/2 p-3 bg-white/80 hover:bg-white text-brand-dark shadow-lg border border-slate-200 rounded-full transition-all cursor-pointer z-20"
             >
               <ChevronLeft className="w-6 h-6" />
             </button>
@@ -1961,11 +2049,12 @@ export const ConsultationWorkspace = ({
             {/* CONTENEDOR DE LA IMAGEN CON SCROLL Y DRAG */}
             <div
               ref={imageContainerRef}
-              onMouseDown={handleMouseDown}
-              onMouseMove={handleMouseMove}
-              onMouseUp={handleMouseUp}
-              onMouseLeave={handleMouseUp}
-              className={`w-full h-[60vh] overflow-auto bg-slate-50/50 select-none ${zoomLevel > 100 ? (isDragging ? "cursor-grabbing" : "cursor-grab") : "cursor-default"}`}
+              onPointerDown={handlePointerDown}
+              onPointerMove={handlePointerMove}
+              onPointerUp={handlePointerUp}
+              onPointerCancel={handlePointerUp}
+              onLostPointerCapture={handlePointerUp}
+              className={`w-full h-[60vh] overflow-auto bg-slate-50/50 select-none touch-none ${zoomLevel > 100 ? (isDragging ? "cursor-grabbing" : "cursor-grab") : "cursor-default"}`}
               style={{
                 backgroundImage:
                   "radial-gradient(#e2e8f0 1px, transparent 1px)",
@@ -1996,15 +2085,15 @@ export const ConsultationWorkspace = ({
               onClick={() =>
                 handleChangePhoto((photoViewerIndex + 1) % imageFiles.length)
               }
-              className="absolute right-4 top-1/2 -translate-y-1/2 p-3 bg-white/80 hover:bg-white text-brand-dark shadow-lg border border-slate-200 rounded-full transition-all cursor-pointer z-20"
+              className="absolute right-4 max-md:right-2 top-1/2 -translate-y-1/2 p-3 bg-white/80 hover:bg-white text-brand-dark shadow-lg border border-slate-200 rounded-full transition-all cursor-pointer z-20"
             >
               <ChevronRight className="w-6 h-6" />
             </button>
 
             {/* PIE DE FOTO (INFO) */}
-            <div className="absolute bottom-0 w-full bg-white/90 backdrop-blur-md border-t border-slate-200 p-4 flex justify-between items-center z-20">
-              <div>
-                <p className="text-sm font-bold text-brand-dark">
+            <div className="absolute bottom-0 w-full bg-white/90 backdrop-blur-md border-t border-slate-200 p-4 max-md:p-3 flex justify-between items-center gap-3 z-20">
+              <div className="min-w-0">
+                <p className="text-sm font-bold text-brand-dark truncate">
                   {imageFiles[photoViewerIndex].originalName}
                 </p>
                 <p className="text-xs text-brand-gray mt-0.5">
@@ -2014,7 +2103,7 @@ export const ConsultationWorkspace = ({
                   ).toLocaleDateString("es-MX")}
                 </p>
               </div>
-              <span className="text-xs font-bold bg-brand-light/30 text-brand-primary px-3 py-1.5 rounded-lg uppercase tracking-wider">
+              <span className="text-xs font-bold bg-brand-light/30 text-brand-primary px-3 py-1.5 rounded-lg uppercase tracking-wider shrink-0">
                 Foto {photoViewerIndex + 1} de {imageFiles.length}
               </span>
             </div>

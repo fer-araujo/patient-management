@@ -49,6 +49,7 @@ const moneyColumn = (
 const COLUMNS: ColumnDef<TableRow>[] = [
   {
     header: "Servicio",
+    mobileRole: "title",
     cell: (row) => (
       <span className={textClasses(row)}>
         {row.label}
@@ -64,7 +65,7 @@ const COLUMNS: ColumnDef<TableRow>[] = [
   moneyColumn("Cobrado", (r) => r.charged),
   moneyColumn("Cortesías", (r) => r.courtesyValue),
   moneyColumn("Insumos", (r) => r.suppliesCost),
-  moneyColumn("Ganancia", (r) => r.profit, true),
+  { ...moneyColumn("Ganancia", (r) => r.profit, true), mobileRole: "status" },
 ];
 
 interface Props {
@@ -73,7 +74,7 @@ interface Props {
 
 /** "Ganancia por procedimiento": charged vs. supplies used, per service. */
 export const ProcedureProfitTable = ({ summary }: Props) => (
-  <div className="-mx-6">
+  <div className="-mx-6 max-md:-mx-4">
     <DataGrid
       data={buildRows(summary)}
       columns={COLUMNS}

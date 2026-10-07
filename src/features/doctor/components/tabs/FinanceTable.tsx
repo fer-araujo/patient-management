@@ -56,6 +56,7 @@ const moneyColumn = (
   pick: (r: TableRow) => number,
   options: { signed?: boolean; color?: string } = {},
 ): ColumnDef<TableRow> => ({
+  mobileLabel: header,
   // A dot in the series color ties the column to its bar in the chart; the
   // numbers themselves stay in text ink.
   header: options.color ? (
@@ -85,12 +86,16 @@ const moneyColumn = (
 const COLUMNS: ColumnDef<TableRow>[] = [
   {
     header: "Mes",
+    mobileRole: "title",
     cell: (row) => <span className={textClasses(row)}>{row.label}</span>,
   },
   moneyColumn("Ingresos", (r) => r.income, { color: INCOME_COLOR }),
   moneyColumn("Cortesías", (r) => r.courtesy, { color: COURTESY_COLOR }),
   moneyColumn("Gastos", (r) => r.expenses, { color: EXPENSES_COLOR }),
-  moneyColumn("Ganancia", (r) => r.profit, { signed: true }),
+  {
+    ...moneyColumn("Ganancia", (r) => r.profit, { signed: true }),
+    mobileRole: "status",
+  },
 ];
 
 interface Props {
@@ -99,7 +104,7 @@ interface Props {
 
 /** The chart's values as a table: the "Tabla" view of the chart card. */
 export const FinanceTable = ({ data }: Props) => (
-  <div className="-mx-6">
+  <div className="-mx-6 max-md:-mx-4">
     <DataGrid
       data={buildFinanceTableRows(data)}
       columns={COLUMNS}

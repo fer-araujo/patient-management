@@ -207,6 +207,7 @@ export const AuditLogTab = () => {
   const columns: ColumnDef<AuditEntry>[] = [
     {
       header: "Fecha",
+      mobileRole: "subtitle",
       cell: (e) => (
         <span className="text-sm text-brand-gray whitespace-nowrap">
           {formatDateTime(e.occurredAt)}
@@ -215,18 +216,21 @@ export const AuditLogTab = () => {
     },
     {
       header: "Quién",
+      mobileRole: "meta",
       cell: (e) => (
         <span className="text-sm font-bold text-brand-dark">{actorLabel(e)}</span>
       ),
     },
     {
       header: "Acción",
+      mobileRole: "title",
       cell: (e) => (
         <span className="text-sm text-brand-dark">{actionLabel(e)}</span>
       ),
     },
     {
       header: "Paciente",
+      mobileRole: "meta",
       cell: (e) => (
         <span className="text-sm text-brand-dark">
           {e.patientId
@@ -237,6 +241,8 @@ export const AuditLogTab = () => {
     },
     {
       header: "Cambios",
+      mobileRole: "meta",
+      mobileWide: true,
       cell: (e) => (
         <span className="text-sm text-brand-gray">
           {e.action === "UPDATE" && e.changedColumns.length > 0

@@ -32,10 +32,10 @@ export const PrescriberProfileButton = () => {
       <button
         type="button"
         onClick={() => setIsOpen(true)}
-        className="flex items-center gap-3 min-h-11 px-5 py-2.5 rounded-full text-base font-bold border transition-all cursor-pointer bg-slate-100 border-slate-200 text-brand-dark"
+        className="flex items-center gap-3 min-h-11 px-5 max-md:px-4 py-2.5 max-md:w-full rounded-full text-base font-bold border transition-all cursor-pointer bg-slate-100 border-slate-200 text-brand-dark"
       >
         <FileSignature className="w-5 h-5" strokeWidth={2.5} aria-hidden="true" />
-        <span>Datos de la receta</span>
+        <span className="max-md:flex-1 max-md:text-left">Datos de la receta</span>
         {isComplete === false && (
           <span className="text-sm font-bold text-amber-700 bg-amber-50 border border-amber-200 px-2 py-0.5 rounded-md">
             Faltan datos

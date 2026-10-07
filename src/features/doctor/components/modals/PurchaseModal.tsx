@@ -206,7 +206,7 @@ export const PurchaseModal = ({
           </p>
         )}
 
-        <div className="pt-4 mt-2 border-t border-brand-light flex gap-3 justify-end">
+        <div className="pt-4 mt-2 border-t border-brand-light flex gap-3 justify-end max-md:flex-col-reverse max-md:*:w-full max-md:*:flex-none">
           <Button
             type="button"
             variant="outline"

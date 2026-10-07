@@ -340,3 +340,22 @@ describe("InboxTab shared clock", () => {
     expect(vi.getTimerCount()).toBe(0);
   });
 });
+
+// A tablet has no hover, so the full reason cannot live only in a tooltip.
+describe("InboxTab reason on touch screens", () => {
+  it("shows a long reason clamped and expands it with a tap", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(NOW);
+    const reason = "Dolor en la rodilla derecha desde hace tres semanas al subir escaleras";
+    renderInbox([appt({ id: "r", patientName: "Rosa Motivo", reason })]);
+    const user = userEvent.setup();
+
+    const toggle = screen.getByRole("button", { name: reason });
+    expect(toggle).toHaveAttribute("aria-expanded", "false");
+    expect(within(toggle).getByText(reason)).toHaveClass("line-clamp-2");
+
+    await user.click(toggle);
+    expect(toggle).toHaveAttribute("aria-expanded", "true");
+    expect(within(toggle).getByText(reason)).not.toHaveClass("line-clamp-2");
+  });
+});

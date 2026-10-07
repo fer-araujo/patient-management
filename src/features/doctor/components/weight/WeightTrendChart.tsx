@@ -27,6 +27,7 @@ import {
   TREND_COLOR,
 } from "./weightColors";
 import { yAxisScale } from "./trendScale";
+import { useIsPhone } from "../../../../components/ui/useIsPhone";
 
 /** The indicators the doctor can chart, one at a time (never a dual axis). */
 const TREND_OPTIONS: { key: IndicatorKey; label: string }[] = [
@@ -86,6 +87,8 @@ interface Props {
 /** Trend of one indicator over time, with a segmented indicator selector. */
 export const WeightTrendChart = ({ measurements }: Props) => {
   const [selected, setSelected] = useState<IndicatorKey>("weight_kg");
+  // On a phone the plot is ~380 px wide: tighter gutters, fewer date ticks.
+  const isPhone = useIsPhone();
   const info = INDICATORS[selected];
 
   const points: Point[] = measurements
@@ -119,7 +122,7 @@ export const WeightTrendChart = ({ measurements }: Props) => {
   return (
     <section
       aria-labelledby="weight-trend-title"
-      className="bg-white rounded-2xl p-5 border border-slate-200 shadow-sm space-y-4"
+      className="bg-white rounded-2xl p-5 max-md:p-4 border border-slate-200 shadow-sm space-y-4"
     >
       <h4
         id="weight-trend-title"
@@ -166,7 +169,7 @@ export const WeightTrendChart = ({ measurements }: Props) => {
             <ResponsiveContainer width="100%" height="100%">
               <LineChart
                 data={points}
-                margin={{ top: 16, right: 56, bottom: 0, left: 0 }}
+                margin={{ top: 16, right: isPhone ? 48 : 56, bottom: 0, left: 0 }}
                 title={`Tendencia de ${seriesTitle(selected)}`}
               >
                 <CartesianGrid vertical={false} stroke={GRID_COLOR} />
@@ -181,11 +184,11 @@ export const WeightTrendChart = ({ measurements }: Props) => {
                   }
                   tickLine={false}
                   axisLine={{ stroke: AXIS_COLOR }}
-                  tick={{ fill: TEXT_COLOR, fontSize: 13, fontWeight: 700 }}
+                  tick={{ fill: TEXT_COLOR, fontSize: isPhone ? 12 : 13, fontWeight: 700 }}
                   tickMargin={8}
-                  padding={{ left: 24, right: 24 }}
+                  padding={isPhone ? { left: 16, right: 16 } : { left: 24, right: 24 }}
                   interval="preserveStartEnd"
-                  minTickGap={16}
+                  minTickGap={isPhone ? 28 : 16}
                 />
                 <YAxis
                   domain={yScale?.domain}
@@ -194,8 +197,8 @@ export const WeightTrendChart = ({ measurements }: Props) => {
                   tickFormatter={(value: number) => formatIndicator(value, selected)}
                   tickLine={false}
                   axisLine={false}
-                  tick={{ fill: TEXT_COLOR, fontSize: 13 }}
-                  width={56}
+                  tick={{ fill: TEXT_COLOR, fontSize: isPhone ? 12 : 13 }}
+                  width={isPhone ? 44 : 56}
                 />
                 <Tooltip
                   content={makeTooltip(selected)}

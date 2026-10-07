@@ -26,6 +26,13 @@ import type { PurchaseModalMode } from "../modals/PurchaseModal";
 import { PurchaseModal } from "../modals/PurchaseModal";
 import { MovementHistoryModal } from "../modals/MovementHistoryModal";
 import { DataGrid, type ColumnDef } from "../../../../components/ui/DataGrid";
+import {
+  TOUCH_ICON_BUTTON,
+  TOUCH_LABELED_BUTTON,
+  TOUCH_ONLY_LABEL,
+  PHONE_LABELED_BUTTON,
+  PHONE_ONLY_LABEL,
+} from "../../../../components/ui/touchTargets";
 import { Button } from "../../../../components/ui/Button";
 import { motion } from "framer-motion";
 
@@ -171,6 +178,7 @@ export const InventoryTab = ({ onItemsChange }: Props = {}) => {
   const columns: ColumnDef<InventoryItem>[] = [
     {
       header: "Insumo / Producto",
+      mobileRole: "title",
       accessorKey: "name",
       sortable: true,
       className: "w-[35%]",
@@ -191,6 +199,7 @@ export const InventoryTab = ({ onItemsChange }: Props = {}) => {
     },
     {
       header: "Stock Actual",
+      mobileRole: "status",
       accessorKey: "stock_quantity",
       sortable: true,
       className: "w-[25%]",
@@ -236,22 +245,25 @@ export const InventoryTab = ({ onItemsChange }: Props = {}) => {
     },
     {
       header: "Ajuste Rápido",
+      mobileRole: "meta",
       className: "w-[20%]",
       cell: (row) => (
         <div
-          className={`flex items-center gap-1 ${!row.is_active && "opacity-50 pointer-events-none"}`}
+          className={`flex items-center gap-1 pointer-coarse:gap-3 ${!row.is_active && "opacity-50 pointer-events-none"}`}
         >
           <button
             onClick={() => handleStockUse(row)}
-            className="w-8 h-8 flex items-center justify-center rounded-lg bg-slate-50 text-slate-500 hover:bg-rose-50 hover:text-rose-500 hover:border-rose-100 transition-colors border border-slate-200 shadow-sm cursor-pointer"
+            className="w-8 h-8 flex items-center justify-center rounded-lg bg-slate-50 text-slate-500 hover:bg-rose-50 hover:text-rose-500 hover:border-rose-100 transition-colors border border-slate-200 shadow-sm cursor-pointer pointer-coarse:w-11 pointer-coarse:h-11"
             title="Restar unidad (uso)"
+            aria-label="Restar unidad (uso)"
           >
             <Minus className="w-4 h-4" />
           </button>
           <button
             onClick={() => setPurchaseTarget({ item: row, mode: "add" })}
-            className="w-8 h-8 flex items-center justify-center rounded-lg bg-slate-50 text-slate-500 hover:bg-teal-50 hover:text-teal-600 hover:border-teal-100 transition-colors border border-slate-200 shadow-sm cursor-pointer"
+            className="w-8 h-8 flex items-center justify-center rounded-lg bg-slate-50 text-slate-500 hover:bg-teal-50 hover:text-teal-600 hover:border-teal-100 transition-colors border border-slate-200 shadow-sm cursor-pointer pointer-coarse:w-11 pointer-coarse:h-11"
             title="Agregar unidades"
+            aria-label="Agregar unidades"
           >
             <Plus className="w-4 h-4" />
           </button>
@@ -260,45 +272,57 @@ export const InventoryTab = ({ onItemsChange }: Props = {}) => {
     },
     {
       header: "Acciones",
+      mobileRole: "actions",
       className: "w-[20%] text-right",
+      stickyRight: true,
       cell: (row) => (
         <div className="flex items-center justify-end gap-2">
           {row.is_active && (
             <button
               onClick={() => setPurchaseTarget({ item: row, mode: "purchase" })}
-              className="flex items-center justify-center w-10 h-10 bg-slate-50 text-slate-600 hover:bg-brand-primary hover:text-white rounded-xl transition-all border border-slate-200 hover:border-brand-primary shadow-sm cursor-pointer"
+              className={`flex items-center justify-center w-10 h-10 bg-slate-50 text-slate-600 hover:bg-brand-primary hover:text-white rounded-xl transition-all border border-slate-200 hover:border-brand-primary shadow-sm cursor-pointer ${TOUCH_ICON_BUTTON} ${PHONE_LABELED_BUTTON}`}
               title="Registrar compra"
+              aria-label="Registrar compra"
             >
               <ShoppingCart className="w-5 h-5" strokeWidth={2.5} />
+              <span className={PHONE_ONLY_LABEL}>Comprar</span>
             </button>
           )}
           <button
             onClick={() => setHistoryItem(row)}
-            className="flex items-center justify-center w-10 h-10 bg-slate-50 text-slate-600 hover:bg-brand-primary hover:text-white rounded-xl transition-all border border-slate-200 hover:border-brand-primary shadow-sm cursor-pointer"
+            className={`flex items-center justify-center w-10 h-10 bg-slate-50 text-slate-600 hover:bg-brand-primary hover:text-white rounded-xl transition-all border border-slate-200 hover:border-brand-primary shadow-sm cursor-pointer ${TOUCH_ICON_BUTTON} ${PHONE_LABELED_BUTTON}`}
             title="Historial"
+            aria-label="Historial"
           >
             <History className="w-5 h-5" strokeWidth={2.5} />
+            <span className={PHONE_ONLY_LABEL}>Historial</span>
           </button>
           <button
             onClick={() => {
               setItemToEdit(row);
               setIsModalOpen(true);
             }}
-            className="flex items-center justify-center w-10 h-10 bg-slate-50 text-slate-600 hover:bg-brand-primary hover:text-white rounded-xl transition-all border border-slate-200 hover:border-brand-primary shadow-sm cursor-pointer"
+            className={`flex items-center justify-center w-10 h-10 bg-slate-50 text-slate-600 hover:bg-brand-primary hover:text-white rounded-xl transition-all border border-slate-200 hover:border-brand-primary shadow-sm cursor-pointer ${TOUCH_ICON_BUTTON} ${PHONE_LABELED_BUTTON}`}
             title="Editar Insumo"
+            aria-label="Editar Insumo"
           >
             <Edit2 className="w-5 h-5" strokeWidth={2.5} />
+            <span className={PHONE_ONLY_LABEL}>Editar</span>
           </button>
           <button
             onClick={() => handleToggleStatus(row)}
-            className={`flex items-center justify-center w-10 h-10 rounded-xl transition-all border shadow-sm cursor-pointer ${
+            className={`flex items-center justify-center w-10 h-10 rounded-xl transition-all border shadow-sm cursor-pointer ${TOUCH_LABELED_BUTTON} ${
               row.is_active
                 ? "bg-rose-50 text-rose-500 border-rose-100 hover:bg-rose-500 hover:text-white hover:border-rose-500"
                 : "bg-teal-50 text-teal-600 border-teal-100 hover:bg-teal-500 hover:text-white hover:border-teal-500"
             }`}
             title={row.is_active ? "Archivar" : "Reactivar"}
+            aria-label={row.is_active ? "Archivar" : "Reactivar"}
           >
             <Power className="w-5 h-5" strokeWidth={2.5} />
+            <span className={TOUCH_ONLY_LABEL}>
+              {row.is_active ? "Archivar" : "Reactivar"}
+            </span>
           </button>
         </div>
       ),
@@ -323,44 +347,44 @@ export const InventoryTab = ({ onItemsChange }: Props = {}) => {
       className="space-y-6"
     >
       {/* TARJETAS DE ESTADÍSTICAS (CRÍTICAS PARA INVENTARIO) */}
-      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 xl:gap-6">
-        <div className="bg-white border border-slate-200 rounded-3xl p-6 shadow-[0_8px_30px_rgb(0,0,0,0.04)] flex items-center gap-4">
-          <div className="w-14 h-14 bg-brand-light/40 text-brand-primary rounded-2xl flex items-center justify-center shrink-0">
+      <div className="grid grid-cols-3 gap-4 max-md:gap-2 xl:gap-6">
+        <div className="bg-white border border-slate-200 rounded-3xl p-6 max-md:p-3 shadow-[0_8px_30px_rgb(0,0,0,0.04)] flex items-center gap-4 max-md:flex-col max-md:items-start max-md:gap-2 min-w-0">
+          <div className="w-14 h-14 max-md:w-10 max-md:h-10 bg-brand-light/40 text-brand-primary rounded-2xl flex items-center justify-center shrink-0">
             <Package className="w-7 h-7" />
           </div>
           <div>
-            <p className="text-sm font-bold text-brand-gray uppercase tracking-wider mb-1">
+            <p className="text-sm max-md:text-[11px] max-md:leading-tight max-md:tracking-normal font-bold text-brand-gray uppercase tracking-wider mb-1">
               Total Insumos
             </p>
-            <h4 className="text-3xl font-black text-brand-dark leading-none">
+            <h4 className="text-3xl max-md:text-2xl font-black text-brand-dark leading-none">
               {stats.total}
             </h4>
           </div>
         </div>
 
-        <div className="bg-white border border-slate-200 rounded-3xl p-6 shadow-[0_8px_30px_rgb(0,0,0,0.04)] flex items-center gap-4">
-          <div className="w-14 h-14 bg-amber-50 text-amber-500 rounded-2xl flex items-center justify-center shrink-0">
+        <div className="bg-white border border-slate-200 rounded-3xl p-6 max-md:p-3 shadow-[0_8px_30px_rgb(0,0,0,0.04)] flex items-center gap-4 max-md:flex-col max-md:items-start max-md:gap-2 min-w-0">
+          <div className="w-14 h-14 max-md:w-10 max-md:h-10 bg-amber-50 text-amber-500 rounded-2xl flex items-center justify-center shrink-0">
             <AlertTriangle className="w-7 h-7" />
           </div>
           <div>
-            <p className="text-sm font-bold text-brand-gray uppercase tracking-wider mb-1">
+            <p className="text-sm max-md:text-[11px] max-md:leading-tight max-md:tracking-normal font-bold text-brand-gray uppercase tracking-wider mb-1">
               Stock Bajo
             </p>
-            <h4 className="text-3xl font-black text-brand-dark leading-none">
+            <h4 className="text-3xl max-md:text-2xl font-black text-brand-dark leading-none">
               {stats.lowStock}
             </h4>
           </div>
         </div>
 
-        <div className="bg-white border border-slate-200 rounded-3xl p-6 shadow-[0_8px_30px_rgb(0,0,0,0.04)] flex items-center gap-4">
-          <div className="w-14 h-14 bg-rose-50 text-rose-500 rounded-2xl flex items-center justify-center shrink-0">
+        <div className="bg-white border border-slate-200 rounded-3xl p-6 max-md:p-3 shadow-[0_8px_30px_rgb(0,0,0,0.04)] flex items-center gap-4 max-md:flex-col max-md:items-start max-md:gap-2 min-w-0">
+          <div className="w-14 h-14 max-md:w-10 max-md:h-10 bg-rose-50 text-rose-500 rounded-2xl flex items-center justify-center shrink-0">
             <PackageX className="w-7 h-7" />
           </div>
           <div>
-            <p className="text-sm font-bold text-brand-gray uppercase tracking-wider mb-1">
+            <p className="text-sm max-md:text-[11px] max-md:leading-tight max-md:tracking-normal font-bold text-brand-gray uppercase tracking-wider mb-1">
               Agotados
             </p>
-            <h4 className="text-3xl font-black text-brand-dark leading-none">
+            <h4 className="text-3xl max-md:text-2xl font-black text-brand-dark leading-none">
               {stats.outOfStock}
             </h4>
           </div>
@@ -368,9 +392,11 @@ export const InventoryTab = ({ onItemsChange }: Props = {}) => {
       </div>
 
       {/* BARRA DE BÚSQUEDA Y BOTÓN AÑADIR */}
-      <div className="flex flex-col sm:flex-row items-center justify-between gap-4">
-        <div className="flex flex-col sm:flex-row items-center gap-4 w-full sm:w-auto">
-          <div className="relative w-full sm:w-96">
+      {/* Below xl (iPad) the search takes its own row and the filters wrap
+          under it; from xl everything sits on one row as before. */}
+      <div className="flex flex-col sm:flex-row sm:items-start xl:items-center justify-between gap-4">
+        <div className="flex flex-col sm:flex-row sm:flex-wrap xl:flex-nowrap items-center gap-4 w-full sm:w-auto sm:flex-1 xl:flex-initial">
+          <div className="relative w-full xl:w-96">
             <Search className="w-5 h-5 text-brand-gray absolute left-4 top-1/2 -translate-y-1/2" />
             <input
               type="text"

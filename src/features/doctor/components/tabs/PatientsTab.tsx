@@ -18,6 +18,13 @@ import { Button } from "../../../../components/ui/Button";
 import { DataGrid, type ColumnDef } from "../../../../components/ui/DataGrid";
 import { Modal } from "../../../../components/ui/Modal";
 import { Dropdown } from "../../../../components/ui/Dropdown";
+import {
+  TOUCH_ICON_BUTTON,
+  TOUCH_LABELED_BUTTON,
+  TOUCH_ONLY_LABEL,
+  PHONE_LABELED_BUTTON,
+  PHONE_ONLY_LABEL,
+} from "../../../../components/ui/touchTargets";
 import { DatePicker } from "../../../../components/ui/DatePicker";
 import {
   fetchPatients,
@@ -213,6 +220,7 @@ export const PatientsTab = () => {
   const columns: ColumnDef<DashboardPatient>[] = [
     {
       header: "Paciente",
+      mobileRole: "title",
       accessorKey: "name",
       sortable: true,
       className: "w-[30%]",
@@ -248,11 +256,13 @@ export const PatientsTab = () => {
     },
     {
       header: "Teléfono",
+      mobileRole: "meta",
       accessorKey: "phone",
       className: "w-[15%] text-sm font-medium text-brand-gray",
     },
     {
       header: "Última Cita",
+      mobileRole: "meta",
       accessorKey: "lastVisit",
       sortable: true,
       className: "w-[20%] text-sm font-medium text-brand-dark",
@@ -263,44 +273,55 @@ export const PatientsTab = () => {
     },
     {
       header: "Visitas",
+      mobileRole: "meta",
       accessorKey: "totalVisits",
       sortable: true,
       className: "w-[10%] font-bold text-brand-primary",
     },
     {
       header: "Gestión",
+      mobileRole: "actions",
       className: "w-[25%] text-right",
+      stickyRight: true,
       cell: (row) => (
         <div className="flex items-center justify-end gap-2">
           <button type="button"
             onClick={() => setSelectedPatientProfile(row)}
-            className="flex items-center justify-center w-10 h-10 bg-brand-light/20 text-brand-primary hover:bg-brand-primary hover:text-white rounded-xl transition-all border border-brand-primary/20 hover:border-brand-primary shadow-sm cursor-pointer shrink-0"
+            className={`flex items-center justify-center w-10 h-10 bg-brand-light/20 text-brand-primary hover:bg-brand-primary hover:text-white rounded-xl transition-all border border-brand-primary/20 hover:border-brand-primary shadow-sm cursor-pointer shrink-0 ${TOUCH_ICON_BUTTON} ${PHONE_LABELED_BUTTON}`}
             title="Ver Expediente"
+            aria-label="Ver Expediente"
           >
             <FileText className="w-5 h-5" strokeWidth={2.5} />
+            <span className={PHONE_ONLY_LABEL}>Expediente</span>
           </button>
           <button type="button"
             onClick={() => setPatientToEditId(row.id)}
-            className="flex items-center justify-center w-10 h-10 bg-brand-light/20 text-brand-primary hover:bg-brand-primary hover:text-white rounded-xl transition-all border border-brand-primary/20 hover:border-brand-primary shadow-sm cursor-pointer shrink-0"
+            className={`flex items-center justify-center w-10 h-10 bg-brand-light/20 text-brand-primary hover:bg-brand-primary hover:text-white rounded-xl transition-all border border-brand-primary/20 hover:border-brand-primary shadow-sm cursor-pointer shrink-0 ${TOUCH_ICON_BUTTON} ${PHONE_LABELED_BUTTON}`}
             title="Editar datos"
+            aria-label="Editar datos"
           >
             <UserPen className="w-5 h-5" strokeWidth={2.5} />
+            <span className={PHONE_ONLY_LABEL}>Editar</span>
           </button>
           {row.status === "active" && (
             <>
               <button type="button"
                 onClick={() => setPatientToBlock(row)}
-                className="flex items-center justify-center w-10 h-10 bg-amber-50 text-amber-600 hover:bg-amber-500 hover:text-white rounded-xl transition-all border border-amber-100 hover:border-amber-500 shadow-sm cursor-pointer shrink-0"
+                className={`flex items-center justify-center w-10 h-10 bg-amber-50 text-amber-600 hover:bg-amber-500 hover:text-white rounded-xl transition-all border border-amber-100 hover:border-amber-500 shadow-sm cursor-pointer shrink-0 ${TOUCH_LABELED_BUTTON}`}
                 title="Suspender Paciente"
+                aria-label="Suspender Paciente"
               >
                 <Ban className="w-5 h-5" strokeWidth={2.5} />
+                <span className={TOUCH_ONLY_LABEL}>Suspender</span>
               </button>
               <button type="button"
                 onClick={() => setPatientToArchive(row)}
-                className="flex items-center justify-center w-10 h-10 bg-rose-50 text-rose-600 hover:bg-rose-500 hover:text-white rounded-xl transition-all border border-rose-100 hover:border-rose-500 shadow-sm cursor-pointer shrink-0"
+                className={`flex items-center justify-center w-10 h-10 bg-rose-50 text-rose-600 hover:bg-rose-500 hover:text-white rounded-xl transition-all border border-rose-100 hover:border-rose-500 shadow-sm cursor-pointer shrink-0 ${TOUCH_LABELED_BUTTON}`}
                 title="Archivar Expediente"
+                aria-label="Archivar Expediente"
               >
                 <Archive className="w-5 h-5" strokeWidth={2.5} />
+                <span className={TOUCH_ONLY_LABEL}>Archivar</span>
               </button>
             </>
           )}
@@ -310,10 +331,12 @@ export const PatientsTab = () => {
             !row.anonymizedAt && (
               <button type="button"
                 onClick={() => handleChangeStatus(row.id, "active")}
-                className="flex items-center justify-center w-10 h-10 bg-teal-50 text-teal-600 hover:bg-teal-500 hover:text-white rounded-xl transition-all border border-teal-100 hover:border-teal-500 shadow-sm cursor-pointer shrink-0"
+                className={`flex items-center justify-center w-10 h-10 bg-teal-50 text-teal-600 hover:bg-teal-500 hover:text-white rounded-xl transition-all border border-teal-100 hover:border-teal-500 shadow-sm cursor-pointer shrink-0 ${TOUCH_LABELED_BUTTON}`}
                 title="Restaurar Paciente"
+                aria-label="Restaurar Paciente"
               >
                 <UserCheck className="w-5 h-5" strokeWidth={2.5} />
+                <span className={TOUCH_ONLY_LABEL}>Restaurar</span>
               </button>
             )}
         </div>
@@ -342,42 +365,42 @@ export const PatientsTab = () => {
       animate={{ opacity: 1, y: 0 }}
       className="space-y-8"
     >
-      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 xl:gap-6">
-        <div className="bg-white border border-slate-200 rounded-3xl p-6 shadow-[0_8px_30px_rgb(0,0,0,0.04)] flex items-center gap-4">
-          <div className="w-14 h-14 bg-brand-light/40 text-brand-primary rounded-2xl flex items-center justify-center shrink-0">
+      <div className="grid grid-cols-3 gap-4 max-md:gap-2 xl:gap-6">
+        <div className="bg-white border border-slate-200 rounded-3xl p-6 max-md:p-3 shadow-[0_8px_30px_rgb(0,0,0,0.04)] flex items-center gap-4 max-md:flex-col max-md:items-start max-md:gap-2 min-w-0">
+          <div className="w-14 h-14 max-md:w-10 max-md:h-10 bg-brand-light/40 text-brand-primary rounded-2xl flex items-center justify-center shrink-0">
             <Users className="w-7 h-7" />
           </div>
           <div>
-            <p className="text-sm font-bold text-brand-gray uppercase tracking-wider mb-1">
+            <p className="text-sm max-md:text-[11px] max-md:leading-tight max-md:tracking-normal font-bold text-brand-gray uppercase tracking-wider mb-1">
               Pacientes Activos
             </p>
-            <h4 className="text-3xl font-black text-brand-dark leading-none">
+            <h4 className="text-3xl max-md:text-2xl font-black text-brand-dark leading-none">
               {stats.active}
             </h4>
           </div>
         </div>
-        <div className="bg-white border border-slate-200 rounded-3xl p-6 shadow-[0_8px_30px_rgb(0,0,0,0.04)] flex items-center gap-4">
-          <div className="w-14 h-14 bg-amber-50 text-amber-500 rounded-2xl flex items-center justify-center shrink-0">
+        <div className="bg-white border border-slate-200 rounded-3xl p-6 max-md:p-3 shadow-[0_8px_30px_rgb(0,0,0,0.04)] flex items-center gap-4 max-md:flex-col max-md:items-start max-md:gap-2 min-w-0">
+          <div className="w-14 h-14 max-md:w-10 max-md:h-10 bg-amber-50 text-amber-500 rounded-2xl flex items-center justify-center shrink-0">
             <Ban className="w-7 h-7" />
           </div>
           <div>
-            <p className="text-sm font-bold text-brand-gray uppercase tracking-wider mb-1">
+            <p className="text-sm max-md:text-[11px] max-md:leading-tight max-md:tracking-normal font-bold text-brand-gray uppercase tracking-wider mb-1">
               Suspendidos
             </p>
-            <h4 className="text-3xl font-black text-brand-dark leading-none">
+            <h4 className="text-3xl max-md:text-2xl font-black text-brand-dark leading-none">
               {stats.blocked}
             </h4>
           </div>
         </div>
-        <div className="bg-white border border-slate-200 rounded-3xl p-6 shadow-[0_8px_30px_rgb(0,0,0,0.04)] flex items-center gap-4">
-          <div className="w-14 h-14 bg-rose-50 text-rose-500 rounded-2xl flex items-center justify-center shrink-0">
+        <div className="bg-white border border-slate-200 rounded-3xl p-6 max-md:p-3 shadow-[0_8px_30px_rgb(0,0,0,0.04)] flex items-center gap-4 max-md:flex-col max-md:items-start max-md:gap-2 min-w-0">
+          <div className="w-14 h-14 max-md:w-10 max-md:h-10 bg-rose-50 text-rose-500 rounded-2xl flex items-center justify-center shrink-0">
             <Archive className="w-7 h-7" />
           </div>
           <div>
-            <p className="text-sm font-bold text-brand-gray uppercase tracking-wider mb-1">
+            <p className="text-sm max-md:text-[11px] max-md:leading-tight max-md:tracking-normal font-bold text-brand-gray uppercase tracking-wider mb-1">
               Archivados (Inactivos)
             </p>
-            <h4 className="text-3xl font-black text-brand-dark leading-none">
+            <h4 className="text-3xl max-md:text-2xl font-black text-brand-dark leading-none">
               {stats.archived}
             </h4>
           </div>
@@ -388,19 +411,22 @@ export const PatientsTab = () => {
         <div className="flex bg-slate-100 p-1.5 rounded-xl border border-slate-200 w-full lg:w-auto">
           <button type="button"
             onClick={() => setActiveTab("active")}
-            className={`cursor-pointer flex-1 sm:flex-none px-6 py-2 rounded-lg text-sm font-bold transition-all ${activeTab === "active" ? "bg-white text-brand-dark shadow-sm" : "text-brand-gray hover:text-brand-dark"}`}
+            aria-pressed={activeTab === "active"}
+            className={`cursor-pointer flex-1 sm:flex-none px-6 py-2 pointer-coarse:min-h-11 rounded-lg text-sm font-bold transition-all ${activeTab === "active" ? "bg-white text-brand-dark shadow-sm" : "text-brand-gray hover:text-brand-dark"}`}
           >
             Activos
           </button>
           <button type="button"
             onClick={() => setActiveTab("blocked")}
-            className={`cursor-pointer flex-1 sm:flex-none px-6 py-2 rounded-lg text-sm font-bold transition-all ${activeTab === "blocked" ? "bg-white text-brand-dark shadow-sm" : "text-brand-gray hover:text-brand-dark"}`}
+            aria-pressed={activeTab === "blocked"}
+            className={`cursor-pointer flex-1 sm:flex-none px-6 py-2 pointer-coarse:min-h-11 rounded-lg text-sm font-bold transition-all ${activeTab === "blocked" ? "bg-white text-brand-dark shadow-sm" : "text-brand-gray hover:text-brand-dark"}`}
           >
             Suspendidos
           </button>
           <button type="button"
             onClick={() => setActiveTab("archived")}
-            className={`cursor-pointer flex-1 sm:flex-none px-6 py-2 rounded-lg text-sm font-bold transition-all ${activeTab === "archived" ? "bg-white text-brand-dark shadow-sm" : "text-brand-gray hover:text-brand-dark"}`}
+            aria-pressed={activeTab === "archived"}
+            className={`cursor-pointer flex-1 sm:flex-none px-6 py-2 pointer-coarse:min-h-11 rounded-lg text-sm font-bold transition-all ${activeTab === "archived" ? "bg-white text-brand-dark shadow-sm" : "text-brand-gray hover:text-brand-dark"}`}
           >
             Archivados
           </button>
@@ -589,7 +615,7 @@ export const PatientsTab = () => {
             checked={newPatientPaperConsent}
             onChange={setNewPatientPaperConsent}
           />
-          <div className="pt-4 flex gap-3 border-t border-slate-100 mt-2">
+          <div className="pt-4 flex gap-3 border-t border-slate-100 mt-2 max-md:flex-col-reverse max-md:*:w-full max-md:*:flex-none">
             <Button
               type="button"
               variant="outline"
@@ -634,7 +660,7 @@ export const PatientsTab = () => {
             <p className="text-brand-gray">
               El paciente no podrá agendar nuevas citas desde el portal público.
             </p>
-            <div className="pt-4 border-t border-slate-100 flex gap-3">
+            <div className="pt-4 border-t border-slate-100 flex gap-3 max-md:flex-col-reverse max-md:*:w-full max-md:*:flex-none">
               <Button type="button"
                 variant="outline"
                 onClick={() => setPatientToBlock(null)}
@@ -673,7 +699,7 @@ export const PatientsTab = () => {
               El expediente se conservará intacto por 5 años en cumplimiento
               normativo.
             </p>
-            <div className="pt-4 border-t border-slate-100 flex gap-3">
+            <div className="pt-4 border-t border-slate-100 flex gap-3 max-md:flex-col-reverse max-md:*:w-full max-md:*:flex-none">
               <Button type="button"
                 variant="outline"
                 onClick={() => setPatientToArchive(null)}

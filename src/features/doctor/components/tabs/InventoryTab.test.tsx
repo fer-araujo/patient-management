@@ -174,3 +174,32 @@ describe("InventoryTab filters", () => {
     expect(screen.queryByText("Artículo bajo1")).toBeNull();
   });
 });
+
+// iPad: no hover tooltips, so every row action has an accessible name, the
+// archive toggle shows its text on touch, and the actions column is pinned.
+describe("InventoryTab row actions on touch screens", () => {
+  it("names every action and labels Archivar / Reactivar in text", async () => {
+    await renderTab();
+
+    const names = within(rowOf("Artículo normal"))
+      .getAllByRole("button")
+      .map((b) => b.getAttribute("aria-label"));
+    expect(names).toEqual([
+      "Restar unidad (uso)",
+      "Agregar unidades",
+      "Registrar compra",
+      "Historial",
+      "Editar Insumo",
+      "Archivar",
+    ]);
+
+    const archive = within(rowOf("Artículo normal")).getByRole("button", { name: "Archivar" });
+    expect(within(archive).getByText("Archivar")).toHaveClass("pointer-coarse:inline");
+    expect(archive.closest("td")).toHaveClass("max-xl:sticky");
+
+    const reactivate = within(rowOf("Artículo archivado")).getByRole("button", {
+      name: "Reactivar",
+    });
+    expect(within(reactivate).getByText("Reactivar")).toBeInTheDocument();
+  });
+});
