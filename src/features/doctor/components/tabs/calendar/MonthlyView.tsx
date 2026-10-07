@@ -3,6 +3,7 @@ import type { DashboardAppointment } from "../../../../../lib/services/clinicSer
 import type { DashboardBlockedSlot } from "../../../../../lib/services/blockedSlotsService";
 import type { WeeklySchedule } from "../../../../../lib/services/settingsService";
 import { useCalendar } from "../../../hooks/useCalendar";
+import { useIsPhone } from "../../../../../components/ui/useIsPhone";
 import {
   getAppointmentColors,
   hasAppointmentStarted,
@@ -27,7 +28,11 @@ export const MonthlyView = ({
   onBlockClick,
   onEmptySlotClick,
 }: MonthlyViewProps) => {
-  const { baseDate, workingSchedule } = useCalendar();
+  const { baseDate, workingSchedule, setBaseDate, setCalendarView } =
+    useCalendar();
+  // A phone cell is ~58 px wide: no room for appointment chips. It shows the
+  // day's count instead, and a tap opens that day in the Día view.
+  const isPhone = useIsPhone();
 
   const currentYear = baseDate.getFullYear();
   const currentMonth = baseDate.getMonth();
@@ -44,14 +49,14 @@ export const MonthlyView = ({
   todayDate.setHours(0, 0, 0, 0);
 
   return (
-    <div className="bg-white border border-slate-200 rounded-3xl shadow-[0_8px_30px_rgb(0,0,0,0.04)] overflow-hidden min-h-150 flex flex-col">
+    <div className="bg-white border border-slate-200 rounded-3xl shadow-[0_8px_30px_rgb(0,0,0,0.04)] overflow-hidden min-h-150 max-md:min-h-0 flex flex-col">
       <div className="grid grid-cols-7 border-b border-slate-200 bg-slate-50/80 shrink-0">
         {DAYS_OF_WEEK.map((day) => (
           <div
             key={day}
-            className="py-4 text-center border-r border-slate-100 last:border-r-0"
+            className="py-4 max-md:py-2 text-center border-r border-slate-100 last:border-r-0"
           >
-            <span className="text-xs font-black text-brand-gray uppercase tracking-widest">
+            <span className="text-xs font-black text-brand-gray uppercase tracking-widest max-md:tracking-normal">
               {day}
             </span>
           </div>
@@ -95,6 +100,55 @@ export const MonthlyView = ({
             ...daysApps.map((a) => ({ type: "appt" as const, data: a })),
           ];
 
+          if (isPhone) {
+            const count = daysApps.length;
+            const hasPending = daysApps.some((a) => a.status === "pending");
+            const label = cellDate.toLocaleDateString("es-MX", {
+              weekday: "long",
+              day: "numeric",
+              month: "long",
+            });
+            return (
+              <button
+                key={day}
+                type="button"
+                data-testid="month-day-compact"
+                onClick={() => {
+                  setBaseDate(cellDate);
+                  setCalendarView("day");
+                }}
+                aria-label={`${label}: ${
+                  count === 0
+                    ? "sin citas"
+                    : count === 1
+                      ? "1 cita"
+                      : `${count} citas`
+                }${daysBlocks.length > 0 ? ", con horario bloqueado" : ""}${isClosed ? ", cerrado" : ""}`}
+                className={`min-h-16 p-1 flex flex-col items-center gap-1 cursor-pointer ${isUnavailable ? "bg-slate-50/60" : "bg-white active:bg-slate-50"}`}
+              >
+                <span
+                  className={`text-sm font-bold w-7 h-7 flex items-center justify-center rounded-full ${isToday ? "bg-brand-primary text-white shadow-sm" : isUnavailable ? "text-slate-400" : "text-brand-dark"}`}
+                >
+                  {day}
+                </span>
+                {count > 0 && (
+                  <span
+                    aria-hidden="true"
+                    className={`min-w-6 px-1.5 py-0.5 rounded-full text-xs font-bold leading-4 ${hasPending ? "bg-amber-100 text-amber-800" : isPast ? "bg-slate-200 text-slate-600" : "bg-brand-light text-brand-dark"}`}
+                  >
+                    {count}
+                  </span>
+                )}
+                {daysBlocks.length > 0 && (
+                  <span
+                    aria-hidden="true"
+                    className="w-1.5 h-1.5 rounded-full bg-fuchsia-500"
+                  />
+                )}
+              </button>
+            );
+          }
+
           return (
             <div
               key={day}
@@ -109,9 +163,17 @@ export const MonthlyView = ({
                 ${isUnavailable ? "bg-slate-50/60 cursor-not-allowed" : "bg-white hover:bg-slate-50 cursor-pointer"}`}
             >
               {!isUnavailable && (
-                <div className="absolute top-2 right-2 opacity-0 group-hover:opacity-100 transition-opacity z-10 hidden sm:block">
-                  <span className="text-[10px] font-bold text-brand-primary bg-brand-light/30 px-2 py-1 rounded shadow-sm">
+                <div className="absolute top-2 right-2 opacity-0 group-hover:opacity-100 pointer-coarse:opacity-100 transition-opacity z-10 hidden sm:block pointer-events-none">
+                  {/* Mouse: label on hover. Touch has no hover, so a faint
+                      "+" marks every day that takes appointments. */}
+                  <span className="text-[10px] font-bold text-brand-primary bg-brand-light/30 px-2 py-1 rounded shadow-sm pointer-coarse:hidden">
                     + Agendar
+                  </span>
+                  <span
+                    aria-hidden="true"
+                    className="hidden pointer-coarse:inline text-xl leading-none font-bold text-brand-primary/30"
+                  >
+                    +
                   </span>
                 </div>
               )}
@@ -132,7 +194,7 @@ export const MonthlyView = ({
               </div>
 
               {/* FIX: Bug 6 (Contenedor scrolleable interno) */}
-              <div className="flex-1 overflow-y-auto hide-scrollbar space-y-1 ">
+              <div className="flex-1 overflow-y-auto overscroll-contain hide-scrollbar space-y-1 pointer-coarse:space-y-1.5">
                 {allEvents.map((event) => {
                   if (event.type === "block") {
                     const block = event.data as DashboardBlockedSlot;
@@ -143,7 +205,7 @@ export const MonthlyView = ({
                           e.stopPropagation();
                           if (!isPast) onBlockClick(block);
                         }}
-                        className={`flex items-center gap-1 text-[10px] font-bold px-1.5 py-1 rounded truncate transition-all
+                        className={`flex items-center gap-1 text-[10px] font-bold px-1.5 py-1 pointer-coarse:min-h-8 rounded truncate transition-all
                           ${isPast ? "bg-slate-200/50 text-slate-500 border border-slate-200 cursor-not-allowed" : "bg-fuchsia-50 border border-fuchsia-200 text-fuchsia-700 cursor-pointer hover:bg-fuchsia-100"}`}
                       >
                         <Ban className="w-3 h-3 shrink-0" />
@@ -159,7 +221,7 @@ export const MonthlyView = ({
                           e.stopPropagation();
                           onAppointmentClick(app);
                         }}
-                        className={`text-[10px] font-bold px-1.5 py-1 rounded truncate transition-all cursor-pointer border
+                        className={`text-[10px] font-bold px-1.5 py-1 pointer-coarse:py-2 pointer-coarse:leading-4 rounded truncate transition-all cursor-pointer border
                           ${getAppointmentColors(app, isPast)} ${!isPast && "hover:shadow-sm hover:scale-[1.02]"}`}
                       >
                         {app.status === "pending" && (

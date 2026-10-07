@@ -121,6 +121,7 @@ export const FinanceTab = ({ showPatientNames = false }: FinanceTabProps) => {
   const columns: ColumnDef<FinanceMovement>[] = [
     {
       header: "Fecha",
+      mobileRole: "subtitle",
       accessorKey: "date",
       sortable: true,
       className: "w-[20%]",
@@ -132,6 +133,7 @@ export const FinanceTab = ({ showPatientNames = false }: FinanceTabProps) => {
     },
     {
       header: "Concepto",
+      mobileRole: "title",
       className: "w-[55%]",
       cell: (row) => (
         <div className="flex flex-col items-start">
@@ -146,6 +148,7 @@ export const FinanceTab = ({ showPatientNames = false }: FinanceTabProps) => {
     },
     {
       header: "Monto",
+      mobileRole: "status",
       accessorKey: "amount",
       sortable: true,
       className: "w-[25%] text-right",
@@ -186,7 +189,7 @@ export const FinanceTab = ({ showPatientNames = false }: FinanceTabProps) => {
 
   // Same look as the choice buttons in PurchaseModal, in a compact size.
   const choiceClasses = (selected: boolean) =>
-    `rounded-xl border-2 px-3 py-1.5 text-sm font-bold transition-all cursor-pointer ${
+    `rounded-xl border-2 px-3 py-1.5 max-md:min-h-11 text-sm font-bold transition-all cursor-pointer ${
       selected
         ? "border-brand-primary bg-brand-light/40 text-brand-dark"
         : "border-brand-light bg-white text-brand-gray hover:border-brand-primary/40"
@@ -200,48 +203,48 @@ export const FinanceTab = ({ showPatientNames = false }: FinanceTabProps) => {
     >
       {periodSelector}
 
-      <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4 xl:gap-6">
-        <div className="bg-white border border-slate-200 rounded-3xl p-6 shadow-[0_8px_30px_rgb(0,0,0,0.04)] flex items-center gap-4">
-          <div className="w-14 h-14 bg-brand-light/40 text-brand-primary rounded-2xl flex items-center justify-center shrink-0">
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 max-md:gap-3 xl:gap-6">
+        <div className="bg-white border border-slate-200 rounded-3xl p-6 max-md:p-4 shadow-[0_8px_30px_rgb(0,0,0,0.04)] flex items-center gap-4 lg:max-xl:flex-col lg:max-xl:items-start max-md:flex-col max-md:items-start max-md:gap-2 min-w-0">
+          <div className="w-14 h-14 max-md:w-10 max-md:h-10 bg-brand-light/40 text-brand-primary rounded-2xl flex items-center justify-center shrink-0">
             <TrendingUp className="w-7 h-7" />
           </div>
-          <div>
-            <p className="text-sm font-bold text-brand-gray uppercase tracking-wider mb-1">
+          <div className="min-w-0 max-w-full">
+            <p className="text-sm max-md:text-xs font-bold text-brand-gray uppercase tracking-wider mb-1">
               Ingresos
             </p>
-            <h4 className="text-3xl font-black text-brand-dark leading-none">
+            <h4 className="text-3xl max-md:text-xl font-black text-brand-dark leading-none wrap-break-word">
               {formatMXN(summary.income)}
             </h4>
             <p className="text-xs text-brand-gray mt-1">Cobros de consultas</p>
           </div>
         </div>
 
-        <div className="bg-white border border-slate-200 rounded-3xl p-6 shadow-[0_8px_30px_rgb(0,0,0,0.04)] flex items-center gap-4">
+        <div className="bg-white border border-slate-200 rounded-3xl p-6 max-md:p-4 shadow-[0_8px_30px_rgb(0,0,0,0.04)] flex items-center gap-4 lg:max-xl:flex-col lg:max-xl:items-start max-md:flex-col max-md:items-start max-md:gap-2 min-w-0">
           {/* Icon tint = the series color in the chart (the number stays ink). */}
-          <div className="w-14 h-14 bg-rose-50 text-rose-500 rounded-2xl flex items-center justify-center shrink-0">
+          <div className="w-14 h-14 max-md:w-10 max-md:h-10 bg-rose-50 text-rose-500 rounded-2xl flex items-center justify-center shrink-0">
             <ShoppingCart className="w-7 h-7" />
           </div>
-          <div>
-            <p className="text-sm font-bold text-brand-gray uppercase tracking-wider mb-1">
+          <div className="min-w-0 max-w-full">
+            <p className="text-sm max-md:text-xs font-bold text-brand-gray uppercase tracking-wider mb-1">
               Gastos
             </p>
-            <h4 className="text-3xl font-black text-brand-dark leading-none">
+            <h4 className="text-3xl max-md:text-xl font-black text-brand-dark leading-none wrap-break-word">
               {formatMXN(summary.expenses)}
             </h4>
             <p className="text-xs text-brand-gray mt-1">Compras de insumos</p>
           </div>
         </div>
 
-        <div className="bg-white border border-slate-200 rounded-3xl p-6 shadow-[0_8px_30px_rgb(0,0,0,0.04)] flex items-center gap-4">
-          <div className="w-14 h-14 bg-brand-light/40 text-brand-primary rounded-2xl flex items-center justify-center shrink-0">
+        <div className="bg-white border border-slate-200 rounded-3xl p-6 max-md:p-4 shadow-[0_8px_30px_rgb(0,0,0,0.04)] flex items-center gap-4 lg:max-xl:flex-col lg:max-xl:items-start max-md:flex-col max-md:items-start max-md:gap-2 min-w-0">
+          <div className="w-14 h-14 max-md:w-10 max-md:h-10 bg-brand-light/40 text-brand-primary rounded-2xl flex items-center justify-center shrink-0">
             <PiggyBank className="w-7 h-7" />
           </div>
-          <div>
-            <p className="text-sm font-bold text-brand-gray uppercase tracking-wider mb-1">
+          <div className="min-w-0 max-w-full">
+            <p className="text-sm max-md:text-xs font-bold text-brand-gray uppercase tracking-wider mb-1">
               Ganancia
             </p>
             <h4
-              className={`text-3xl font-black leading-none ${isLoss ? "text-rose-600" : "text-brand-dark"}`}
+              className={`text-3xl max-md:text-xl font-black leading-none wrap-break-word ${isLoss ? "text-rose-600" : "text-brand-dark"}`}
             >
               {formatMXN(summary.profit)}
             </h4>
@@ -251,15 +254,15 @@ export const FinanceTab = ({ showPatientNames = false }: FinanceTabProps) => {
           </div>
         </div>
 
-        <div className="bg-white border border-slate-200 rounded-3xl p-6 shadow-[0_8px_30px_rgb(0,0,0,0.04)] flex items-center gap-4">
-          <div className="w-14 h-14 bg-[#9edfd6]/40 text-brand-primary rounded-2xl flex items-center justify-center shrink-0">
+        <div className="bg-white border border-slate-200 rounded-3xl p-6 max-md:p-4 shadow-[0_8px_30px_rgb(0,0,0,0.04)] flex items-center gap-4 lg:max-xl:flex-col lg:max-xl:items-start max-md:flex-col max-md:items-start max-md:gap-2 min-w-0">
+          <div className="w-14 h-14 max-md:w-10 max-md:h-10 bg-[#9edfd6]/40 text-brand-primary rounded-2xl flex items-center justify-center shrink-0">
             <Gift className="w-7 h-7" />
           </div>
-          <div>
-            <p className="text-sm font-bold text-brand-gray uppercase tracking-wider mb-1">
+          <div className="min-w-0 max-w-full">
+            <p className="text-sm max-md:text-xs font-bold text-brand-gray uppercase tracking-wider mb-1">
               Cortesías
             </p>
-            <h4 className="text-3xl font-black text-brand-dark leading-none">
+            <h4 className="text-3xl max-md:text-xl font-black text-brand-dark leading-none wrap-break-word">
               {summary.courtesyCount}
             </h4>
             <p className="text-xs text-brand-gray mt-1">
@@ -269,7 +272,7 @@ export const FinanceTab = ({ showPatientNames = false }: FinanceTabProps) => {
         </div>
       </div>
 
-      <div className="bg-white border border-slate-200 rounded-3xl p-6 shadow-[0_8px_30px_rgb(0,0,0,0.04)] space-y-4">
+      <div className="bg-white border border-slate-200 rounded-3xl p-6 max-md:p-4 shadow-[0_8px_30px_rgb(0,0,0,0.04)] space-y-4">
         <div className="flex flex-wrap items-center justify-between gap-4">
           <p className="text-sm font-bold text-brand-gray uppercase tracking-wider">
             Ingresos y gastos por mes
@@ -306,7 +309,7 @@ export const FinanceTab = ({ showPatientNames = false }: FinanceTabProps) => {
         )}
       </div>
 
-      <div className="bg-white border border-slate-200 rounded-3xl p-6 shadow-[0_8px_30px_rgb(0,0,0,0.04)] space-y-4">
+      <div className="bg-white border border-slate-200 rounded-3xl p-6 max-md:p-4 shadow-[0_8px_30px_rgb(0,0,0,0.04)] space-y-4">
         <p className="text-sm font-bold text-brand-gray uppercase tracking-wider">
           Ganancia por procedimiento
         </p>

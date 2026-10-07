@@ -14,6 +14,10 @@ import { RegisterArcoRequestModal } from "../modals/RegisterArcoRequestModal";
 import { Modal } from "../../../../components/ui/Modal";
 import { DataGrid, type ColumnDef } from "../../../../components/ui/DataGrid";
 import {
+  PHONE_LABELED_BUTTON,
+  PHONE_ONLY_LABEL,
+} from "../../../../components/ui/touchTargets";
+import {
   anonymizePatient,
   fetchArcoRequests,
   resolveArcoRequest,
@@ -135,6 +139,16 @@ const RequestCard = ({ request, onChanged, onPatientSaved }: RequestCardProps) =
         >
           {isOverdue ? "Plazo vencido: " : "Responder a más tardar el "}
           {formatDate(dueDate)}
+          {/* Touch screens have no hover, so they get the tooltip as text;
+              desktop keeps the tooltip only. */}
+          <span
+            data-testid="arco-deadline-hint"
+            className="hidden pointer-coarse:block max-md:block font-normal text-brand-gray"
+          >
+            {ARCO_RESPONSE_BUSINESS_DAYS} días hábiles para responder y{" "}
+            {ARCO_EFFECTIVE_BUSINESS_DAYS} más para aplicar el cambio. Fecha
+            aproximada: no descuenta días festivos.
+          </span>
         </p>
       )}
 
@@ -282,6 +296,7 @@ const historyColumns = (
 ): ColumnDef<ArcoRequest>[] => [
   {
     header: "Paciente",
+    mobileRole: "title",
     cell: (r) => (
       <span className="text-sm font-bold text-brand-dark">
         {r.patientName || "Paciente"}
@@ -290,6 +305,7 @@ const historyColumns = (
   },
   {
     header: "Tipo",
+    mobileRole: "subtitle",
     cell: (r) => (
       <span className="text-[10px] font-bold text-slate-500 bg-slate-100 px-2 py-0.5 rounded-md uppercase tracking-wider">
         {ARCO_TYPE_LABELS[r.requestType].title}
@@ -298,12 +314,14 @@ const historyColumns = (
   },
   {
     header: "Recibida",
+    mobileRole: "meta",
     cell: (r) => (
       <span className="text-sm text-brand-gray">{formatDate(r.createdAt)}</span>
     ),
   },
   {
     header: "Estado",
+    mobileRole: "status",
     cell: (r) => (
       <span
         className={`rounded-full px-2.5 py-1 text-[11px] font-bold ${ARCO_STATUS_LABELS[r.status].className}`}
@@ -314,6 +332,7 @@ const historyColumns = (
   },
   {
     header: "Cerrada",
+    mobileRole: "meta",
     cell: (r) => (
       <span className="text-sm text-brand-gray">
         {r.resolvedAt ? formatDate(r.resolvedAt) : "—"}
@@ -323,16 +342,18 @@ const historyColumns = (
   {
     header: "",
     className: "text-right",
+    stickyRight: true,
     cell: (r) => (
       <div className="flex justify-end">
         <button
           type="button"
           onClick={() => onView(r)}
-          className="flex items-center justify-center w-10 h-10 bg-slate-50 text-slate-600 hover:bg-brand-primary hover:text-white rounded-xl transition-all border border-slate-200 hover:border-brand-primary shadow-sm cursor-pointer"
+          className={`flex items-center justify-center w-10 h-10 pointer-coarse:w-11 pointer-coarse:h-11 bg-slate-50 text-slate-600 hover:bg-brand-primary hover:text-white rounded-xl transition-all border border-slate-200 hover:border-brand-primary shadow-sm cursor-pointer ${PHONE_LABELED_BUTTON}`}
           title="Ver detalle"
           aria-label={`Ver solicitud de ${r.patientName || "paciente"}`}
         >
           <Eye className="w-5 h-5" strokeWidth={2.5} />
+          <span className={PHONE_ONLY_LABEL}>Ver detalle</span>
         </button>
       </div>
     ),
@@ -405,7 +426,7 @@ export const ArcoRequestsTab = () => {
     : null;
 
   const choiceClasses = (selected: boolean) =>
-    `rounded-xl border-2 px-3 py-1.5 text-sm font-bold transition-all cursor-pointer ${
+    `rounded-xl border-2 px-3 py-1.5 max-md:min-h-11 text-sm font-bold transition-all cursor-pointer ${
       selected
         ? "border-brand-primary bg-brand-light/40 text-brand-dark"
         : "border-brand-light bg-white text-brand-gray hover:border-brand-primary/40"

@@ -5,6 +5,7 @@ import { toast } from "react-hot-toast/headless";
 import { supabaseMock, type RecordedQuery } from "../../../../test/supabaseMock";
 import { PatientsTab } from "./PatientsTab";
 import { PRIVACY_NOTICE_VERSION } from "../../../../lib/legal/privacyNotice";
+import { mockPhoneViewport } from "../../../../test/viewport";
 
 const listRow = {
   id: "p1",
@@ -413,5 +414,52 @@ describe("PatientsTab edit refreshes the directory badges", () => {
         within(screen.getByText("María González").closest("tr")!).getByText("Aviso firmado"),
       ).toBeInTheDocument(),
     );
+  });
+});
+
+// iPad has no hover, so a `title` tooltip is never seen there. Every row
+// action needs an accessible name, and the destructive ones carry their own
+// text (shown on touch screens via the pointer-coarse variant).
+describe("PatientsTab row actions on touch screens", () => {
+  it("names every icon action and labels Suspender and Archivar in text", async () => {
+    supabaseMock.onFrom("patients", respond);
+    render(<PatientsTab />);
+
+    const row = (await screen.findByText("María González")).closest("tr")!;
+    const names = within(row)
+      .getAllByRole("button")
+      .map((b) => b.getAttribute("aria-label"));
+    expect(names).toEqual([
+      "Ver Expediente",
+      "Editar datos",
+      "Suspender Paciente",
+      "Archivar Expediente",
+    ]);
+
+    const suspend = within(row).getByRole("button", { name: "Suspender Paciente" });
+    const archive = within(row).getByRole("button", { name: "Archivar Expediente" });
+    expect(within(suspend).getByText("Suspender")).toHaveClass("pointer-coarse:inline");
+    expect(within(archive).getByText("Archivar")).toHaveClass("pointer-coarse:inline");
+    // The actions column stays reachable while the table scrolls sideways.
+    expect(suspend.closest("td")).toHaveClass("max-xl:sticky");
+  });
+});
+
+describe("PatientsTab on a phone (440 px)", () => {
+  it("lists each patient as a card with labelled actions instead of a wide table", async () => {
+    mockPhoneViewport();
+    supabaseMock.onFrom("patients", respond);
+    render(<PatientsTab />);
+
+    const card = await screen.findByTestId("data-grid-card");
+    expect(screen.queryByRole("table")).toBeNull();
+    expect(within(card).getByText("María González")).toBeInTheDocument();
+    expect(within(card).getByText("Teléfono").tagName).toBe("DT");
+    const actions = within(within(card).getByTestId("data-grid-card-actions"));
+    for (const name of ["Ver Expediente", "Editar datos", "Suspender Paciente", "Archivar Expediente"]) {
+      expect(actions.getByRole("button", { name })).toBeInTheDocument();
+    }
+    // Icon buttons carry a visible word on phones.
+    expect(actions.getByText("Expediente")).toHaveClass("max-md:inline");
   });
 });

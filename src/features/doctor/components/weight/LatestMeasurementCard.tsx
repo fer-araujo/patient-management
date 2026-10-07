@@ -133,7 +133,7 @@ export const LatestMeasurementCard = ({ latest, history, sex }: Props) => {
   return (
     <section
       aria-labelledby="latest-measurement-title"
-      className="bg-white rounded-2xl p-5 border border-slate-200 shadow-sm"
+      className="bg-white rounded-2xl p-5 max-md:p-4 border border-slate-200 shadow-sm"
     >
       <h4
         id="latest-measurement-title"

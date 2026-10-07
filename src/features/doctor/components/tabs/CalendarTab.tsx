@@ -12,6 +12,8 @@ import {
   Edit3,
 } from "lucide-react";
 import { Button } from "../../../../components/ui/Button";
+import { TOUCH_ICON_BUTTON } from "../../../../components/ui/touchTargets";
+import { useIsPhone } from "../../../../components/ui/useIsPhone";
 import { Modal } from "../../../../components/ui/Modal";
 import { Dropdown } from "../../../../components/ui/Dropdown";
 import { DatePicker } from "../../../../components/ui/DatePicker";
@@ -82,6 +84,19 @@ export const CalendarTab = ({
     setWorkingSchedule,
   } = useCalendar();
 
+  // Portrait phones (below 768 px) have no Semana view: five day columns of
+  // time slots would be ~75 px wide, or a sideways-scrolling grid, both hard
+  // to read and to tap. Día and Mes cover the same ground there. Landscape
+  // phones are wider than 768 px, so they get the tablet layout, Semana
+  // included. A "week" chosen there shows as Día after rotating to portrait,
+  // and comes back when the screen is wide again.
+  const isPhone = useIsPhone();
+  const activeView =
+    isPhone && calendarView === "week" ? "day" : calendarView;
+  const viewOptions = isPhone
+    ? (["day", "month"] as const)
+    : (["day", "week", "month"] as const);
+
   // Pending appointments (e.g. just rescheduled) stay visible: they hold their
   // slot. Completed consultations stay visible too, so one finalized without
   // its supplies can be found (in red) and completed.
@@ -141,26 +156,26 @@ export const CalendarTab = ({
 
   const handlePrevious = () => {
     const newDate = new Date(baseDate);
-    if (calendarView === "day") newDate.setDate(newDate.getDate() - 1);
-    if (calendarView === "week") newDate.setDate(newDate.getDate() - 7);
-    if (calendarView === "month") newDate.setMonth(newDate.getMonth() - 1);
+    if (activeView === "day") newDate.setDate(newDate.getDate() - 1);
+    if (activeView === "week") newDate.setDate(newDate.getDate() - 7);
+    if (activeView === "month") newDate.setMonth(newDate.getMonth() - 1);
     setBaseDate(newDate);
   };
 
   const handleNext = () => {
     const newDate = new Date(baseDate);
-    if (calendarView === "day") newDate.setDate(newDate.getDate() + 1);
-    if (calendarView === "week") newDate.setDate(newDate.getDate() + 7);
-    if (calendarView === "month") newDate.setMonth(newDate.getMonth() + 1);
+    if (activeView === "day") newDate.setDate(newDate.getDate() + 1);
+    if (activeView === "week") newDate.setDate(newDate.getDate() + 7);
+    if (activeView === "month") newDate.setMonth(newDate.getMonth() + 1);
     setBaseDate(newDate);
   };
 
   const handleToday = () => setBaseDate(new Date());
 
   const getNavLabel = () => {
-    if (calendarView === "day")
+    if (activeView === "day")
       return `${baseDate.toLocaleDateString("es-MX", { weekday: "long" })} ${baseDate.toLocaleDateString("es-MX", { day: "2-digit" })}`;
-    if (calendarView === "week") {
+    if (activeView === "week") {
       const dayOfWeek = baseDate.getDay();
       const diffToMonday = dayOfWeek === 0 ? -6 : 1 - dayOfWeek;
       const start = new Date(baseDate);
@@ -502,8 +517,9 @@ export const CalendarTab = ({
       animate={{ opacity: 1, y: 0 }}
       className="space-y-6"
     >
-      <div className="flex flex-col xl:flex-row items-center justify-between gap-4 bg-white border border-slate-200 rounded-3xl p-4 sm:p-6 shadow-[0_8px_30px_rgb(0,0,0,0.04)]">
-        <div className="flex items-center gap-4 w-full xl:w-auto">
+      {/* One row from lg (iPad landscape); below it the controls wrap under the title. */}
+      <div className="flex flex-col lg:flex-row items-center justify-between gap-4 bg-white border border-slate-200 rounded-3xl p-4 sm:p-6 shadow-[0_8px_30px_rgb(0,0,0,0.04)]">
+        <div className="flex items-center gap-4 w-full lg:w-auto">
           <div className="w-12 h-12 bg-brand-light/30 text-brand-primary rounded-xl flex items-center justify-center shrink-0">
             <CalendarIcon className="w-6 h-6" />
           </div>
@@ -513,29 +529,38 @@ export const CalendarTab = ({
                 .toLocaleDateString("es-MX", { month: "long", year: "numeric" })
                 .replace(" de ", " ")}
             </h2>
-            <p
-              className="text-sm font-medium text-brand-gray mt-1 cursor-pointer hover:text-brand-primary transition-colors"
+            {/* On touch it looks like a button: a finger has no hover to discover it. */}
+            <button
+              type="button"
               onClick={handleToday}
+              className="block w-fit text-left mt-1 text-sm font-medium text-brand-gray cursor-pointer hover:text-brand-primary transition-colors pointer-coarse:min-h-11 pointer-coarse:px-4 pointer-coarse:rounded-xl pointer-coarse:border pointer-coarse:border-slate-200 pointer-coarse:bg-slate-50 pointer-coarse:text-brand-dark pointer-coarse:font-bold"
             >
               Ir a hoy
-            </p>
+            </button>
           </div>
         </div>
 
-        <div className="flex flex-col sm:flex-row items-center gap-4 w-full xl:w-auto">
+        <div className="flex flex-col sm:flex-row sm:flex-wrap items-center justify-center gap-4 w-full lg:w-auto">
+          {/* Short label below xl so the toolbar fits in one row on an iPad. */}
           <Button
+            type="button"
             variant="outline"
             onClick={() => setSettingsModalOpen(true)}
-            className="hidden xl:flex px-4 py-2 rounded-xl border-slate-200 text-brand-gray hover:bg-slate-50 cursor-pointer items-center gap-2"
+            aria-label="Horarios de Clínica"
+            className="flex w-auto! px-4 py-2 pointer-coarse:min-h-11 rounded-xl border-slate-200 text-brand-gray hover:bg-slate-50 cursor-pointer items-center gap-2 whitespace-nowrap"
           >
-            <Settings className="w-4 h-4" /> Horarios de Clínica
+            <Settings className="w-4 h-4" aria-hidden="true" />
+            <span className="xl:hidden">Horarios</span>
+            <span className="hidden xl:inline">Horarios de Clínica</span>
           </Button>
           <div className="flex items-center bg-slate-100 p-1.5 rounded-xl border border-slate-200 w-full sm:w-auto justify-center">
-            {(["day", "week", "month"] as const).map((view) => (
+            {viewOptions.map((view) => (
               <button
                 key={view}
+                type="button"
+                aria-pressed={activeView === view}
                 onClick={() => setCalendarView(view)}
-                className={`px-4 py-1.5 rounded-lg text-sm font-bold transition-all capitalize cursor-pointer ${calendarView === view ? "bg-white text-brand-dark shadow-sm" : "text-brand-gray hover:text-brand-dark"}`}
+                className={`px-4 py-1.5 pointer-coarse:min-h-11 pointer-coarse:px-5 rounded-lg text-sm font-bold transition-all capitalize cursor-pointer max-md:flex-1 ${activeView === view ? "bg-white text-brand-dark shadow-sm" : "text-brand-gray hover:text-brand-dark"}`}
               >
                 {view === "day" ? "Día" : view === "week" ? "Semana" : "Mes"}
               </button>
@@ -543,9 +568,11 @@ export const CalendarTab = ({
           </div>
           <div className="flex items-center gap-2 bg-slate-50 p-1.5 rounded-2xl border border-slate-200 shrink-0">
             <Button
+              type="button"
               onClick={handlePrevious}
               variant="outline"
-              className="p-2 rounded-xl border-none bg-white shadow-sm text-brand-dark cursor-pointer"
+              aria-label="Anterior"
+              className={`p-2 ${TOUCH_ICON_BUTTON} rounded-xl border-none bg-white shadow-sm text-brand-dark cursor-pointer`}
             >
               <ChevronLeft className="w-5 h-5" />
             </Button>
@@ -553,9 +580,11 @@ export const CalendarTab = ({
               {getNavLabel()}
             </span>
             <Button
+              type="button"
               onClick={handleNext}
               variant="outline"
-              className="p-2 rounded-xl border-none bg-white shadow-sm text-brand-dark cursor-pointer"
+              aria-label="Siguiente"
+              className={`p-2 ${TOUCH_ICON_BUTTON} rounded-xl border-none bg-white shadow-sm text-brand-dark cursor-pointer`}
             >
               <ChevronRight className="w-5 h-5" />
             </Button>
@@ -564,7 +593,7 @@ export const CalendarTab = ({
       </div>
 
       <AnimatePresence mode="wait">
-        {calendarView === "day" && (
+        {activeView === "day" && (
           <motion.div
             key="day"
             initial={{ opacity: 0 }}
@@ -580,7 +609,7 @@ export const CalendarTab = ({
             />
           </motion.div>
         )}
-        {calendarView === "week" && (
+        {activeView === "week" && (
           <motion.div
             key="week"
             initial={{ opacity: 0 }}
@@ -596,7 +625,7 @@ export const CalendarTab = ({
             />
           </motion.div>
         )}
-        {calendarView === "month" && (
+        {activeView === "month" && (
           <motion.div
             key="month"
             initial={{ opacity: 0 }}
@@ -647,7 +676,7 @@ export const CalendarTab = ({
         hideFooter={true}
       >
         {selectedAppointment && (
-          <div className="bg-slate-50/50 -m-6 p-6 space-y-4">
+          <div className="bg-slate-50/50 -m-6 p-6 max-md:-mx-4 max-md:-my-5 max-md:p-4 space-y-4">
             {!isReschedulingAppt && !isCancelingAppt ? (
               <>
                 <div className="bg-white p-4 rounded-2xl shadow-sm border border-slate-100 flex items-center gap-4">
@@ -666,7 +695,7 @@ export const CalendarTab = ({
                     </div>
                   </div>
                 </div>
-                <div className="grid grid-cols-2 gap-4">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                   <div className="bg-white p-4 rounded-2xl shadow-sm border border-slate-100">
                     <h4 className="text-xs font-black text-brand-gray uppercase tracking-widest mb-1">
                       Fecha
@@ -706,7 +735,7 @@ export const CalendarTab = ({
                             });
                             setSelectedAppointment(null);
                           }}
-                          className="text-sm font-bold text-brand-primary hover:underline cursor-pointer shrink-0"
+                          className="text-sm font-bold text-brand-primary hover:underline cursor-pointer shrink-0 pointer-coarse:min-h-11 pointer-coarse:px-3"
                         >
                           {selectedPayment ? "Editar" : "Registrar"}
                         </button>
@@ -723,7 +752,7 @@ export const CalendarTab = ({
                             setSuppliesTarget(selectedAppointment);
                             setSelectedAppointment(null);
                           }}
-                          className="text-sm font-bold text-brand-primary hover:underline cursor-pointer shrink-0"
+                          className="text-sm font-bold text-brand-primary hover:underline cursor-pointer shrink-0 pointer-coarse:min-h-11 pointer-coarse:px-3"
                         >
                           Registrar insumos
                         </button>
@@ -742,7 +771,7 @@ export const CalendarTab = ({
                 )}
                 {/* A finalized consultation cannot be cancelled, moved or started again. */}
                 {selectedAppointment.status !== "completed" && (
-                <div className="pt-4 flex flex-wrap sm:flex-nowrap gap-3 bg-white -mx-6 -mb-6 p-6 border-t border-slate-200">
+                <div className="pt-4 flex flex-wrap sm:flex-nowrap gap-3 bg-white -mx-6 -mb-6 p-6 max-md:-mx-4 max-md:-mb-4 max-md:p-4 border-t border-slate-200 max-md:flex-col-reverse max-md:*:w-full max-md:*:flex-none">
                   <Button
                     variant="outline"
                     onClick={() => setIsCancelingAppt(true)}
@@ -794,7 +823,7 @@ export const CalendarTab = ({
                     rows={3}
                   />
                 </div>
-                <div className="pt-4 flex gap-3 bg-white -mx-6 -mb-6 p-6 border-t border-slate-200">
+                <div className="pt-4 flex gap-3 bg-white -mx-6 -mb-6 p-6 max-md:-mx-4 max-md:-mb-4 max-md:p-4 border-t border-slate-200 max-md:flex-col-reverse max-md:*:w-full max-md:*:flex-none">
                   <Button
                     variant="outline"
                     onClick={() => {
@@ -872,7 +901,7 @@ export const CalendarTab = ({
                     seguimiento.
                   </p>
                 </div>
-                <div className="pt-4 flex gap-3 bg-white -mx-6 -mb-6 p-6 border-t border-slate-200">
+                <div className="pt-4 flex gap-3 bg-white -mx-6 -mb-6 p-6 max-md:-mx-4 max-md:-mb-4 max-md:p-4 border-t border-slate-200 max-md:flex-col-reverse max-md:*:w-full max-md:*:flex-none">
                   <Button
                     variant="outline"
                     onClick={() => setIsReschedulingAppt(false)}
@@ -942,13 +971,13 @@ export const CalendarTab = ({
               <div className="flex p-1 bg-slate-100 rounded-xl">
                 <button
                   onClick={() => setActionTab("schedule")}
-                  className={`flex-1 py-2 text-sm font-bold rounded-lg transition-all cursor-pointer ${actionTab === "schedule" ? "bg-white text-brand-primary shadow-sm" : "text-brand-gray hover:text-brand-dark"}`}
+                  className={`flex-1 py-2 pointer-coarse:min-h-11 text-sm font-bold rounded-lg transition-all cursor-pointer ${actionTab === "schedule" ? "bg-white text-brand-primary shadow-sm" : "text-brand-gray hover:text-brand-dark"}`}
                 >
                   Agendar Cita
                 </button>
                 <button
                   onClick={() => setActionTab("block")}
-                  className={`flex-1 py-2 text-sm font-bold rounded-lg transition-all cursor-pointer ${actionTab === "block" ? "bg-brand-primary text-white shadow-sm" : "text-brand-gray hover:text-brand-dark"}`}
+                  className={`flex-1 py-2 pointer-coarse:min-h-11 text-sm font-bold rounded-lg transition-all cursor-pointer ${actionTab === "block" ? "bg-brand-primary text-white shadow-sm" : "text-brand-gray hover:text-brand-dark"}`}
                 >
                   Bloquear Horario
                 </button>
@@ -1133,7 +1162,7 @@ export const CalendarTab = ({
                       <button
                         key={reason.id}
                         onClick={() => setBlockReason(reason.id)}
-                        className={`py-2 px-2 rounded-lg border text-xs font-bold transition-all cursor-pointer ${blockReason === reason.id ? "border-brand-primary bg-brand-primary text-white" : "border-slate-200 bg-white text-brand-gray hover:border-slate-300"}`}
+                        className={`py-2 px-2 pointer-coarse:min-h-11 pointer-coarse:text-sm rounded-lg border text-xs font-bold transition-all cursor-pointer ${blockReason === reason.id ? "border-brand-primary bg-brand-primary text-white" : "border-slate-200 bg-white text-brand-gray hover:border-slate-300"}`}
                       >
                         {reason.label}
                       </button>
@@ -1177,7 +1206,7 @@ export const CalendarTab = ({
               <br /> de <strong>{selectedBlock.startTime}</strong> a{" "}
               <strong>{selectedBlock.endTime}</strong>.
             </p>
-            <div className="pt-4 border-t border-slate-100 flex gap-3">
+            <div className="pt-4 border-t border-slate-100 flex gap-3 max-md:flex-col-reverse max-md:*:w-full max-md:*:flex-none">
               <Button
                 variant="outline"
                 onClick={() => setSelectedBlock(null)}
@@ -1237,7 +1266,7 @@ export const CalendarTab = ({
                   className={`flex flex-col sm:flex-row sm:items-center justify-between p-4 rounded-2xl border transition-all ${day.isOpen ? "border-brand-primary/30 bg-brand-light/5" : "border-slate-200 bg-slate-50 opacity-70"}`}
                 >
                   <div className="flex items-center gap-3 mb-3 sm:mb-0">
-                    <label className="relative inline-flex items-center cursor-pointer">
+                    <label className="relative inline-flex items-center cursor-pointer pointer-coarse:min-h-11">
                       <input
                         type="checkbox"
                         className="sr-only peer"

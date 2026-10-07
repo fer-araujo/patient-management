@@ -111,6 +111,28 @@ describe("ArcoRequestsTab inbox", () => {
     expect(screen.getByText("Listo.")).toBeInTheDocument();
   });
 
+  it("keeps the deadline explanation as a desktop tooltip; touch and phones get it as text", async () => {
+    const user = await renderInbox();
+    await user.click(screen.getByRole("tab", { name: "Pendientes (2)" }));
+
+    const hints = screen.getAllByTestId("arco-deadline-hint");
+    expect(hints).toHaveLength(2);
+    for (const hint of hints) {
+      // jsdom applies no Tailwind CSS, so check the classes: hidden with a
+      // mouse at desktop widths, shown only under the touch/phone variants.
+      const classes = hint.className.split(/\s+/);
+      expect(classes).toContain("hidden");
+      expect(classes).not.toContain("block");
+      expect(classes).toEqual(
+        expect.arrayContaining(["pointer-coarse:block", "max-md:block"]),
+      );
+      expect(hint.parentElement).toHaveAttribute(
+        "title",
+        expect.stringContaining("días hábiles para responder"),
+      );
+    }
+  });
+
   it("filters by patient name", async () => {
     const user = await renderInbox();
 

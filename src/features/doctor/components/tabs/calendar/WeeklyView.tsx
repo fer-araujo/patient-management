@@ -64,7 +64,7 @@ export const WeeklyView = ({
   });
 
   return (
-    <div className="bg-white border border-slate-200 rounded-3xl shadow-[0_8px_30px_rgb(0,0,0,0.04)] overflow-hidden flex flex-col h-187.5">
+    <div className="bg-white border border-slate-200 rounded-3xl shadow-[0_8px_30px_rgb(0,0,0,0.04)] overflow-hidden flex flex-col h-187.5 max-xl:h-[70vh] max-xl:supports-[height:1dvh]:h-[70dvh] max-xl:min-h-105">
       <div className="flex border-b border-slate-200 bg-slate-50/80 sticky top-0 z-20">
         <div className="w-16 sm:w-20 shrink-0 border-r border-slate-200"></div>
         {WEEK_DAYS.map((day) => (
@@ -150,16 +150,26 @@ export const WeeklyView = ({
                           if (!isUnavailable) onEmptySlotClick(day.id, timeStr);
                         }}
                         className={`absolute w-full flex items-center justify-center border border-transparent transition-colors
-                          ${isUnavailable ? "bg-slate-50/70 cursor-not-allowed opacity-100 z-0" : "opacity-0 hover:opacity-100 hover:bg-slate-50/80 cursor-pointer hover:border-brand-primary/20 z-0"}`}
+                          ${isUnavailable ? "bg-slate-50/70 cursor-not-allowed opacity-100 z-0" : "opacity-0 hover:opacity-100 pointer-coarse:opacity-100 hover:bg-slate-50/80 cursor-pointer hover:border-brand-primary/20 z-0"}`}
                         style={{
                           top: (hour - startHour) * HOUR_HEIGHT,
                           height: HOUR_HEIGHT,
                         }}
                       >
                         {!isUnavailable && (
-                          <span className="text-[10px] font-bold text-brand-primary bg-brand-light/20 px-2 py-1 rounded shadow-sm pointer-events-none">
-                            + Acción
-                          </span>
+                          <>
+                            {/* Mouse: full label on hover. Touch has no
+                                hover, so a faint "+" marks every free hour. */}
+                            <span className="text-[10px] font-bold text-brand-primary bg-brand-light/20 px-2 py-1 rounded shadow-sm pointer-events-none pointer-coarse:hidden">
+                              + Acción
+                            </span>
+                            <span
+                              aria-hidden="true"
+                              className="hidden pointer-coarse:inline text-xl font-bold text-brand-primary/30 pointer-events-none"
+                            >
+                              +
+                            </span>
+                          </>
                         )}
                       </div>
                     );

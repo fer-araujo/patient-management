@@ -29,34 +29,36 @@ export const DoctorAdminDashboard = () => {
   }, []);
 
   return (
-    <main className="max-w-360 mx-auto px-4 sm:px-6 lg:px-8 pt-8 xl:pt-10 pb-20">
-      <div className="mb-8 border-b border-slate-200 pb-6">
-        <h1 className="text-3xl xl:text-4xl font-extrabold text-brand-dark tracking-tight mb-6">
+    <main className="max-w-360 mx-auto px-4 sm:px-6 lg:px-8 pt-8 max-md:pt-5 xl:pt-10 pb-20">
+      <div className="mb-8 max-md:mb-6 border-b border-slate-200 pb-6 max-md:pb-4">
+        <h1 className="text-3xl max-md:text-2xl xl:text-4xl font-extrabold text-brand-dark tracking-tight mb-6 max-md:mb-4">
           Gestión del Negocio
         </h1>
 
         {/* TABS ADMINISTRATIVOS */}
-        <div className="flex items-center gap-2 sm:gap-4 overflow-x-auto hide-scrollbar">
+        <div className="flex flex-wrap lg:flex-nowrap items-center gap-2 sm:gap-4 overflow-x-auto hide-scrollbar">
           <button
             onClick={() => setActiveTab("catalog")}
-            className={`flex items-center gap-2 px-6 py-3 rounded-full text-sm font-bold transition-all cursor-pointer whitespace-nowrap ${
+            className={`flex items-center gap-2 px-6 max-md:px-4 py-3 max-md:min-h-11 rounded-full text-sm font-bold transition-all cursor-pointer whitespace-nowrap ${
               activeTab === "catalog"
                 ? "bg-brand-dark text-white shadow-md"
                 : "bg-slate-100 text-brand-gray hover:bg-slate-200 hover:text-brand-dark"
             }`}
           >
-            <Stethoscope className="w-4 h-4" /> Catálogo de Servicios
+            <Stethoscope className="w-4 h-4" /> Catálogo{" "}
+            <span className="max-md:hidden">de Servicios</span>
           </button>
 
           <button
             onClick={() => setActiveTab("inventory")}
-            className={`flex items-center gap-2 px-6 py-3 rounded-full text-sm font-bold transition-all cursor-pointer whitespace-nowrap ${
+            className={`flex items-center gap-2 px-6 max-md:px-4 py-3 max-md:min-h-11 rounded-full text-sm font-bold transition-all cursor-pointer whitespace-nowrap ${
               activeTab === "inventory"
                 ? "bg-brand-dark text-white shadow-md"
                 : "bg-slate-100 text-brand-gray hover:bg-slate-200 hover:text-brand-dark"
             }`}
           >
-            <Package className="w-4 h-4" /> Inventario Clínico
+            <Package className="w-4 h-4" /> Inventario{" "}
+            <span className="max-md:hidden">Clínico</span>
             {restockCount > 0 && (
               <span
                 className="text-[10px] font-bold text-amber-600 bg-amber-50 px-2 py-0.5 rounded-md"
@@ -69,13 +71,14 @@ export const DoctorAdminDashboard = () => {
 
           <button
             onClick={() => setActiveTab("finances")}
-            className={`flex items-center gap-2 px-6 py-3 rounded-full text-sm font-bold transition-all cursor-pointer whitespace-nowrap ${
+            className={`flex items-center gap-2 px-6 max-md:px-4 py-3 max-md:min-h-11 rounded-full text-sm font-bold transition-all cursor-pointer whitespace-nowrap ${
               activeTab === "finances"
                 ? "bg-brand-dark text-white shadow-md"
                 : "bg-slate-100 text-brand-gray hover:bg-slate-200 hover:text-brand-dark"
             }`}
           >
-            <CircleDollarSign className="w-4 h-4" /> Finanzas y Métricas
+            <CircleDollarSign className="w-4 h-4" /> Finanzas{" "}
+            <span className="max-md:hidden">y Métricas</span>
           </button>
         </div>
       </div>

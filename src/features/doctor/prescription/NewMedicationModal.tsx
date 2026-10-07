@@ -147,7 +147,7 @@ export const NewMedicationModal = ({ isOpen, onClose, onAdd, initial }: NewMedic
         <p className="text-base text-brand-gray">
           No recetes aquí medicamentos controlados (Grupos I a III).
         </p>
-        <div className="pt-4 border-t border-slate-100 flex gap-3 mt-4">
+        <div className="pt-4 border-t border-slate-100 flex gap-3 mt-4 max-md:flex-col-reverse max-md:*:w-full max-md:*:flex-none">
           <Button
             type="button"
             variant="outline"

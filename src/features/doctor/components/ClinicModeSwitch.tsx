@@ -66,10 +66,10 @@ export const ClinicModeSwitch = () => {
         aria-label="Modo solo doctora"
         disabled={loading}
         onClick={() => setIsConfirmOpen(true)}
-        className={`flex items-center gap-3 min-h-11 px-5 py-2.5 rounded-full text-base font-bold border transition-all cursor-pointer disabled:opacity-50 ${doctorOnlyMode ? "bg-brand-light/30 border-brand-primary/30 text-brand-dark" : "bg-slate-100 border-slate-200 text-brand-gray"}`}
+        className={`flex items-center gap-3 min-h-11 px-5 max-md:px-4 py-2.5 max-md:w-full rounded-full text-base font-bold border transition-all cursor-pointer disabled:opacity-50 ${doctorOnlyMode ? "bg-brand-light/30 border-brand-primary/30 text-brand-dark" : "bg-slate-100 border-slate-200 text-brand-gray"}`}
       >
         <UserRound className="w-5 h-5" strokeWidth={2.5} />
-        <span>Modo solo doctora</span>
+        <span className="max-md:flex-1 max-md:text-left">Modo solo doctora</span>
         <span
           aria-hidden="true"
           className={`relative w-11 h-6 rounded-full transition-colors shrink-0 ${doctorOnlyMode ? "bg-brand-primary" : "bg-slate-300"}`}
@@ -101,7 +101,7 @@ export const ClinicModeSwitch = () => {
               Solo recibirán avisos de sus citas por WhatsApp.
             </p>
           )}
-          <div className="pt-4 border-t border-slate-100 flex gap-3">
+          <div className="pt-4 border-t border-slate-100 flex gap-3 max-md:flex-col-reverse max-md:*:w-full max-md:*:flex-none">
             <Button
               type="button"
               variant="outline"

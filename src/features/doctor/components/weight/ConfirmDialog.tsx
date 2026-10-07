@@ -42,7 +42,7 @@ export const ConfirmDialog = ({
       </div>
       <h3 className="text-xl font-bold text-brand-dark">{question}</h3>
       <p className="text-base text-brand-gray">{description}</p>
-      <div className="pt-4 border-t border-slate-100 flex gap-3">
+      <div className="pt-4 border-t border-slate-100 flex gap-3 max-md:flex-col-reverse max-md:*:w-full max-md:*:flex-none">
         <Button
           type="button"
           variant="outline"

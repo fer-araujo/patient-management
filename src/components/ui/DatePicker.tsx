@@ -213,7 +213,7 @@ export const DatePicker = ({
                     setYearPageStart(year - (year % 9));
                     setViewMode("year");
                   }}
-                  className="flex items-center gap-1.5 px-3 py-1.5 -ml-3 rounded-full hover:bg-slate-100 transition-colors cursor-pointer"
+                  className="flex items-center gap-1.5 px-3 py-1.5 pointer-coarse:py-2.5 -ml-3 rounded-full hover:bg-slate-100 transition-colors cursor-pointer"
                 >
                   <span className="font-bold text-brand-dark text-lg capitalize">
                     {MONTH_NAMES[month]} {year}
@@ -223,13 +223,15 @@ export const DatePicker = ({
                 <div className="flex gap-1">
                   <button type="button"
                     onClick={handlePrevMonth}
-                    className="w-10 h-10 flex items-center justify-center rounded-full hover:bg-slate-100 transition-colors cursor-pointer"
+                    aria-label="Mes anterior"
+                    className="w-10 h-10 pointer-coarse:w-11 pointer-coarse:h-11 flex items-center justify-center rounded-full hover:bg-slate-100 transition-colors cursor-pointer"
                   >
                     <ChevronLeft className="w-6 h-6 text-brand-dark" />
                   </button>
                   <button type="button"
                     onClick={handleNextMonth}
-                    className="w-10 h-10 flex items-center justify-center rounded-full hover:bg-slate-100 transition-colors cursor-pointer"
+                    aria-label="Mes siguiente"
+                    className="w-10 h-10 pointer-coarse:w-11 pointer-coarse:h-11 flex items-center justify-center rounded-full hover:bg-slate-100 transition-colors cursor-pointer"
                   >
                     <ChevronRight className="w-6 h-6 text-brand-dark" />
                   </button>
@@ -249,7 +251,10 @@ export const DatePicker = ({
 
               <div className="grid grid-cols-7 gap-y-2 gap-x-1">
                 {Array.from({ length: firstDayOfMonth }).map((_, i) => (
-                  <div key={`empty-${i}`} className="w-full h-10" />
+                  <div
+                    key={`empty-${i}`}
+                    className="w-full h-10 pointer-coarse:h-11"
+                  />
                 ))}
 
                 {Array.from({ length: daysInMonth }).map((_, i) => {
@@ -264,7 +269,7 @@ export const DatePicker = ({
                       key={`day-${day}-${i}`}
                       disabled={isDayDisabled}
                       onClick={() => setInternalDate(dateStr)}
-                      className={`h-10 w-full rounded-full flex items-center justify-center text-sm transition-all mx-auto max-w-10 ${
+                      className={`h-10 w-full rounded-full flex items-center justify-center text-sm transition-all mx-auto max-w-10 pointer-coarse:h-11 pointer-coarse:max-w-11 ${
                         isSelected
                           ? "bg-brand-primary text-white font-bold shadow-md shadow-brand-primary/30 cursor-pointer"
                           : isDayDisabled
@@ -286,7 +291,7 @@ export const DatePicker = ({
                     setYearPageStart(year - (year % 9));
                     setViewMode("year");
                   }}
-                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-full hover:bg-slate-100 transition-colors cursor-pointer"
+                  className="flex items-center gap-1.5 px-3 py-1.5 pointer-coarse:py-2.5 rounded-full hover:bg-slate-100 transition-colors cursor-pointer"
                 >
                   <span className="font-bold text-brand-dark text-lg">
                     {year}
@@ -328,7 +333,8 @@ export const DatePicker = ({
                 <button type="button"
                   onClick={handlePrevYears}
                   disabled={isPrevYearsDisabled}
-                  className={`w-10 h-10 flex items-center justify-center rounded-full transition-colors ${
+                  aria-label="Años anteriores"
+                  className={`w-10 h-10 pointer-coarse:w-11 pointer-coarse:h-11 flex items-center justify-center rounded-full transition-colors ${
                     isPrevYearsDisabled
                       ? "text-slate-200 cursor-not-allowed"
                       : "hover:bg-slate-100 text-brand-dark cursor-pointer"
@@ -342,7 +348,8 @@ export const DatePicker = ({
                 <button type="button"
                   onClick={handleNextYears}
                   disabled={isNextYearsDisabled}
-                  className={`w-10 h-10 flex items-center justify-center rounded-full transition-colors ${
+                  aria-label="Años siguientes"
+                  className={`w-10 h-10 pointer-coarse:w-11 pointer-coarse:h-11 flex items-center justify-center rounded-full transition-colors ${
                     isNextYearsDisabled
                       ? "text-slate-200 cursor-not-allowed"
                       : "hover:bg-slate-100 text-brand-dark cursor-pointer"
@@ -386,14 +393,14 @@ export const DatePicker = ({
         <div className="flex items-center justify-end gap-3 mt-4 pt-4 border-t border-slate-50">
           <button type="button"
             onClick={onClose}
-            className="px-5 py-2.5 text-sm font-bold text-brand-gray hover:text-brand-dark hover:bg-slate-100 rounded-xl transition-colors cursor-pointer"
+            className="px-5 py-2.5 pointer-coarse:py-3 text-sm font-bold text-brand-gray hover:text-brand-dark hover:bg-slate-100 rounded-xl transition-colors cursor-pointer"
           >
             Cancelar
           </button>
           <button type="button"
             onClick={handleConfirm}
             disabled={!internalDate}
-            className="px-6 py-2.5 text-sm font-bold text-white bg-brand-primary hover:bg-brand-primary-hover rounded-xl shadow-md transition-colors disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer"
+            className="px-6 py-2.5 pointer-coarse:py-3 text-sm font-bold text-white bg-brand-primary hover:bg-brand-primary-hover rounded-xl shadow-md transition-colors disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer"
           >
             OK
           </button>

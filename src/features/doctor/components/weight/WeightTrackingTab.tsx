@@ -204,6 +204,7 @@ export const WeightTrackingTab = ({
   const columns: ColumnDef<BodyMeasurement>[] = [
     {
       header: "Fecha",
+      mobileRole: "title",
       accessorKey: "measured_at",
       sortable: true,
       cell: (m) => (
@@ -223,6 +224,7 @@ export const WeightTrackingTab = ({
       : [
           {
             header: "Acciones",
+            mobileRole: "actions" as const,
             cell: (m: BodyMeasurement) => {
               const date = formatMeasurementDate(m.measured_at);
               return (

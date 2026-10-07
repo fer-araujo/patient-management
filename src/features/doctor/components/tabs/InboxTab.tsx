@@ -21,6 +21,12 @@ import { Modal } from "../../../../components/ui/Modal";
 import { DatePicker } from "../../../../components/ui/DatePicker";
 import { Dropdown } from "../../../../components/ui/Dropdown";
 import {
+  TOUCH_LABELED_BUTTON,
+  TOUCH_ONLY_LABEL,
+  PHONE_LABELED_BUTTON,
+  PHONE_ONLY_LABEL,
+} from "../../../../components/ui/touchTargets";
+import {
   updateAppointmentStatus,
   rescheduleAppointment,
   cancelAppointment,
@@ -40,6 +46,27 @@ import { nowInClinic } from "../../../../lib/clinicTime";
 
 /** How often "Vencida" labels, cards and bookable slots are re-evaluated. */
 const NOW_REFRESH_MS = 60_000;
+
+/**
+ * The patient's reason, clamped to two lines so a long one cannot stretch the
+ * row. Tapping it shows the full text: a tablet has no hover tooltip.
+ */
+const ExpandableReason = ({ reason }: { reason: string }) => {
+  const [expanded, setExpanded] = useState(false);
+  return (
+    <button
+      type="button"
+      onClick={() => setExpanded((open) => !open)}
+      aria-expanded={expanded}
+      title={reason}
+      className="block w-full text-left text-sm text-brand-gray font-medium mt-1 break-words cursor-pointer"
+    >
+      {/* Clamped on an inner span: some browsers ignore line-clamp on a
+          button box itself. */}
+      <span className={expanded ? "block" : "line-clamp-2"}>{reason}</span>
+    </button>
+  );
+};
 
 /**
  * The Agenda shows appointments from 30 days ago onward (past ones for
@@ -287,6 +314,7 @@ export const InboxTab = ({
   const columns: ColumnDef<DashboardAppointment>[] = [
     {
       header: "Paciente",
+      mobileRole: "title",
       accessorKey: "patientName",
       sortable: true,
       className: "w-[25%]",
@@ -305,6 +333,7 @@ export const InboxTab = ({
     },
     {
       header: "Servicio",
+      mobileRole: "subtitle",
       accessorKey: "service",
       sortable: true,
       className: "w-[25%]",
@@ -313,21 +342,14 @@ export const InboxTab = ({
           <span className="text-sm font-bold text-brand-primary bg-brand-light/30 px-3 py-1.5 rounded-lg inline-block">
             {row.service}
           </span>
-          {row.reason && (
-            // Clamped so a long reason cannot stretch the row; the full text
-            // is in the tooltip.
-            <p
-              title={row.reason}
-              className="text-sm text-brand-gray font-medium mt-1 line-clamp-2 break-words"
-            >
-              {row.reason}
-            </p>
-          )}
+          {row.reason && <ExpandableReason reason={row.reason} />}
         </div>
       ),
     },
     {
       header: "Fecha / Hora",
+      mobileRole: "meta",
+      mobileLabel: "Fecha y hora",
       accessorKey: "date",
       sortable: true,
       className: "w-[20%]",
@@ -344,6 +366,7 @@ export const InboxTab = ({
     },
     {
       header: "Estado",
+      mobileRole: "status",
       accessorKey: "status",
       sortable: true,
       className: "w-[15%]",
@@ -386,7 +409,9 @@ export const InboxTab = ({
     },
     {
       header: "Acciones",
+      mobileRole: "actions",
       className: "w-[15%] text-right",
+      stickyRight: true,
       cell: (row) => {
         // Pending with its start already passed: only move or cancel it.
         const overdue =
@@ -408,29 +433,32 @@ export const InboxTab = ({
                 <button
                   type="button"
                   onClick={() => handleApprove(row.id)}
-                  className="flex items-center justify-center w-11 h-11 bg-teal-50 text-teal-600 hover:bg-teal-500 hover:text-white rounded-xl transition-all border border-teal-100 hover:border-teal-500 shadow-sm cursor-pointer"
+                  className={`flex items-center justify-center w-11 h-11 bg-teal-50 text-teal-600 hover:bg-teal-500 hover:text-white rounded-xl transition-all border border-teal-100 hover:border-teal-500 shadow-sm cursor-pointer ${PHONE_LABELED_BUTTON}`}
                   title="Aprobar"
                   aria-label="Aprobar"
                 >
                   <Check className="w-5 h-5" strokeWidth={2.5} />
+                  <span className={PHONE_ONLY_LABEL}>Aprobar</span>
                 </button>
                 <button
                   type="button"
                   onClick={() => openRescheduleModal(row)}
-                  className="flex items-center justify-center w-11 h-11 bg-amber-50 text-amber-600 hover:bg-amber-500 hover:text-white rounded-xl transition-all border border-amber-100 hover:border-amber-500 shadow-sm cursor-pointer"
+                  className={`flex items-center justify-center w-11 h-11 bg-amber-50 text-amber-600 hover:bg-amber-500 hover:text-white rounded-xl transition-all border border-amber-100 hover:border-amber-500 shadow-sm cursor-pointer ${TOUCH_LABELED_BUTTON}`}
                   title="Sugerir horario"
                   aria-label="Sugerir horario"
                 >
                   <CalendarClock className="w-5 h-5" strokeWidth={2.5} />
+                  <span className={TOUCH_ONLY_LABEL}>Sugerir</span>
                 </button>
                 <button
                   type="button"
                   onClick={() => setRejectModalData(row)}
-                  className="flex items-center justify-center w-11 h-11 bg-red-50 text-red-600 hover:bg-red-500 hover:text-white rounded-xl transition-all border border-red-100 hover:border-red-500 shadow-sm cursor-pointer"
+                  className={`flex items-center justify-center w-11 h-11 bg-red-50 text-red-600 hover:bg-red-500 hover:text-white rounded-xl transition-all border border-red-100 hover:border-red-500 shadow-sm cursor-pointer ${TOUCH_LABELED_BUTTON}`}
                   title="Rechazar Solicitud"
                   aria-label="Rechazar Solicitud"
                 >
                   <X className="w-5 h-5" strokeWidth={2.5} />
+                  <span className={TOUCH_ONLY_LABEL}>Rechazar</span>
                 </button>
               </>
             )}
@@ -441,11 +469,12 @@ export const InboxTab = ({
                 <button
                   type="button"
                   onClick={() => openRescheduleModal(row)}
-                  className="flex items-center justify-center w-11 h-11 bg-blue-50 text-blue-600 hover:bg-blue-500 hover:text-white rounded-xl transition-all border border-blue-100 hover:border-blue-500 shadow-sm cursor-pointer"
+                  className={`flex items-center justify-center w-11 h-11 bg-blue-50 text-blue-600 hover:bg-blue-500 hover:text-white rounded-xl transition-all border border-blue-100 hover:border-blue-500 shadow-sm cursor-pointer ${TOUCH_LABELED_BUTTON}`}
                   title="Reprogramar"
                   aria-label="Reprogramar"
                 >
                   <CalendarClock className="w-5 h-5" strokeWidth={2.5} />
+                  <span className={TOUCH_ONLY_LABEL}>Reprogramar</span>
                 </button>
                 <button
                   type="button"
@@ -453,11 +482,12 @@ export const InboxTab = ({
                     setCancelModalData(row);
                     setCancelReason("");
                   }}
-                  className="flex items-center justify-center w-11 h-11 bg-rose-50 text-rose-600 hover:bg-rose-500 hover:text-white rounded-xl transition-all border border-rose-100 hover:border-rose-500 shadow-sm cursor-pointer"
+                  className={`flex items-center justify-center w-11 h-11 bg-rose-50 text-rose-600 hover:bg-rose-500 hover:text-white rounded-xl transition-all border border-rose-100 hover:border-rose-500 shadow-sm cursor-pointer ${TOUCH_LABELED_BUTTON}`}
                   title="Cancelar Cita"
                   aria-label="Cancelar Cita"
                 >
                   <CalendarX2 className="w-5 h-5" strokeWidth={2.5} />
+                  <span className={TOUCH_ONLY_LABEL}>Cancelar</span>
                 </button>
               </>
             )}
@@ -484,13 +514,13 @@ export const InboxTab = ({
       animate={{ opacity: 1, y: 0 }}
       className="space-y-8"
     >
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 xl:gap-6">
-        <div className="bg-white border border-slate-200 rounded-3xl p-6 shadow-[0_8px_30px_rgb(0,0,0,0.04)] flex items-center gap-4">
-          <div className="w-14 h-14 bg-amber-50 text-amber-500 rounded-2xl flex items-center justify-center shrink-0">
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 max-md:gap-3 xl:gap-6">
+        <div className="bg-white border border-slate-200 rounded-3xl p-6 max-md:p-4 shadow-[0_8px_30px_rgb(0,0,0,0.04)] flex items-center gap-4 max-md:flex-col max-md:items-start max-md:gap-2">
+          <div className="w-14 h-14 max-md:w-10 max-md:h-10 bg-amber-50 text-amber-500 rounded-2xl flex items-center justify-center shrink-0">
             <Inbox className="w-7 h-7" />
           </div>
           <div>
-            <p className="text-sm font-bold text-brand-gray uppercase tracking-wider mb-1">
+            <p className="text-sm max-md:text-xs font-bold text-brand-gray uppercase tracking-wider mb-1">
               {doctorOnlyMode ? "Sin confirmar" : "Por Revisar"}
             </p>
             <h4 className="text-3xl font-black text-brand-dark leading-none">
@@ -498,12 +528,12 @@ export const InboxTab = ({
             </h4>
           </div>
         </div>
-        <div className="bg-white border border-slate-200 rounded-3xl p-6 shadow-[0_8px_30px_rgb(0,0,0,0.04)] flex items-center gap-4">
-          <div className="w-14 h-14 bg-teal-50 text-teal-500 rounded-2xl flex items-center justify-center shrink-0">
+        <div className="bg-white border border-slate-200 rounded-3xl p-6 max-md:p-4 shadow-[0_8px_30px_rgb(0,0,0,0.04)] flex items-center gap-4 max-md:flex-col max-md:items-start max-md:gap-2">
+          <div className="w-14 h-14 max-md:w-10 max-md:h-10 bg-teal-50 text-teal-500 rounded-2xl flex items-center justify-center shrink-0">
             <CheckCircle2 className="w-7 h-7" />
           </div>
           <div>
-            <p className="text-sm font-bold text-brand-gray uppercase tracking-wider mb-1">
+            <p className="text-sm max-md:text-xs font-bold text-brand-gray uppercase tracking-wider mb-1">
               Confirmadas
             </p>
             <h4 className="text-3xl font-black text-brand-dark leading-none">
@@ -511,12 +541,12 @@ export const InboxTab = ({
             </h4>
           </div>
         </div>
-        <div className="bg-white border border-slate-200 rounded-3xl p-6 shadow-[0_8px_30px_rgb(0,0,0,0.04)] flex items-center gap-4">
-          <div className="w-14 h-14 bg-blue-50 text-blue-500 rounded-2xl flex items-center justify-center shrink-0">
+        <div className="bg-white border border-slate-200 rounded-3xl p-6 max-md:p-4 shadow-[0_8px_30px_rgb(0,0,0,0.04)] flex items-center gap-4 max-md:flex-col max-md:items-start max-md:gap-2">
+          <div className="w-14 h-14 max-md:w-10 max-md:h-10 bg-blue-50 text-blue-500 rounded-2xl flex items-center justify-center shrink-0">
             <Users className="w-7 h-7" />
           </div>
           <div>
-            <p className="text-sm font-bold text-brand-gray uppercase tracking-wider mb-1">
+            <p className="text-sm max-md:text-xs font-bold text-brand-gray uppercase tracking-wider mb-1">
               Nuevos Pac.
             </p>
             <h4 className="text-3xl font-black text-brand-dark leading-none">
@@ -524,12 +554,12 @@ export const InboxTab = ({
             </h4>
           </div>
         </div>
-        <div className="bg-white border border-slate-200 rounded-3xl p-6 shadow-[0_8px_30px_rgb(0,0,0,0.04)] flex items-center gap-4">
-          <div className="w-14 h-14 bg-brand-light/40 text-brand-primary rounded-2xl flex items-center justify-center shrink-0">
+        <div className="bg-white border border-slate-200 rounded-3xl p-6 max-md:p-4 shadow-[0_8px_30px_rgb(0,0,0,0.04)] flex items-center gap-4 max-md:flex-col max-md:items-start max-md:gap-2">
+          <div className="w-14 h-14 max-md:w-10 max-md:h-10 bg-brand-light/40 text-brand-primary rounded-2xl flex items-center justify-center shrink-0">
             <TrendingUp className="w-7 h-7" />
           </div>
           <div>
-            <p className="text-sm font-bold text-brand-gray uppercase tracking-wider mb-1">
+            <p className="text-sm max-md:text-xs font-bold text-brand-gray uppercase tracking-wider mb-1">
               Total Agenda
             </p>
             <h4 className="text-3xl font-black text-brand-dark leading-none">
@@ -599,7 +629,7 @@ export const InboxTab = ({
               </button>
             ))}
           </div>
-          <div className="pt-4 border-t border-slate-100 flex gap-3">
+          <div className="pt-4 border-t border-slate-100 flex gap-3 max-md:flex-col-reverse max-md:*:w-full max-md:*:flex-none">
             <Button
               variant="outline"
               onClick={() => {
@@ -657,7 +687,7 @@ export const InboxTab = ({
                 rows={3}
               />
             </div>
-            <div className="pt-4 border-t border-slate-100 flex gap-3">
+            <div className="pt-4 border-t border-slate-100 flex gap-3 max-md:flex-col-reverse max-md:*:w-full max-md:*:flex-none">
               <Button
                 variant="outline"
                 onClick={() => {
@@ -749,7 +779,7 @@ export const InboxTab = ({
                 />
               </div>
             </div>
-            <div className="pt-4 border-t border-slate-100 flex gap-3">
+            <div className="pt-4 border-t border-slate-100 flex gap-3 max-md:flex-col-reverse max-md:*:w-full max-md:*:flex-none">
               <Button
                 variant="outline"
                 onClick={() => setRescheduleData(null)}
@@ -789,7 +819,7 @@ export const InboxTab = ({
               <strong>{rejectModalData.patientName}</strong>. El paciente
               recibirá un aviso.
             </p>
-            <div className="pt-4 border-t border-slate-100 flex gap-3">
+            <div className="pt-4 border-t border-slate-100 flex gap-3 max-md:flex-col-reverse max-md:*:w-full max-md:*:flex-none">
               <Button
                 variant="outline"
                 onClick={() => setRejectModalData(null)}

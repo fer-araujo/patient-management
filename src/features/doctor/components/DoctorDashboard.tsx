@@ -128,39 +128,40 @@ export const DoctorDashboard = () => {
   }
 
   return (
-    <main className="max-w-360 mx-auto px-4 sm:px-6 lg:px-8 pt-8 xl:pt-10 pb-20">
-      <div className="mb-8 border-b border-slate-200 pb-6">
-        <div className="flex flex-wrap items-center justify-between gap-4 mb-6">
-          <h1 className="text-3xl xl:text-4xl font-extrabold text-brand-dark tracking-tight">
+    <main className="max-w-360 mx-auto px-4 sm:px-6 lg:px-8 pt-8 max-md:pt-5 xl:pt-10 pb-20">
+      <div className="mb-8 max-md:mb-6 border-b border-slate-200 pb-6 max-md:pb-4">
+        <div className="flex flex-wrap items-center justify-between gap-4 max-md:gap-3 mb-6 max-md:mb-4">
+          <h1 className="text-3xl max-md:text-2xl xl:text-4xl font-extrabold text-brand-dark tracking-tight">
             Centro de Comando
           </h1>
-          <div className="flex flex-wrap items-center gap-3">
+          <div className="flex flex-wrap items-center gap-3 max-md:w-full">
             <PrescriberProfileButton />
             <ClinicModeSwitch />
           </div>
         </div>
-        <div className="flex items-center gap-2 sm:gap-4 overflow-x-auto hide-scrollbar">
+        <div className="flex flex-wrap lg:flex-nowrap items-center gap-2 sm:gap-4 overflow-x-auto hide-scrollbar">
           <button
             onClick={() => setActiveTab("inbox")}
-            className={`flex items-center gap-2 px-6 py-3 rounded-full text-sm font-bold transition-all cursor-pointer whitespace-nowrap ${activeTab === "inbox" ? "bg-brand-primary text-white shadow-md" : "bg-slate-100 text-brand-gray hover:bg-slate-200 hover:text-brand-dark"}`}
+            className={`flex items-center gap-2 px-6 max-md:px-4 py-3 max-md:min-h-11 rounded-full text-sm font-bold transition-all cursor-pointer whitespace-nowrap ${activeTab === "inbox" ? "bg-brand-primary text-white shadow-md" : "bg-slate-100 text-brand-gray hover:bg-slate-200 hover:text-brand-dark"}`}
           >
             <Inbox className="w-4 h-4" /> Agenda
           </button>
           <button
             onClick={() => setActiveTab("patients")}
-            className={`flex items-center gap-2 px-6 py-3 rounded-full text-sm font-bold transition-all cursor-pointer whitespace-nowrap ${activeTab === "patients" ? "bg-brand-primary text-white shadow-md" : "bg-slate-100 text-brand-gray hover:bg-slate-200 hover:text-brand-dark"}`}
+            className={`flex items-center gap-2 px-6 max-md:px-4 py-3 max-md:min-h-11 rounded-full text-sm font-bold transition-all cursor-pointer whitespace-nowrap ${activeTab === "patients" ? "bg-brand-primary text-white shadow-md" : "bg-slate-100 text-brand-gray hover:bg-slate-200 hover:text-brand-dark"}`}
           >
-            <FileText className="w-4 h-4" /> Directorio de Pacientes
+            <FileText className="w-4 h-4" />{" "}
+            <span className="max-md:hidden">Directorio de</span> Pacientes
           </button>
           <button
             onClick={() => setActiveTab("calendar")}
-            className={`flex items-center gap-2 px-6 py-3 rounded-full text-sm font-bold transition-all cursor-pointer whitespace-nowrap ${activeTab === "calendar" ? "bg-brand-primary text-white shadow-md" : "bg-slate-100 text-brand-gray hover:bg-slate-200 hover:text-brand-dark"}`}
+            className={`flex items-center gap-2 px-6 max-md:px-4 py-3 max-md:min-h-11 rounded-full text-sm font-bold transition-all cursor-pointer whitespace-nowrap ${activeTab === "calendar" ? "bg-brand-primary text-white shadow-md" : "bg-slate-100 text-brand-gray hover:bg-slate-200 hover:text-brand-dark"}`}
           >
             <CalendarDays className="w-4 h-4" /> Calendario
           </button>
           <button
             onClick={() => setActiveTab("arco")}
-            className={`flex items-center gap-2 px-6 py-3 rounded-full text-sm font-bold transition-all cursor-pointer whitespace-nowrap ${activeTab === "arco" ? "bg-brand-primary text-white shadow-md" : "bg-slate-100 text-brand-gray hover:bg-slate-200 hover:text-brand-dark"}`}
+            className={`flex items-center gap-2 px-6 max-md:px-4 py-3 max-md:min-h-11 rounded-full text-sm font-bold transition-all cursor-pointer whitespace-nowrap ${activeTab === "arco" ? "bg-brand-primary text-white shadow-md" : "bg-slate-100 text-brand-gray hover:bg-slate-200 hover:text-brand-dark"}`}
           >
             <ShieldCheck className="w-4 h-4" /> Solicitudes
             {pendingArco > 0 && (
@@ -174,7 +175,7 @@ export const DoctorDashboard = () => {
           </button>
           <button
             onClick={() => setActiveTab("audit")}
-            className={`flex items-center gap-2 px-6 py-3 rounded-full text-sm font-bold transition-all cursor-pointer whitespace-nowrap ${activeTab === "audit" ? "bg-brand-primary text-white shadow-md" : "bg-slate-100 text-brand-gray hover:bg-slate-200 hover:text-brand-dark"}`}
+            className={`flex items-center gap-2 px-6 max-md:px-4 py-3 max-md:min-h-11 rounded-full text-sm font-bold transition-all cursor-pointer whitespace-nowrap ${activeTab === "audit" ? "bg-brand-primary text-white shadow-md" : "bg-slate-100 text-brand-gray hover:bg-slate-200 hover:text-brand-dark"}`}
           >
             <History className="w-4 h-4" /> Bitácora
           </button>

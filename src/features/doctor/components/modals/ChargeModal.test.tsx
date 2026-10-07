@@ -238,6 +238,14 @@ describe("ChargeModal supplies used (withSupplies)", () => {
   const confirmButton = () => screen.getByRole("button", { name: /Guardar y finalizar/ });
   const quantityOf = (name: string) => screen.getByLabelText(`Cantidad de ${name}`);
 
+  it("does not offer creating inventory items while finishing a consultation", async () => {
+    renderWithSupplies();
+    await screen.findByLabelText("Cantidad de Sculptra");
+
+    expect(screen.getByRole("combobox", { name: "Insumos usados" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Nuevo insumo/ })).toBeNull();
+  });
+
   it("pre-fills the service's supplies with the current stock of each", async () => {
     renderWithSupplies();
 
