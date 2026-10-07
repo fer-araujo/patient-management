@@ -31,10 +31,21 @@ const UNIT_OPTIONS = [
   { label: "Unidades (U)", value: "unidades" },
 ];
 
+/** Name and unit of an item just created, as typed in the form. */
+export interface CreatedItem {
+  name: string;
+  unit: string;
+}
+
 interface Props {
   isOpen: boolean;
   onClose: () => void;
-  onSaved: () => void;
+  /**
+   * Called after saving. On create it gets the new item's id when the insert
+   * returned it, and always the saved name and unit, so a caller can still
+   * find the item when the id is missing.
+   */
+  onSaved: (createdId?: string, created?: CreatedItem) => void;
   itemToEdit?: InventoryItem | null;
 }
 
@@ -80,6 +91,7 @@ export const InventoryModal = ({
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setIsLoading(true);
+    let createdId: string | null = null;
 
     try {
       if (itemToEdit) {
@@ -103,24 +115,29 @@ export const InventoryModal = ({
         if (cost !== null && formData.stock_quantity > 0) {
           // Create empty, then record the starting stock as a purchase so its
           // cost lands in the ledger (the insert trigger would log it free).
-          const newId = await createInventoryItem({
+          createdId = await createInventoryItem({
             ...formData,
             stock_quantity: 0,
           });
-          if (newId) {
+          if (createdId) {
             await registerPurchase(
-              newId,
+              createdId,
               formData.stock_quantity,
               cost,
               "Compra inicial",
             );
           }
         } else {
-          await createInventoryItem(formData);
+          createdId = await createInventoryItem(formData);
         }
         toast.success("Artículo agregado al inventario");
       }
-      onSaved();
+      onSaved(
+        createdId ?? undefined,
+        itemToEdit
+          ? undefined
+          : { name: formData.name, unit: formData.unit_measure },
+      );
       onClose();
     } catch (error: unknown) {
       console.error("[InventoryModal] Error al guardar el artículo:", error);
@@ -245,7 +262,7 @@ export const InventoryModal = ({
           Stock Bajo", y "Agotado" en rojo cuando llegue a 0.
         </p>
 
-        <div className="pt-4 mt-2 border-t border-brand-light flex gap-3 justify-end">
+        <div className="pt-4 mt-2 border-t border-brand-light flex gap-3 justify-end max-md:flex-col-reverse max-md:*:w-full max-md:*:flex-none">
           <Button
             type="button"
             variant="outline"

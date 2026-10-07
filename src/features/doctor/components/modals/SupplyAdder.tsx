@@ -1,3 +1,4 @@
+import { Plus } from "lucide-react";
 import { Dropdown } from "../../../../components/ui/Dropdown";
 import type { InventoryItem } from "../../../../lib/services/inventoryService";
 import { supplyQuantityInputId } from "./supplyQuantityInput";
@@ -14,6 +15,12 @@ interface Props {
    * rows' quantity input ids (see `supplyQuantityInputId`).
    */
   labelledBy: string;
+  /**
+   * When given, a "Nuevo insumo" action lets the user create an item that is
+   * not in the inventory yet. Only the catalog passes it: finishing a
+   * consultation should not create inventory.
+   */
+  onCreateNew?: () => void;
 }
 
 /**
@@ -21,7 +28,13 @@ interface Props {
  * focuses its row when it is already listed. Shared by the catalog modal
  * ("Insumos que usa") and the supplies lists ("Insumos usados").
  */
-export const SupplyAdder = ({ items, listedIds, onAdd, labelledBy }: Props) => {
+export const SupplyAdder = ({
+  items,
+  listedIds,
+  onAdd,
+  labelledBy,
+  onCreateNew,
+}: Props) => {
   const handlePick = (itemId: string) => {
     const item = items.find((i) => i.id === itemId);
     if (!item) return;
@@ -38,27 +51,46 @@ export const SupplyAdder = ({ items, listedIds, onAdd, labelledBy }: Props) => {
     onAdd(item);
   };
 
+  const createNew = onCreateNew && (
+    <button
+      type="button"
+      onClick={onCreateNew}
+      className="inline-flex items-center gap-1 min-h-11 text-sm font-bold text-brand-primary hover:underline cursor-pointer"
+    >
+      <Plus className="w-4 h-4" strokeWidth={2.5} />
+      Nuevo insumo
+    </button>
+  );
+
   if (items.every((i) => listedIds.includes(i.id))) {
     return (
-      <p className="text-xs text-brand-gray">
-        No hay más artículos activos en el inventario.
-      </p>
+      <>
+        <p className="text-xs text-brand-gray">
+          No hay más artículos activos en el inventario.
+        </p>
+        {createNew}
+      </>
     );
   }
 
   return (
-    <Dropdown
-      options={items.map((i) => ({
-        label: listedIds.includes(i.id) ? `${i.name} (ya en la lista)` : i.name,
-        value: i.id,
-      }))}
-      // Always empty: each pick acts right away and leaves the picker ready.
-      value=""
-      onChange={handlePick}
-      placeholder="Elige un artículo para agregarlo..."
-      searchable
-      labelledBy={labelledBy}
-      className="py-0! text-sm!"
-    />
+    <>
+      <Dropdown
+        options={items.map((i) => ({
+          label: listedIds.includes(i.id)
+            ? `${i.name} (ya en la lista)`
+            : i.name,
+          value: i.id,
+        }))}
+        // Always empty: each pick acts right away and leaves the picker ready.
+        value=""
+        onChange={handlePick}
+        placeholder="Elige un artículo para agregarlo..."
+        searchable
+        labelledBy={labelledBy}
+        className="py-0! text-sm!"
+      />
+      {createNew}
+    </>
   );
 };

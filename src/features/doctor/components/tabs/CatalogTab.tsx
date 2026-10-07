@@ -11,14 +11,34 @@ import {
 import toast from "react-hot-toast";
 import {
   fetchAllServices,
-  formatSupplies,
   toggleServiceStatus,
   type ClinicService,
 } from "../../../../lib/services/catalogService";
 import { ServiceModal } from "../modals/ServiceModal";
+import { Modal } from "../../../../components/ui/Modal";
 import { DataGrid, type ColumnDef } from "../../../../components/ui/DataGrid";
+import {
+  TOUCH_ICON_BUTTON,
+  TOUCH_LABELED_BUTTON,
+  TOUCH_ONLY_LABEL,
+  PHONE_LABELED_BUTTON,
+  PHONE_ONLY_LABEL,
+} from "../../../../components/ui/touchTargets";
 import { Button } from "../../../../components/ui/Button";
 import { motion } from "framer-motion";
+
+/** How many supply names the "Insumos" column shows before "+N más". */
+const SUPPLY_NAMES_SHOWN = 2;
+
+/** "Sculptra, Jeringas +6 más": short enough for the table cell. */
+const summarizeSupplies = (
+  supplies: NonNullable<ClinicService["supplies"]>,
+) => {
+  const names = supplies.map((s) => s.itemName);
+  const rest = names.length - SUPPLY_NAMES_SHOWN;
+  const shown = names.slice(0, SUPPLY_NAMES_SHOWN).join(", ");
+  return rest > 0 ? `${shown} +${rest} más` : shown;
+};
 
 export const CatalogTab = () => {
   const [services, setServices] = useState<ClinicService[]>([]);
@@ -29,6 +49,10 @@ export const CatalogTab = () => {
   const [serviceToEdit, setServiceToEdit] = useState<ClinicService | null>(
     null,
   );
+  // Full "Insumos" list of one service, opened from its table cell. The
+  // service is kept while the modal animates out.
+  const [suppliesOf, setSuppliesOf] = useState<ClinicService | null>(null);
+  const [isSuppliesOpen, setIsSuppliesOpen] = useState(false);
 
   const loadData = async () => {
     setIsLoading(true);
@@ -90,6 +114,7 @@ export const CatalogTab = () => {
   const columns: ColumnDef<ClinicService>[] = [
     {
       header: "Tratamiento",
+      mobileRole: "title",
       accessorKey: "name",
       sortable: true,
       className: "w-[25%]",
@@ -110,6 +135,8 @@ export const CatalogTab = () => {
     },
     {
       header: "Descripción",
+      mobileRole: "meta",
+      mobileWide: true,
       accessorKey: "description",
       className: "w-[30%]",
       cell: (row) => (
@@ -122,6 +149,7 @@ export const CatalogTab = () => {
     },
     {
       header: "Detalles",
+      mobileRole: "meta",
       accessorKey: "durationMins",
       sortable: true,
       className: "w-[15%]",
@@ -142,18 +170,35 @@ export const CatalogTab = () => {
     },
     {
       header: "Insumos",
+      mobileRole: "meta",
       className: "w-[15%]",
-      cell: (row) => (
-        <span
-          className={`text-sm font-medium ${row.isActive ? "text-brand-gray" : "text-slate-400"}`}
-        >
-          {formatSupplies(row.supplies)}
-        </span>
-      ),
+      cell: (row) =>
+        row.supplies && row.supplies.length > 0 ? (
+          <button
+            type="button"
+            onClick={() => {
+              setSuppliesOf(row);
+              setIsSuppliesOpen(true);
+            }}
+            aria-label={`Ver insumos de ${row.name}`}
+            title="Ver insumos"
+            className={`pointer-coarse:min-h-11 max-md:min-h-11 text-left text-sm font-medium hover:underline cursor-pointer ${row.isActive ? "text-brand-gray" : "text-slate-400"}`}
+          >
+            {summarizeSupplies(row.supplies)}
+          </button>
+        ) : (
+          <span
+            className={`text-sm font-medium ${row.isActive ? "text-brand-gray" : "text-slate-400"}`}
+          >
+            —
+          </span>
+        ),
     },
     {
       header: "Acciones",
+      mobileRole: "actions",
       className: "w-[15%] text-right",
+      stickyRight: true,
       cell: (row) => (
         <div className="flex items-center justify-end gap-2">
           <button
@@ -161,22 +206,28 @@ export const CatalogTab = () => {
               setServiceToEdit(row);
               setIsModalOpen(true);
             }}
-            className="flex items-center justify-center w-10 h-10 bg-slate-50 text-slate-600 hover:bg-brand-primary hover:text-white rounded-xl transition-all border border-slate-200 hover:border-brand-primary shadow-sm cursor-pointer"
+            className={`flex items-center justify-center w-10 h-10 bg-slate-50 text-slate-600 hover:bg-brand-primary hover:text-white rounded-xl transition-all border border-slate-200 hover:border-brand-primary shadow-sm cursor-pointer ${TOUCH_ICON_BUTTON} ${PHONE_LABELED_BUTTON}`}
             title="Editar Tratamiento"
+            aria-label="Editar Tratamiento"
           >
             <Edit2 className="w-5 h-5" strokeWidth={2.5} />
+            <span className={PHONE_ONLY_LABEL}>Editar</span>
           </button>
 
           <button
             onClick={() => handleToggleStatus(row)}
-            className={`flex items-center justify-center w-10 h-10 rounded-xl transition-all border shadow-sm cursor-pointer ${
+            className={`flex items-center justify-center w-10 h-10 rounded-xl transition-all border shadow-sm cursor-pointer ${TOUCH_LABELED_BUTTON} ${
               row.isActive
                 ? "bg-rose-50 text-rose-500 border-rose-100 hover:bg-rose-500 hover:text-white hover:border-rose-500"
                 : "bg-teal-50 text-teal-600 border-teal-100 hover:bg-teal-500 hover:text-white hover:border-teal-500"
             }`}
             title={row.isActive ? "Desactivar" : "Activar"}
+            aria-label={row.isActive ? "Desactivar" : "Activar"}
           >
             <Power className="w-5 h-5" strokeWidth={2.5} />
+            <span className={TOUCH_ONLY_LABEL}>
+              {row.isActive ? "Desactivar" : "Activar"}
+            </span>
           </button>
         </div>
       ),
@@ -234,6 +285,29 @@ export const CatalogTab = () => {
         onSaved={loadData}
         serviceToEdit={serviceToEdit}
       />
+
+      <Modal
+        isOpen={isSuppliesOpen}
+        onClose={() => setIsSuppliesOpen(false)}
+        title={`Insumos de ${suppliesOf?.name ?? ""}`}
+        maxWidth="max-w-md"
+      >
+        <ul>
+          {(suppliesOf?.supplies ?? []).map((s) => (
+            <li
+              key={s.itemId}
+              className="flex items-center justify-between gap-2 border-b border-brand-light py-2"
+            >
+              <span className="text-sm font-semibold text-brand-dark">
+                {s.itemName}
+              </span>
+              <span className="text-sm text-brand-gray">
+                {s.quantity} {s.unit}
+              </span>
+            </li>
+          ))}
+        </ul>
+      </Modal>
     </motion.div>
   );
 };
