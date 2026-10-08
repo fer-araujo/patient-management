@@ -29,3 +29,10 @@ dist-ssr
 # Generated artifacts
 .vite
 graphify-out/
+
+# Playwright (e2e/README.md)
+/test-results/
+/e2e-report/
+/blob-report/
+/playwright/.cache/
+/e2e/.auth/
