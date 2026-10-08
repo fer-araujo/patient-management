@@ -32,8 +32,6 @@ export interface InventoryMovement {
   note: string | null;
   created_by: string | null;
   created_at: string;
-  /** Consultation a 'use' was recorded for (migration 22); null for manual movements. */
-  appointment_id?: string | null;
 }
 
 /**
@@ -190,14 +188,17 @@ export const registerPurchase = async (
 /** The item history shows at most this many movements (it says so when capped). */
 export const MOVEMENTS_MAX_ENTRIES = 100;
 
-/** Latest movements of one item, newest first (up to MOVEMENTS_MAX_ENTRIES). */
+/**
+ * Latest movements of one item, newest first (up to MOVEMENTS_MAX_ENTRIES).
+ * Read through get_item_movements (migration 27), which never returns the
+ * consultation a supply was used in, so the admin's history is complete
+ * without linking supplies to appointments.
+ */
 export const fetchMovements = async (
   itemId: string,
 ): Promise<InventoryMovement[]> => {
   const { data, error } = await supabase
-    .from("inventory_movements")
-    .select("*")
-    .eq("item_id", itemId)
+    .rpc("get_item_movements", { p_item_id: itemId })
     .order("created_at", { ascending: false })
     .limit(MOVEMENTS_MAX_ENTRIES);
 
@@ -205,7 +206,7 @@ export const fetchMovements = async (
     console.error("Error fetching inventory movements:", error);
     throw new Error("No se pudo cargar el historial.");
   }
-  return data || [];
+  return (data ?? []) as InventoryMovement[];
 };
 
 export const toggleInventoryStatus = async (

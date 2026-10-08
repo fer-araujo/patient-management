@@ -46,6 +46,26 @@
 begin;
 
 -- -----------------------------------------------------------------------------
+-- Migration 27 limits patient bookings to the opening hours, the 15-minute
+-- grid and a 120-day horizon. This check proves other rules with far-future
+-- fixtures, so assert_patient_booking_window() is replaced by a no-op INSIDE
+-- this transaction (DDL is transactional); the ROLLBACK restores it.
+-- security_hardening_check.sql covers the window itself.
+-- -----------------------------------------------------------------------------
+do $$
+begin
+  if to_regprocedure('public.assert_patient_booking_window(timestamptz,integer)') is not null then
+    execute $fn$
+      create or replace function public.assert_patient_booking_window(
+        p_start timestamptz, p_duration_mins integer)
+      returns void language plpgsql stable security definer
+      set search_path = public, pg_temp
+      as $body$ begin return; end; $body$
+    $fn$;
+  end if;
+end $$;
+
+-- -----------------------------------------------------------------------------
 -- 0. No outbound side effects
 -- -----------------------------------------------------------------------------
 do $$
@@ -177,6 +197,22 @@ begin
   perform set_config('doctor_only_check.start', v_start::text, true);
   perform set_config('doctor_only_check.claim_phone_p', public.normalize_phone(v_phone_p), true);
   perform set_config('doctor_only_check.claim_phone_new', public.normalize_phone(v_phone_new), true);
+  -- Migration 27: a patient session needs an auth user whose phone was
+  -- confirmed by Auth (phone_confirmed_at). Harmless before migration 27.
+  perform set_config('doctor_only_check.claim_user_p', gen_random_uuid()::text, true);
+  insert into auth.users (id, instance_id, aud, role, phone, phone_confirmed_at, email,
+                          raw_app_meta_data, raw_user_meta_data, created_at, updated_at)
+  values (current_setting('doctor_only_check.claim_user_p')::uuid,
+          '00000000-0000-0000-0000-000000000000', 'authenticated', 'authenticated',
+          current_setting('doctor_only_check.claim_phone_p'), now(), null,
+          '{}'::jsonb, '{}'::jsonb, now(), now());
+  perform set_config('doctor_only_check.claim_user_new', gen_random_uuid()::text, true);
+  insert into auth.users (id, instance_id, aud, role, phone, phone_confirmed_at, email,
+                          raw_app_meta_data, raw_user_meta_data, created_at, updated_at)
+  values (current_setting('doctor_only_check.claim_user_new')::uuid,
+          '00000000-0000-0000-0000-000000000000', 'authenticated', 'authenticated',
+          current_setting('doctor_only_check.claim_phone_new'), now(), null,
+          '{}'::jsonb, '{}'::jsonb, now(), now());
   -- Read as the owner: API roles cannot execute privacy_notice_version().
   perform set_config('doctor_only_check.notice_version', public.privacy_notice_version(), true);
 end $$;
@@ -240,7 +276,7 @@ end $$;
 do $$
 begin
   perform set_config('request.jwt.claims', jsonb_build_object(
-    'sub', gen_random_uuid(),
+    'sub', current_setting('doctor_only_check.claim_user_p'),
     'role', 'authenticated',
     'phone', current_setting('doctor_only_check.claim_phone_p'))::text, true);
 end $$;
@@ -256,8 +292,10 @@ declare
   v_refused   boolean;
   v_message   text;
 begin
-  if public.current_patient_id() is distinct from v_patient_p then
-    raise exception 'DOCTOR ONLY MODE CHECK FAILED: the test session does not resolve to the test patient.';
+  -- Migration 27: with the mode ON a patient session resolves to no patient
+  -- at all, so every own-row read is closed too.
+  if public.current_patient_id() is not null then
+    raise exception 'DOCTOR ONLY MODE CHECK FAILED: with the mode ON a patient session still resolves to patient % (expected none).', public.current_patient_id();
   end if;
 
   if public.get_clinic_mode() is distinct from true then
@@ -364,7 +402,7 @@ reset role;
 do $$
 begin
   perform set_config('request.jwt.claims', jsonb_build_object(
-    'sub', gen_random_uuid(),
+    'sub', current_setting('doctor_only_check.claim_user_new'),
     'role', 'authenticated',
     'phone', current_setting('doctor_only_check.claim_phone_new'))::text, true);
 end $$;
@@ -607,7 +645,7 @@ end $$;
 do $$
 begin
   perform set_config('request.jwt.claims', jsonb_build_object(
-    'sub', gen_random_uuid(),
+    'sub', current_setting('doctor_only_check.claim_user_p'),
     'role', 'authenticated',
     'phone', current_setting('doctor_only_check.claim_phone_p'))::text, true);
 end $$;
@@ -633,7 +671,7 @@ reset role;
 do $$
 begin
   perform set_config('request.jwt.claims', jsonb_build_object(
-    'sub', gen_random_uuid(),
+    'sub', current_setting('doctor_only_check.claim_user_new'),
     'role', 'authenticated',
     'phone', current_setting('doctor_only_check.claim_phone_new'))::text, true);
 end $$;

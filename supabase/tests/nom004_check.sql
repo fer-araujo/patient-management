@@ -4,7 +4,9 @@
 -- Proves, against the real migration 20 objects, that:
 --   * finalize_consultation() refuses a note with an empty diagnosis, a note
 --     with an empty (blank) plan, and an appointment with no note at all, and
---     leaves those notes unfinalized;
+--     leaves those notes unfinalized (since migration 26 it is called as the
+--     owner with the doctor's JWT, the way finalize_consultation_with_payment()
+--     calls it; the doctor cannot call it directly);
 --   * a complete note finalizes, and a second call is harmless (returns 0);
 --   * finalize_consultation_with_payment() is all-or-nothing: an incomplete
 --     note leaves NO payment row, a refused charge leaves the note
@@ -37,6 +39,23 @@
 -- =============================================================================
 
 begin;
+
+-- -----------------------------------------------------------------------------
+-- Since migration 27, doctor-only mode also closes every patient READ
+-- (current_patient_id() is NULL while it is on). This check needs patient
+-- sessions, so the mode is turned off INSIDE this transaction; the ROLLBACK
+-- restores it.
+-- -----------------------------------------------------------------------------
+do $$
+begin
+  if exists (
+    select 1 from information_schema.columns
+    where table_schema = 'public' and table_name = 'clinic_settings'
+      and column_name = 'doctor_only_mode'
+  ) then
+    execute 'update public.clinic_settings set doctor_only_mode = false where doctor_only_mode';
+  end if;
+end $$;
 
 -- -----------------------------------------------------------------------------
 -- 0. No outbound side effects, migration 20 applied
@@ -121,6 +140,11 @@ begin
     (v_user_p, '00000000-0000-0000-0000-000000000000', 'authenticated', 'authenticated',
      public.normalize_phone(v_phone), null, '{}'::jsonb, '{}'::jsonb, now(), now());
 
+  -- Migration 27: a patient session needs an auth user whose phone was
+  -- confirmed by Auth (phone_confirmed_at). Harmless before migration 27.
+  update auth.users set phone_confirmed_at = now()
+   where id in (v_user_p) and phone is not null;
+
   update public.profiles
      set role = 'doctor', first_name = 'NOM004', last_name = 'Doctora'
    where id = v_user_d;
@@ -201,29 +225,48 @@ begin
   values (v_appt_b, v_patient, 'S', 'Diagnosis B', '   ');
 
   -- 2a. Empty diagnosis, blank plan, and no note at all are refused.
+  -- Since migration 26 the doctor cannot call finalize_consultation().
   v_refused := false;
   begin
     perform public.finalize_consultation(v_appt_a);
+  exception when insufficient_privilege then v_refused := true;
+  end;
+  if not v_refused then
+    raise exception 'NOM004 CHECK FAILED: the doctor can call finalize_consultation() directly.';
+  end if;
+
+  v_refused := false;
+  begin
+    -- Since migration 26 only finalize_consultation_with_payment() (as the
+    -- owner) may call finalize_consultation(); the check does the same: it
+    -- leaves the authenticated role for this call and keeps the doctor's JWT.
+    execute 'reset role';
+    perform public.finalize_consultation(v_appt_a);
   exception when others then v_refused := sqlstate = 'P0001';
   end;
+  execute 'set local role authenticated';
   if not v_refused then
     raise exception 'NOM004 CHECK FAILED: finalize_consultation() accepted an empty diagnosis.';
   end if;
 
   v_refused := false;
   begin
+    execute 'reset role';
     perform public.finalize_consultation(v_appt_b);
   exception when others then v_refused := sqlstate = 'P0001';
   end;
+  execute 'set local role authenticated';
   if not v_refused then
     raise exception 'NOM004 CHECK FAILED: finalize_consultation() accepted a blank plan.';
   end if;
 
   v_refused := false;
   begin
+    execute 'reset role';
     perform public.finalize_consultation(v_appt_c);
   exception when others then v_refused := sqlstate = 'P0001';
   end;
+  execute 'set local role authenticated';
   if not v_refused then
     raise exception 'NOM004 CHECK FAILED: finalize_consultation() accepted an appointment with no note.';
   end if;
@@ -266,6 +309,7 @@ begin
   )
   returning id into v_note_d;
 
+  execute 'reset role';
   v_frozen := public.finalize_consultation(v_appt_d);
   if v_frozen <> 1 then
     raise exception 'NOM004 CHECK FAILED: finalize_consultation froze % rows, expected 1.', v_frozen;
@@ -275,6 +319,7 @@ begin
   if v_frozen <> 0 then
     raise exception 'NOM004 CHECK FAILED: a second finalize_consultation froze % rows, expected 0.', v_frozen;
   end if;
+  execute 'set local role authenticated';
 
   -- 2d. prognosis and vital_signs are frozen after finalization.
   v_refused := false;

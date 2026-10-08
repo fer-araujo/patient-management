@@ -341,19 +341,6 @@ export const savePrescription = async (
   }
 };
 
-/**
- * Freezes the note and prescription of a consultation (NOM-004 integrity).
- * Called once from "Finalizar Consulta". Safe to call more than once.
- */
-export const finalizeConsultation = async (
-  appointmentId: string,
-): Promise<void> => {
-  const { error } = await supabase.rpc("finalize_consultation", {
-    p_appointment_id: appointmentId,
-  });
-  if (error) throw toClinicalError(error, "Error finalizando consulta");
-};
-
 /** The charge collected by the "Cobro de la consulta" step. */
 export interface ConsultationCharge {
   status: "paid" | "courtesy";

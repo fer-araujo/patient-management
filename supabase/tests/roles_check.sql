@@ -6,10 +6,14 @@
 --   * doctor: clinical staff AND business staff. Reads patients, appointments,
 --     notes, addenda, prescriptions, files, ARCO requests, consents, the audit
 --     log and other profiles; writes notes and prescriptions; records a charge,
---     finalizes a consultation, moves an ARCO request; reads inventory,
---     services and payments; adjusts stock.
---   * admin: business staff ONLY. Reads inventory, inventory movements, every
---     service (including inactive ones) and payments; adjusts stock; writes the
+--     finalizes a consultation (finalize_consultation_with_payment; the
+--     bare finalize_consultation() is not client-callable since migration
+--     26), moves an ARCO request; reads inventory, services and payments;
+--     adjusts stock.
+--   * admin: business staff ONLY. Reads inventory, inventory movements not
+--     tied to a consultation (migration 27), every service (including
+--     inactive ones) and payment amounts through get_finance_payments()
+--     (migration 26: no payment row directly); adjusts stock; writes the
 --     catalog. Reads NO patient, appointment, clinical note, addendum,
 --     prescription, patient file, ARCO request, consent, audit entry, agenda
 --     row (clinic_settings, blocked_slots), clinical_records object or other
@@ -120,6 +124,11 @@ begin
     (v_user_p, '00000000-0000-0000-0000-000000000000', 'authenticated', 'authenticated',
      public.normalize_phone(v_phone), null, '{}'::jsonb, '{}'::jsonb, now(), now());
 
+  -- Migration 27: a patient session needs an auth user whose phone was
+  -- confirmed by Auth (phone_confirmed_at). Harmless before migration 27.
+  update auth.users set phone_confirmed_at = now()
+   where id in (v_user_p) and phone is not null;
+
   update public.profiles set role = 'doctor' where id = v_user_d;
   update public.profiles set role = 'admin'  where id = v_user_a;
 
@@ -214,9 +223,15 @@ begin
       v_row.amount_charged, v_row.patient_id;
   end if;
 
-  v_frozen := public.finalize_consultation(v_appt);
-  if v_frozen <> 2 then
-    raise exception 'ROLES CHECK FAILED: finalize_consultation froze % rows, expected 2.', v_frozen;
+  -- Since migration 26 finalize_consultation() is reachable only through
+  -- finalize_consultation_with_payment(), as "Finalizar Consulta" does.
+  v_row := public.finalize_consultation_with_payment(v_appt, 'paid', 5500, 'card', null);
+  select (select count(*) from public.clinical_notes where appointment_id = v_appt and finalized_at is not null)
+       + (select count(*) from public.prescriptions where appointment_id = v_appt and finalized_at is not null)
+    into v_frozen;
+  if v_frozen <> 2 or v_row.amount_charged <> 5500 then
+    raise exception 'ROLES CHECK FAILED: finalize_consultation_with_payment froze % rows (expected 2) and stored %.',
+      v_frozen, v_row.amount_charged;
   end if;
 
   insert into public.clinical_note_addenda (note_id, body) values (v_note, 'ROLES-CHECK addendum');
@@ -306,8 +321,7 @@ begin
     select * from (values
       ('inventory',           (select count(*) from public.inventory where id = v_item)),
       ('inventory_movements', (select least(count(*), 1) from public.inventory_movements where item_id = v_item)),
-      ('inactive services',   (select count(*) from public.services where id = v_svc)),
-      ('payments',            (select count(*) from public.payments where appointment_id = v_appt))
+      ('inactive services',   (select count(*) from public.services where id = v_svc))
     ) as t(label, n)
   loop
     if v_check.n <> 1 then
@@ -315,14 +329,19 @@ begin
     end if;
   end loop;
 
-  -- 3b. Finanzas: the amount is visible, the patient's name is not (the same
-  --     LEFT JOIN a PostgREST embed performs resolves to null, not an error).
-  select p.amount_charged, pt.first_name into v_amount, v_name
-  from public.payments p
-  left join public.patients pt on pt.id = p.patient_id
-  where p.appointment_id = v_appt;
+  -- 3b. Finanzas (migration 26): no payment row directly, not even the ids;
+  --     the amount comes through get_finance_payments(), which has no
+  --     patient, appointment or note column.
+  select count(*) into v_count from public.payments;
+  if v_count <> 0 then
+    raise exception 'ROLES CHECK FAILED: the admin reads % payment row(s) directly, expected 0.', v_count;
+  end if;
+
+  select r.amount_charged, to_jsonb(r) ->> 'patient_id' into v_amount, v_name
+  from public.get_finance_payments(now() - interval '1 minute', now() + interval '1 minute') r
+  where r.service_name = 'ROLES-CHECK service';
   if v_amount is distinct from 5500.00 or v_name is not null then
-    raise exception 'ROLES CHECK FAILED: the admin sees amount % and patient name %.', v_amount, v_name;
+    raise exception 'ROLES CHECK FAILED: the admin sees amount % and patient %.', v_amount, v_name;
   end if;
 
   -- 3c. Business writes.
@@ -500,7 +519,7 @@ reset role;
 do $$
 begin
   perform set_config('request.jwt.claims', '', true);
-  raise notice 'ROLES CHECK PASSED: the doctor reads and writes clinical and business data; the admin reads inventory, services and payment amounts, adjusts stock and edits the catalog, but reads no patient, appointment, clinical, ARCO, consent, audit, agenda or other-profile row, sees no patient name next to a payment, cannot promote itself and cannot call record_payment, finalize_consultation, resolve_arco_request, anonymize_patient or export_my_data. All test data was rolled back.';
+  raise notice 'ROLES CHECK PASSED: the doctor reads and writes clinical and business data; the admin reads inventory, services and payment amounts (through get_finance_payments, no payment row), adjusts stock and edits the catalog, but reads no patient, appointment, clinical, ARCO, consent, audit, agenda or other-profile row, sees no patient name next to a payment, cannot promote itself and cannot call record_payment, finalize_consultation, resolve_arco_request, anonymize_patient or export_my_data. All test data was rolled back.';
 end $$;
 
 rollback;

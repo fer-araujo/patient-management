@@ -47,6 +47,26 @@ begin
 end $$;
 
 -- -----------------------------------------------------------------------------
+-- Migration 27 limits patient bookings to the opening hours, the 15-minute
+-- grid and a 120-day horizon. This check proves other rules with far-future
+-- fixtures, so assert_patient_booking_window() is replaced by a no-op INSIDE
+-- this transaction (DDL is transactional); the ROLLBACK restores it.
+-- security_hardening_check.sql covers the window itself.
+-- -----------------------------------------------------------------------------
+do $$
+begin
+  if to_regprocedure('public.assert_patient_booking_window(timestamptz,integer)') is not null then
+    execute $fn$
+      create or replace function public.assert_patient_booking_window(
+        p_start timestamptz, p_duration_mins integer)
+      returns void language plpgsql stable security definer
+      set search_path = public, pg_temp
+      as $body$ begin return; end; $body$
+    $fn$;
+  end if;
+end $$;
+
+-- -----------------------------------------------------------------------------
 -- 0. No outbound side effects
 -- -----------------------------------------------------------------------------
 do $$
@@ -177,6 +197,22 @@ begin
   perform set_config('archived_booking_check.start', v_start::text, true);
   perform set_config('archived_booking_check.claim_phone_x', public.normalize_phone(v_phone_x), true);
   perform set_config('archived_booking_check.claim_phone_b', public.normalize_phone(v_phone_b), true);
+  -- Migration 27: a patient session needs an auth user whose phone was
+  -- confirmed by Auth (phone_confirmed_at). Harmless before migration 27.
+  perform set_config('archived_booking_check.claim_user_x', gen_random_uuid()::text, true);
+  insert into auth.users (id, instance_id, aud, role, phone, phone_confirmed_at, email,
+                          raw_app_meta_data, raw_user_meta_data, created_at, updated_at)
+  values (current_setting('archived_booking_check.claim_user_x')::uuid,
+          '00000000-0000-0000-0000-000000000000', 'authenticated', 'authenticated',
+          current_setting('archived_booking_check.claim_phone_x'), now(), null,
+          '{}'::jsonb, '{}'::jsonb, now(), now());
+  perform set_config('archived_booking_check.claim_user_b', gen_random_uuid()::text, true);
+  insert into auth.users (id, instance_id, aud, role, phone, phone_confirmed_at, email,
+                          raw_app_meta_data, raw_user_meta_data, created_at, updated_at)
+  values (current_setting('archived_booking_check.claim_user_b')::uuid,
+          '00000000-0000-0000-0000-000000000000', 'authenticated', 'authenticated',
+          current_setting('archived_booking_check.claim_phone_b'), now(), null,
+          '{}'::jsonb, '{}'::jsonb, now(), now());
 end $$;
 
 -- -----------------------------------------------------------------------------
@@ -312,7 +348,7 @@ reset role;
 do $$
 begin
   perform set_config('request.jwt.claims', jsonb_build_object(
-    'sub', gen_random_uuid(),
+    'sub', current_setting('archived_booking_check.claim_user_x'),
     'role', 'authenticated',
     'phone', current_setting('archived_booking_check.claim_phone_x'))::text, true);
 end $$;
@@ -357,7 +393,7 @@ reset role;
 do $$
 begin
   perform set_config('request.jwt.claims', jsonb_build_object(
-    'sub', gen_random_uuid(),
+    'sub', current_setting('archived_booking_check.claim_user_b'),
     'role', 'authenticated',
     'phone', current_setting('archived_booking_check.claim_phone_b'))::text, true);
 end $$;
@@ -462,7 +498,7 @@ reset role;
 do $$
 begin
   perform set_config('request.jwt.claims', jsonb_build_object(
-    'sub', gen_random_uuid(),
+    'sub', current_setting('archived_booking_check.claim_user_x'),
     'role', 'authenticated',
     'phone', current_setting('archived_booking_check.claim_phone_x'))::text, true);
 end $$;

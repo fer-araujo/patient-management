@@ -72,20 +72,19 @@ const structuredInstruction = (med: RawJsonbMedication): string | undefined =>
 export const fetchMyProfile = async (): Promise<
   PatientProfile & { fileCount: number }
 > => {
-  const {
-    data: { user },
-    error: authError,
-  } = await supabase.auth.getUser();
-  if (authError || !user) throw new Error("No hay sesión activa.");
-
-  let phoneToSearch = user.phone || "";
-  if (!phoneToSearch.startsWith("+")) phoneToSearch = `+${phoneToSearch}`;
-
+  // The server resolves the record from the session's verified phone
+  // (migration 27); with no session it returns nothing.
+  // Patients cannot read the patients table directly: it holds the doctor's
+  // private notes. get_my_profile returns only these five fields.
   const { data: patient, error } = await supabase
-    .from("patients")
-    .select("id, first_name, last_name, phone, email, notes")
-    .eq("phone", phoneToSearch)
-    .single();
+    .rpc("get_my_profile")
+    .maybeSingle<{
+      id: string;
+      first_name: string | null;
+      last_name: string | null;
+      phone: string | null;
+      email: string | null;
+    }>();
 
   if (error || !patient)
     throw new Error("No se pudo cargar el perfil del paciente.");
@@ -101,10 +100,10 @@ export const fetchMyProfile = async (): Promise<
 
   return {
     id: patient.id,
-    firstName: patient.first_name,
-    lastName: patient.last_name,
-    phone: patient.phone,
-    email: patient.email,
+    firstName: patient.first_name ?? "",
+    lastName: patient.last_name ?? "",
+    phone: patient.phone ?? "",
+    email: patient.email ?? "",
     birthYear: null,
     fileCount,
   };
@@ -161,11 +160,14 @@ export const fetchMyAppointments = async (
 export const fetchMyCarePlan = async (
   patientId: string,
 ): Promise<CarePlanItem[]> => {
-  // Traemos solo la receta más reciente del paciente
+  // Traemos solo la receta más reciente del paciente. Only finalized
+  // prescriptions: a draft is the doctor's work in progress (the server
+  // enforces the same rule since migration 27).
   const { data, error } = await supabase
     .from("prescriptions")
     .select("medications")
     .eq("patient_id", patientId)
+    .not("finalized_at", "is", null)
     .order("created_at", { ascending: false })
     .limit(1)
     .maybeSingle();

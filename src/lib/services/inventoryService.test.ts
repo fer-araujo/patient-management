@@ -192,19 +192,22 @@ describe("registerPurchase", () => {
 });
 
 describe("fetchMovements", () => {
-  it("lists one item's movements, newest first", async () => {
-    supabaseMock.onFrom("inventory_movements", { data: [{ id: "m1" }] });
+  it("lists one item's movements, newest first, through get_item_movements", async () => {
+    supabaseMock.onRpc("get_item_movements", { data: [{ id: "m1" }] });
 
     await expect(fetchMovements("i1")).resolves.toEqual([{ id: "m1" }]);
 
-    const query = supabaseMock.queries("inventory_movements")[0];
-    expect(query.args("eq")).toEqual(["item_id", "i1"]);
+    expect(supabaseMock.lastRpc("get_item_movements")?.args).toEqual({ p_item_id: "i1" });
+    const query = supabaseMock.queries("rpc:get_item_movements")[0];
     expect(query.args("order")).toEqual(["created_at", { ascending: false }]);
+    expect(query.args("limit")).toEqual([100]);
+    // The table (with the consultation each supply was used in) is not read.
+    expect(supabaseMock.queries("inventory_movements")).toHaveLength(0);
   });
 
   it("throws a Spanish message on failure", async () => {
     vi.spyOn(console, "error").mockImplementation(() => {});
-    supabaseMock.onFrom("inventory_movements", { error: { message: "denied" } });
+    supabaseMock.onRpc("get_item_movements", { error: { message: "denied", code: "42501" } });
     await expect(fetchMovements("i1")).rejects.toThrow("No se pudo cargar el historial.");
   });
 });

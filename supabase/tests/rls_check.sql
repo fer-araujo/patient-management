@@ -2,7 +2,10 @@
 -- RLS check - paste into the Supabase SQL editor and run as-is
 -- =============================================================================
 -- Proves, against the real policies and RPCs, that:
---   * a patient reads only their own patients / appointments / prescriptions
+--   * a patient reads NO patients row directly (migration 27: the row holds
+--     the doctor's private notes); get_my_profile() returns their own id,
+--     names, phone and email and nothing else;
+--   * a patient reads only their own appointments / finalized prescriptions
 --     rows and none of another patient's;
 --   * a patient reads ZERO clinical_notes and clinical_note_addenda rows
 --     (staff-only since migration 14);
@@ -33,6 +36,23 @@
 -- =============================================================================
 
 begin;
+
+-- -----------------------------------------------------------------------------
+-- Since migration 27, doctor-only mode also closes every patient READ
+-- (current_patient_id() is NULL while it is on). This check needs patient
+-- sessions, so the mode is turned off INSIDE this transaction; the ROLLBACK
+-- restores it.
+-- -----------------------------------------------------------------------------
+do $$
+begin
+  if exists (
+    select 1 from information_schema.columns
+    where table_schema = 'public' and table_name = 'clinic_settings'
+      and column_name = 'doctor_only_mode'
+  ) then
+    execute 'update public.clinic_settings set doctor_only_mode = false where doctor_only_mode';
+  end if;
+end $$;
 
 -- -----------------------------------------------------------------------------
 -- 0. No outbound side effects
@@ -117,6 +137,11 @@ begin
     (v_user_s, '00000000-0000-0000-0000-000000000000', 'authenticated', 'authenticated',
      null, 'rls-check-staff-' || v_user_s || '@example.invalid', '{}'::jsonb, '{}'::jsonb, now(), now());
 
+  -- Migration 27: a patient session needs an auth user whose phone was
+  -- confirmed by Auth (phone_confirmed_at). Harmless before migration 27.
+  update auth.users set phone_confirmed_at = now()
+   where id in (v_user_a, v_user_b) and phone is not null;
+
   -- No request claims are set yet, so the escalation trigger lets the owner
   -- role promote the throwaway staff account (same path as migration 03).
   update public.profiles set role = 'doctor' where id = v_user_s;
@@ -155,6 +180,10 @@ begin
   values
     (v_appt_a, v_pat_a, '[{"nombre": "RLS-CHECK MED A", "dosis": "1", "indicaciones": "x"}]'::jsonb),
     (v_appt_b, v_pat_b, '[{"nombre": "RLS-CHECK MED B", "dosis": "1", "indicaciones": "x"}]'::jsonb);
+
+  -- Patients see finalized prescriptions only (migration 27); the draft case
+  -- is covered by security_hardening_check.sql.
+  update public.prescriptions set finalized_at = now() where appointment_id in (v_appt_a, v_appt_b);
 
   -- Addenda only exist on finalized notes and need an authenticated author:
   -- finalize A's note, then insert the addendum under the staff user's id.
@@ -206,10 +235,22 @@ begin
     raise exception 'RLS CHECK FAILED: patient A is treated as staff.';
   end if;
 
-  -- patients: exactly their own row, none of B's.
-  select count(*), count(*) filter (where id = v_a) into v_total, v_own from public.patients;
+  -- patients: no row at all directly, so never the doctor's notes
+  -- (migration 27); the profile comes from get_my_profile().
+  select count(*) into v_total from public.patients;
+  if v_total <> 0 then
+    raise exception 'RLS CHECK FAILED: patient A reads % patients row(s) directly, expected 0.', v_total;
+  end if;
+  if exists (select 1 from public.patients where notes like 'RLS-CHECK INTERNAL NOTE%') then
+    raise exception 'RLS CHECK FAILED: patient A can read the doctor''s internal notes.';
+  end if;
+
+  select count(*), count(*) filter (where p.id = v_a) into v_total, v_own from public.get_my_profile() p;
   if v_total <> 1 or v_own <> 1 then
-    raise exception 'RLS CHECK FAILED: patient A sees % patients rows (% own), expected exactly their own.', v_total, v_own;
+    raise exception 'RLS CHECK FAILED: get_my_profile() for patient A returned % row(s) (% own).', v_total, v_own;
+  end if;
+  if exists (select 1 from public.get_my_profile() p where to_jsonb(p) ? 'notes') then
+    raise exception 'RLS CHECK FAILED: get_my_profile() returns a notes column.';
   end if;
 
   -- appointments
@@ -313,9 +354,10 @@ declare
   v_a uuid := current_setting('rls_check.patient_a')::uuid;
   v_b uuid := current_setting('rls_check.patient_b')::uuid;
 begin
-  if (select count(*) from public.patients) <> 1
-     or not exists (select 1 from public.patients where id = v_b) then
-    raise exception 'RLS CHECK FAILED: patient B does not see exactly their own patients row.';
+  if (select count(*) from public.patients) <> 0
+     or (select count(*) from public.get_my_profile()) <> 1
+     or not exists (select 1 from public.get_my_profile() p where p.id = v_b) then
+    raise exception 'RLS CHECK FAILED: patient B does not get exactly their own profile (and no direct patients row).';
   end if;
   if exists (select 1 from public.patients where id = v_a)
      or exists (select 1 from public.appointments where patient_id = v_a)
@@ -410,7 +452,7 @@ reset role;
 do $$
 begin
   perform set_config('request.jwt.claims', '', true);
-  raise notice 'RLS CHECK PASSED: patients see only their own rows, clinical notes and addenda are staff-only, roles cannot be self-escalated, anon reads nothing, and export_my_data() excludes clinical notes. All test data was rolled back.';
+  raise notice 'RLS CHECK PASSED: patients read no patients row directly (get_my_profile returns their own, without notes) and see only their own appointments and finalized prescriptions, clinical notes and addenda are staff-only, roles cannot be self-escalated, anon reads nothing, and export_my_data() excludes clinical notes. All test data was rolled back.';
 end $$;
 
 rollback;

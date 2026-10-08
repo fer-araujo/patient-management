@@ -235,6 +235,7 @@ const monthsInRange = ({ from, to }: DateRange): string[] => {
   return months;
 };
 
+/** A payment as the doctor reads it from the table (with the patient embed). */
 interface PaymentSummaryRow {
   id: string;
   status: PaymentStatus;
@@ -242,22 +243,49 @@ interface PaymentSummaryRow {
   list_price: number | string | null;
   created_at: string;
   services: { name: string | null } | null;
-  /** Only requested for the doctor; absent (or null under RLS) for an admin. */
   patients?: { first_name: string | null; last_name: string | null } | null;
+}
+
+/**
+ * A payment as get_finance_payments returns it (migration 26): no patient,
+ * appointment or note, only what the cash view needs.
+ */
+interface FinancePaymentRow {
+  id: string;
+  created_at: string;
+  status: PaymentStatus;
+  method: PaymentMethod | null;
+  amount_charged: number | string;
+  list_price: number | string | null;
+  service_name: string | null;
+}
+
+/** Both sources, reduced to what the summary uses. */
+interface SummaryPayment {
+  id: string;
+  status: PaymentStatus;
+  amountCharged: number | string;
+  listPrice: number | string | null;
+  createdAt: string;
+  service: string | null;
+  /** Empty unless the doctor asked for names. */
+  patient: string;
 }
 
 export interface FinanceSummaryOptions {
   /**
-   * Adds the patient's name to each payment's concept. Only the doctor may see
-   * it: tying "Hilos Tensores · $5,500" to a person is health data. Off by
-   * default, so an admin view never even asks for it (and RLS would return no
-   * patient anyway).
+   * The doctor's view: reads the payments table directly and adds the
+   * patient's name to each payment's concept. Off by default: the admin view
+   * reads get_finance_payments() instead, which returns no patient,
+   * appointment or note at all (tying "Hilos Tensores · $5,500" to a person
+   * is health data). Since migration 26 the admin cannot read the payments
+   * table directly.
    */
   includePatientNames?: boolean;
 }
 
 const PAYMENT_COLUMNS =
-  "id, status, amount_charged, list_price, created_at, services ( name )";
+  "id, status, amount_charged, list_price, created_at, services ( name ), patients ( first_name, last_name )";
 
 interface PurchaseRow {
   id: string;
@@ -287,25 +315,60 @@ export const getFinanceSummary = async (
 
   // Paged: a single request stops at PostgREST's max_rows (1000) and the
   // totals would be silently short. Ascending by creation, id as tiebreaker,
-  // so the pages are stable; the movements are sorted below anyway.
+  // so the pages are stable; the movements are sorted below anyway. The
+  // doctor reads the table; the admin (no names) reads the RPC, paged the
+  // same way.
+  const paymentsRead: Promise<{ data: SummaryPayment[]; error: unknown }> =
+    includePatientNames
+      ? fetchAllRows<PaymentSummaryRow>(
+          (first, last) =>
+            supabase
+              .from("payments")
+              .select(PAYMENT_COLUMNS)
+              .gte("created_at", fromUtc)
+              .lt("created_at", toUtc)
+              .order("created_at", { ascending: true })
+              .order("id", { ascending: true })
+              .range(first, last)
+              .returns<PaymentSummaryRow[]>(),
+          { tooManyMessage: TOO_MANY_FINANCE_ROWS },
+        ).then(({ data, error }) => ({
+          error,
+          data: data.map((p) => ({
+            id: p.id,
+            status: p.status,
+            amountCharged: p.amount_charged,
+            listPrice: p.list_price,
+            createdAt: p.created_at,
+            service: p.services?.name ?? null,
+            patient: [p.patients?.first_name, p.patients?.last_name]
+              .filter(Boolean)
+              .join(" "),
+          })),
+        }))
+      : fetchAllRows<FinancePaymentRow>(
+          (first, last) =>
+            supabase
+              .rpc("get_finance_payments", { p_from: fromUtc, p_to: toUtc })
+              .order("created_at", { ascending: true })
+              .order("id", { ascending: true })
+              .range(first, last),
+          { tooManyMessage: TOO_MANY_FINANCE_ROWS },
+        ).then(({ data, error }) => ({
+          error,
+          data: data.map((p) => ({
+            id: p.id,
+            status: p.status,
+            amountCharged: p.amount_charged,
+            listPrice: p.list_price,
+            createdAt: p.created_at,
+            service: p.service_name,
+            patient: "",
+          })),
+        }));
+
   const [paymentsRes, purchasesRes] = await Promise.all([
-    fetchAllRows<PaymentSummaryRow>(
-      (first, last) =>
-        supabase
-          .from("payments")
-          .select(
-            includePatientNames
-              ? `${PAYMENT_COLUMNS}, patients ( first_name, last_name )`
-              : PAYMENT_COLUMNS,
-          )
-          .gte("created_at", fromUtc)
-          .lt("created_at", toUtc)
-          .order("created_at", { ascending: true })
-          .order("id", { ascending: true })
-          .range(first, last)
-          .returns<PaymentSummaryRow[]>(),
-      { tooManyMessage: TOO_MANY_FINANCE_ROWS },
-    ),
+    paymentsRead,
     fetchAllRows<PurchaseRow>(
       (first, last) =>
         supabase
@@ -348,33 +411,30 @@ export const getFinanceSummary = async (
   let forgoneValue = 0;
 
   for (const p of payments) {
-    const service = p.services?.name || "Servicio eliminado";
-    const patient = includePatientNames
-      ? [p.patients?.first_name, p.patients?.last_name].filter(Boolean).join(" ")
-      : "";
-    const concept = patient ? `${service} · ${patient}` : service;
+    const service = p.service || "Servicio eliminado";
+    const concept = p.patient ? `${service} · ${p.patient}` : service;
 
     if (p.status === "courtesy") {
       // A courtesy is value NOT charged, never an expense: it is reported on
       // its own and does not change the profit.
-      const listPrice = toNumber(p.list_price);
+      const listPrice = toNumber(p.listPrice);
       courtesyCount += 1;
       forgoneValue += listPrice;
-      const courtesyBucket = monthly.get(monthKeyOf(p.created_at));
+      const courtesyBucket = monthly.get(monthKeyOf(p.createdAt));
       if (courtesyBucket) courtesyBucket.courtesy += listPrice;
       movements.push({
         id: p.id,
         kind: "courtesy",
-        date: p.created_at,
+        date: p.createdAt,
         concept,
         amount: 0,
       });
       continue;
     }
 
-    const amount = toNumber(p.amount_charged);
+    const amount = toNumber(p.amountCharged);
     income += amount;
-    const bucket = monthly.get(monthKeyOf(p.created_at));
+    const bucket = monthly.get(monthKeyOf(p.createdAt));
     if (bucket) bucket.income += amount;
 
     const entry = byService.get(service) ?? { service, total: 0, count: 0 };
@@ -382,7 +442,7 @@ export const getFinanceSummary = async (
     entry.count += 1;
     byService.set(service, entry);
 
-    movements.push({ id: p.id, kind: "payment", date: p.created_at, concept, amount });
+    movements.push({ id: p.id, kind: "payment", date: p.createdAt, concept, amount });
   }
 
   for (const m of purchases) {

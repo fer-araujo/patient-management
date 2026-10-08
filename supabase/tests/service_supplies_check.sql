@@ -21,8 +21,9 @@
 --     cost; it refuses a consultation that is not finalized and a second call;
 --   * the marker cannot be changed directly;
 --   * the admin reads and writes service_supplies and reads the per-procedure
---     profit, but still reads no appointment, patient or clinical note, and
---     cannot finalize a consultation;
+--     profit, but still reads no appointment, patient or clinical note, no
+--     movement tied to a consultation (migration 27) and no payment row
+--     (migration 26), and cannot finalize a consultation;
 --   * get_procedure_profit() adds up: times, charged, courtesies, supplies,
 --     supplies without a cost, profit, and consultations without recorded
 --     supplies, per service;
@@ -576,10 +577,17 @@ begin
     raise exception 'SUPPLIES CHECK FAILED: the admin could not save the supplies of a service.';
   end if;
 
-  -- 3b. Still no clinical data: the movement's appointment resolves to nothing.
-  select count(*) into v_count from public.inventory_movements where appointment_id = v_appt_1;
-  if v_count <> 2 then
-    raise exception 'SUPPLIES CHECK FAILED: the admin reads % movements of appointment 1, expected 2.', v_count;
+  -- 3b. Still no clinical data. Since migration 27 the admin does not even
+  --     see the movements tied to a consultation (which supplies were used
+  --     on which appointment); since migration 26 no payment row either.
+  select count(*) into v_count from public.inventory_movements where appointment_id is not null;
+  if v_count <> 0 then
+    raise exception 'SUPPLIES CHECK FAILED: the admin reads % movement(s) tied to a consultation, expected 0.', v_count;
+  end if;
+
+  select count(*) into v_count from public.payments;
+  if v_count <> 0 then
+    raise exception 'SUPPLIES CHECK FAILED: the admin reads % payment row(s) directly, expected 0.', v_count;
   end if;
 
   select (select count(*) from public.appointments)
@@ -653,8 +661,23 @@ begin
     raise exception 'SUPPLIES CHECK FAILED: get_procedure_profit() returned % rows for the test services, expected 2.', v_found;
   end if;
 
-  -- The rows add up to the payments and the cost of the uses themselves
-  -- (the admin reads both tables, as Finanzas does).
+  -- The admin cannot read payments or consultation uses (migrations 26 and
+  -- 27), so the totals it got are compared with the tables by the owner below.
+  perform set_config('supplies_check.admin_charged', v_charged::text, true);
+  perform set_config('supplies_check.admin_supplies', v_supplies::text, true);
+end $$;
+
+reset role;
+
+-- 3d. The admin's per-procedure rows add up to the payments and the cost of
+--     the uses themselves (read as the owner).
+do $$
+declare
+  v_svc_a    uuid    := current_setting('supplies_check.svc_a')::uuid;
+  v_svc_b    uuid    := current_setting('supplies_check.svc_b')::uuid;
+  v_charged  numeric := current_setting('supplies_check.admin_charged')::numeric;
+  v_supplies numeric := current_setting('supplies_check.admin_supplies')::numeric;
+begin
   if v_charged <> (select sum(p.amount_charged) from public.payments p
                    where p.service_id in (v_svc_a, v_svc_b))
      or v_supplies <> (select sum(coalesce(m.total_cost, 0)) from public.inventory_movements m
@@ -664,8 +687,6 @@ begin
       v_charged, v_supplies;
   end if;
 end $$;
-
-reset role;
 
 -- -----------------------------------------------------------------------------
 -- 4. anon: nothing

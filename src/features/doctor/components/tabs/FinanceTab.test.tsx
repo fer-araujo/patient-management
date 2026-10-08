@@ -26,6 +26,18 @@ const PAYMENTS = [
     services: { name: "Valoración" }, patients: { first_name: "Eva", last_name: "Ruiz" },
   },
 ];
+// The same payments as get_finance_payments returns them to an admin
+// (migration 26): no patient, appointment or note.
+const ADMIN_PAYMENTS = PAYMENTS.map((p) => ({
+  id: p.id,
+  status: p.status,
+  amount_charged: p.amount_charged,
+  list_price: p.list_price,
+  created_at: p.created_at,
+  method: p.status === "paid" ? "card" : null,
+  service_name: p.services.name,
+}));
+
 const PURCHASES = [
   {
     id: "m1", quantity: 10, total_cost: "1200.00",
@@ -48,6 +60,8 @@ const PROCEDURES = [
 
 const renderTab = async (props: { showPatientNames?: boolean } = {}) => {
   supabaseMock.onFrom("payments", { data: PAYMENTS });
+  // Every page repeats the rows; fetchAllRows stops on a page of known ids.
+  supabaseMock.onRpc("get_finance_payments", { data: ADMIN_PAYMENTS });
   supabaseMock.onFrom("inventory_movements", { data: PURCHASES });
   render(<FinanceTab {...props} />);
   await screen.findByText("Ingresos");
@@ -55,6 +69,14 @@ const renderTab = async (props: { showPatientNames?: boolean } = {}) => {
 };
 
 // Card labels are <p>; the same words also head table columns.
+/** Each get_finance_payments call with the page it asked for. */
+const adminPaymentReads = () => {
+  const calls = supabaseMock.rpcCalls("get_finance_payments");
+  return supabaseMock
+    .queries("rpc:get_finance_payments")
+    .map((query, i) => ({ args: calls[i]?.args, range: query.args("range") }));
+};
+
 const cardValue = (label: string) =>
   screen.getByText(label, { selector: "p" }).nextElementSibling!;
 
@@ -79,9 +101,10 @@ describe("FinanceTab", () => {
   it("starts on this month, charting the year so far", async () => {
     await renderTab();
 
-    const periodQuery = supabaseMock.queries("payments")[0];
-    expect(periodQuery.args("gte")).toEqual(["created_at", "2026-09-01T06:00:00.000Z"]);
-    expect(periodQuery.args("lt")).toEqual(["created_at", "2026-10-01T06:00:00.000Z"]);
+    expect(adminPaymentReads()[0].args).toEqual({
+      p_from: "2026-09-01T06:00:00.000Z",
+      p_to: "2026-10-01T06:00:00.000Z",
+    });
     expect(screen.getByTestId("finance-chart")).toHaveTextContent(
       "2026-01,2026-02,2026-03,2026-04,2026-05,2026-06,2026-07,2026-08,2026-09",
     );
@@ -90,8 +113,7 @@ describe("FinanceTab", () => {
   it("switching to this year reloads the whole year", async () => {
     const { user } = await renderTab();
     // Each load reads pages until an empty one; count the first pages.
-    const firstPages = () =>
-      supabaseMock.queries("payments").filter((q) => q.args("range")?.[0] === 0);
+    const firstPages = () => adminPaymentReads().filter((read) => read.range?.[0] === 0);
     const before = firstPages().length;
 
     await user.click(screen.getByText("Este mes"));
@@ -100,9 +122,10 @@ describe("FinanceTab", () => {
     await waitFor(() =>
       expect(screen.getByTestId("finance-chart").textContent?.split(",")).toHaveLength(12),
     );
-    const yearQuery = firstPages()[before];
-    expect(yearQuery.args("gte")).toEqual(["created_at", "2026-01-01T06:00:00.000Z"]);
-    expect(yearQuery.args("lt")).toEqual(["created_at", "2027-01-01T06:00:00.000Z"]);
+    expect(firstPages()[before].args).toEqual({
+      p_from: "2026-01-01T06:00:00.000Z",
+      p_to: "2027-01-01T06:00:00.000Z",
+    });
     // One range covers both the cards and the chart.
     expect(firstPages()).toHaveLength(before + 1);
   });
@@ -154,8 +177,22 @@ describe("FinanceTab", () => {
     expect(within(rowOf("Valoración")).getByText("Cortesía")).toBeInTheDocument();
     expect(screen.queryByText(/Ana|Pérez|Eva|Ruiz/)).not.toBeInTheDocument();
 
-    const periodQuery = supabaseMock.queries("payments")[0];
-    expect(String(periodQuery.args("select")?.[0])).not.toContain("patients");
+    // The admin never reads the payments table: only get_finance_payments().
+    expect(supabaseMock.queries("payments")).toHaveLength(0);
+    expect(adminPaymentReads().length).toBeGreaterThan(0);
+  });
+
+  it("the doctor reads the payments table for the cards and the chart, never the RPC", async () => {
+    await renderTab({ showPatientNames: true });
+
+    expect(supabaseMock.rpcCalls("get_finance_payments")).toHaveLength(0);
+    const firstPages = supabaseMock
+      .queries("payments")
+      .filter((q) => q.args("range")?.[0] === 0);
+    expect(firstPages.map((q) => q.args("gte"))).toEqual([
+      ["created_at", "2026-09-01T06:00:00.000Z"],
+      ["created_at", "2026-01-01T06:00:00.000Z"],
+    ]);
   });
 
   describe("Ganancia por procedimiento", () => {

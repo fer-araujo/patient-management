@@ -131,6 +131,31 @@ describe("getPeriodRange", () => {
   });
 });
 
+/**
+ * Table rows (the doctor's read) as get_finance_payments returns them to an
+ * admin (migration 26): the service's name, no patient.
+ */
+type TableRow = {
+  id: string;
+  status: string;
+  amount_charged: string;
+  list_price: string | null;
+  created_at: string;
+  services?: { name: string } | null;
+  /** Present on table rows; never copied to the RPC shape. */
+  patients?: unknown;
+};
+const asRpcRows = (rows: TableRow[]) =>
+  rows.map((p) => ({
+    id: p.id,
+    status: p.status,
+    amount_charged: p.amount_charged,
+    list_price: p.list_price,
+    created_at: p.created_at,
+    method: p.status === "paid" ? "cash" : null,
+    service_name: p.services?.name ?? null,
+  }));
+
 describe("getFinanceSummary", () => {
   const payments = [
     {
@@ -160,7 +185,7 @@ describe("getFinanceSummary", () => {
   ];
 
   it("sums income, expenses, a NEGATIVE profit and the value of courtesies", async () => {
-    supabaseMock.onFrom("payments", { data: payments });
+    supabaseMock.onRpc("get_finance_payments", { data: asRpcRows(payments) });
     supabaseMock.onFrom("inventory_movements", { data: purchases });
 
     const summary = await getFinanceSummary("2026-09-01", "2026-10-01");
@@ -182,7 +207,14 @@ describe("getFinanceSummary", () => {
 
   it("queries the Monterrey-day range in UTC and only purchases as expenses", async () => {
     await getFinanceSummary("2026-09-01", "2026-10-01");
+    await getFinanceSummary("2026-09-01", "2026-10-01", { includePatientNames: true });
 
+    // Admin (default): the RPC gets the same UTC instants.
+    expect(supabaseMock.lastRpc("get_finance_payments")?.args).toEqual({
+      p_from: "2026-09-01T06:00:00.000Z",
+      p_to: "2026-10-01T06:00:00.000Z",
+    });
+    // Doctor: the table read.
     const paymentsQuery = supabaseMock.queries("payments")[0];
     expect(paymentsQuery.args("gte")).toEqual(["created_at", "2026-09-01T06:00:00.000Z"]);
     expect(paymentsQuery.args("lt")).toEqual(["created_at", "2026-10-01T06:00:00.000Z"]);
@@ -194,14 +226,14 @@ describe("getFinanceSummary", () => {
   });
 
   it("buckets by Monterrey month, not by UTC month, and keeps empty months", async () => {
-    supabaseMock.onFrom("payments", {
-      data: [
+    supabaseMock.onRpc("get_finance_payments", {
+      data: asRpcRows([
         {
           // 30 Sep 21:00 in Monterrey, already 1 Oct in UTC.
           id: "late", status: "paid", amount_charged: "300.00", list_price: null,
           created_at: "2026-10-01T03:00:00+00:00", services: { name: "Toxina" }, patients: null,
         },
-      ],
+      ]),
     });
     supabaseMock.onFrom("inventory_movements", {
       data: [
@@ -221,8 +253,8 @@ describe("getFinanceSummary", () => {
   });
 
   it("adds each courtesy's list price to its Monterrey month, never to expenses or profit", async () => {
-    supabaseMock.onFrom("payments", {
-      data: [
+    supabaseMock.onRpc("get_finance_payments", {
+      data: asRpcRows([
         {
           id: "c-sep", status: "courtesy", amount_charged: "0.00", list_price: "900.00",
           // 30 Sep 22:00 in Monterrey, already 1 Oct in UTC.
@@ -236,7 +268,7 @@ describe("getFinanceSummary", () => {
           id: "paid-oct", status: "paid", amount_charged: "1000.00", list_price: "1000.00",
           created_at: "2026-10-11T16:00:00+00:00", services: { name: "Toxina" }, patients: null,
         },
-      ],
+      ]),
     });
     supabaseMock.onFrom("inventory_movements", {
       data: [
@@ -278,18 +310,30 @@ describe("getFinanceSummary", () => {
 
   it("asks for the patient's name only when the doctor's view needs it", async () => {
     await getFinanceSummary("2026-09-01", "2026-10-01", { includePatientNames: true });
+
+    const [doctorQuery] = supabaseMock.queries("payments");
+    expect(String(doctorQuery.args("select")?.[0])).toContain("patients ( first_name, last_name )");
+    expect(supabaseMock.rpcCalls("get_finance_payments")).toHaveLength(0);
+  });
+
+  it("reads an admin's payments only through get_finance_payments, never the table", async () => {
     await getFinanceSummary("2026-09-01", "2026-10-01");
 
-    const [doctorQuery, defaultQuery] = supabaseMock.queries("payments");
-    expect(String(doctorQuery.args("select")?.[0])).toContain("patients ( first_name, last_name )");
-    // Privacy by default: without the option the patients embed is not requested.
-    expect(String(defaultQuery.args("select")?.[0])).not.toContain("patients");
-    expect(String(defaultQuery.args("select")?.[0])).toContain("services ( name )");
+    // Privacy by default: the payments table (patient and appointment ids,
+    // note) is not even requested; the RPC returns none of them.
+    expect(supabaseMock.queries("payments")).toHaveLength(0);
+    const [rpcQuery] = supabaseMock.queries("rpc:get_finance_payments");
+    expect(rpcQuery.args("range")).toEqual([0, 999]);
+    expect(rpcQuery.allArgs("order")).toEqual([
+      ["created_at", { ascending: true }],
+      ["id", { ascending: true }],
+    ]);
   });
 
   it("builds admin movements from amount and service only, never a patient name", async () => {
-    // Even if a row carried a patient (it cannot under RLS), it is not shown.
+    // Even if the table were stubbed with names, the admin path never reads it.
     supabaseMock.onFrom("payments", { data: payments });
+    supabaseMock.onRpc("get_finance_payments", { data: asRpcRows(payments) });
     supabaseMock.onFrom("inventory_movements", { data: purchases });
 
     const summary = await getFinanceSummary("2026-09-01", "2026-10-01");
@@ -336,13 +380,14 @@ describe("getFinanceSummary", () => {
         id: `m${start + i}`, quantity: 1, total_cost: "1.00",
         created_at: "2026-09-11T16:00:00+00:00", inventory: { name: "Gasas" },
       }));
-    supabaseMock.onFrom(
-      "payments",
-      { data: paidRows(0, 1000) },
-      { data: paidRows(1000, 1000) },
-      { data: paidRows(2000, 500) },
+    const rpcPages = [
+      { data: asRpcRows(paidRows(0, 1000)) },
+      { data: asRpcRows(paidRows(1000, 1000)) },
+      { data: asRpcRows(paidRows(2000, 500)) },
       { data: [] },
-    );
+    ];
+    let rpcPage = 0;
+    supabaseMock.onRpc("get_finance_payments", () => rpcPages[rpcPage++] ?? { data: [] });
     supabaseMock.onFrom(
       "inventory_movements",
       { data: purchaseRows(0, 1000) },
@@ -355,7 +400,7 @@ describe("getFinanceSummary", () => {
     expect(summary.income).toBe(25_000);
     expect(summary.expenses).toBe(1001);
     expect(summary.movements).toHaveLength(3501);
-    const pages = supabaseMock.queries("payments");
+    const pages = supabaseMock.queries("rpc:get_finance_payments");
     expect(pages.map((q) => q.args("range"))).toEqual([
       [0, 999],
       [1000, 1999],
@@ -377,11 +422,15 @@ describe("getFinanceSummary", () => {
 
   it("fails with a readable message when a query fails", async () => {
     vi.spyOn(console, "error").mockImplementation(() => {});
-    supabaseMock.onFrom("payments", { error: { message: "boom" } });
-
+    supabaseMock.onRpc("get_finance_payments", { error: { message: "boom", code: "42501" } });
     await expect(getFinanceSummary("2026-09-01", "2026-10-01")).rejects.toThrow(
       "No se pudieron cargar las finanzas.",
     );
+
+    supabaseMock.onFrom("payments", { error: { message: "boom" } });
+    await expect(
+      getFinanceSummary("2026-09-01", "2026-10-01", { includePatientNames: true }),
+    ).rejects.toThrow("No se pudieron cargar las finanzas.");
   });
 });
 

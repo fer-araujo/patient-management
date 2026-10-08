@@ -10,7 +10,6 @@ import type {
 import {
   fetchFinalizedPrescription,
   fetchPatientHistory,
-  finalizeConsultation,
   finalizeConsultationWithPayment,
   savePrescription,
   saveSoapNote,
@@ -50,7 +49,6 @@ vi.mock("../../../lib/services/soapService", async (importOriginal) => ({
   fetchFinalizedPrescription: vi.fn(),
   saveSoapNote: vi.fn(),
   savePrescription: vi.fn(),
-  finalizeConsultation: vi.fn(),
   finalizeConsultationWithPayment: vi.fn(),
   addNoteAddendum: vi.fn(),
 }));
@@ -241,7 +239,6 @@ beforeEach(() => {
   vi.mocked(savePrescription).mockResolvedValue();
   vi.mocked(updatePatientNotes).mockResolvedValue();
   vi.mocked(updatePatientBackground).mockResolvedValue();
-  vi.mocked(finalizeConsultation).mockResolvedValue();
   vi.mocked(finalizeConsultationWithPayment).mockResolvedValue();
   vi.mocked(fetchPatientDetails).mockResolvedValue(details);
   vi.mocked(fetchPatientNotes).mockResolvedValue("");
@@ -269,7 +266,7 @@ describe("ConsultationWorkspace", () => {
       vitalSigns: null,
     });
     expect(savePrescription).toHaveBeenCalledWith("appt-1", "patient-1", []);
-    expect(finalizeConsultation).not.toHaveBeenCalled();
+    expect(finalizeConsultationWithPayment).not.toHaveBeenCalled();
     expect(onFinishConsultation).not.toHaveBeenCalled();
   });
 
@@ -282,7 +279,7 @@ describe("ConsultationWorkspace", () => {
     await waitFor(() => expect(onClose).toHaveBeenCalledTimes(1));
     expect(chargeDialogTitle()).toBeNull();
     expect(recordPayment).not.toHaveBeenCalled();
-    expect(finalizeConsultation).not.toHaveBeenCalled();
+    expect(finalizeConsultationWithPayment).not.toHaveBeenCalled();
   });
 
   it('"Finalizar Consulta" first opens the charge step and finalizes nothing yet', async () => {
@@ -319,7 +316,6 @@ describe("ConsultationWorkspace", () => {
     });
     // The separate, non-atomic calls are never used.
     expect(recordPayment).not.toHaveBeenCalled();
-    expect(finalizeConsultation).not.toHaveBeenCalled();
     expect(toastSuccess).not.toHaveBeenCalledWith("Cobro guardado");
     const saved = vi.mocked(saveSoapNote).mock.invocationCallOrder[0];
     const finalized = vi.mocked(finalizeConsultationWithPayment).mock.invocationCallOrder[0];
@@ -573,7 +569,7 @@ describe("ConsultationWorkspace NOM-004 record", () => {
     expect(chargeDialogTitle()).toBeNull();
     expect(recordPayment).not.toHaveBeenCalled();
     expect(saveSoapNote).not.toHaveBeenCalled();
-    expect(finalizeConsultation).not.toHaveBeenCalled();
+    expect(finalizeConsultationWithPayment).not.toHaveBeenCalled();
     expect(onFinishConsultation).not.toHaveBeenCalled();
   });
 
