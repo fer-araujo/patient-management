@@ -172,20 +172,14 @@ const rpcError = (error: { code?: string; message: string }, fallback: string) =
   new Error(error.code === "P0001" ? error.message : fallback);
 
 // 3. CREAR NUEVA CITA (Agendar)
+// serviceId comes from the active catalog (useBookingCatalog); the RPC refuses
+// an id that is not in the catalog.
 export const createAppointment = async (
   patientId: string,
-  serviceName: string,
+  serviceId: string,
   dateStr: string,
   timeStr: string,
 ) => {
-  const { data: srv, error: srvError } = await supabase
-    .from("services")
-    .select("id")
-    .eq("name", serviceName)
-    .single();
-  if (srvError || !srv)
-    throw new Error("El servicio seleccionado no existe en el catálogo.");
-
   // Usamos el nuevo traductor que respeta tu zona horaria
   const utcIsoDateTime = combineVisualDateAndTime(dateStr, timeStr);
 
@@ -193,7 +187,7 @@ export const createAppointment = async (
   // bookings, so two bookings can never take the same slot at once.
   const { error } = await supabase.rpc("staff_create_appointment", {
     p_patient_id: patientId,
-    p_service_id: srv.id,
+    p_service_id: serviceId,
     p_start_time: utcIsoDateTime,
   });
 

@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import toast from "react-hot-toast";
@@ -26,7 +26,8 @@ const appt = (over: Partial<DashboardAppointment>): DashboardAppointment => ({
   ...over,
 });
 
-// Only there so "Marta López" and "Toxina" can be picked in the dropdowns.
+// An existing booking of Marta's on another day: it is NOT what makes her
+// (or Toxina) pickable; the dropdowns come from the patients and services tables.
 const marta = appt({
   id: "a-marta",
   patientId: "p-marta",
@@ -34,6 +35,68 @@ const marta = appt({
   service: "Toxina",
   date: "20 oct 2026",
 });
+
+/** A row of public.patients as fetchPatients reads it. */
+const patientRow = (
+  id: string,
+  firstName: string,
+  lastName: string,
+  over: Record<string, unknown> = {},
+) => ({
+  id,
+  first_name: firstName,
+  last_name: lastName,
+  phone: "+528100000000",
+  email: null,
+  dob: null,
+  gender: null,
+  blood_type: null,
+  allergies: null,
+  chronic_conditions: null,
+  notes: null,
+  status: "active",
+  anonymized_at: null,
+  weight_tracking: false,
+  appointments: [],
+  consents: [],
+  ...over,
+});
+
+/** A row of public.services as fetchActiveServices reads it. */
+const serviceRow = (
+  id: string,
+  name: string,
+  durationMins: number,
+  over: Record<string, unknown> = {},
+) => ({
+  id,
+  name,
+  category: "Tratamiento",
+  description: "",
+  duration_mins: durationMins,
+  price: 1000,
+  care_guide: "",
+  is_active: true,
+  ...over,
+});
+
+const defaultPatients = [
+  patientRow("p-ana", "Ana", "Pérez"),
+  patientRow("p-marta", "Marta", "López"),
+];
+const defaultServices = [
+  serviceRow("srv-valoracion", "Valoración", 30),
+  serviceRow("srv-toxina", "Toxina", 30),
+];
+
+/** What "Agendar Cita" reads when it opens: the directory and the active catalog. */
+const stubBookingCatalog = (
+  patients: unknown[] = defaultPatients,
+  services: unknown[] = defaultServices,
+) => {
+  supabaseMock.onFrom("patients", { data: patients });
+  supabaseMock.onFrom("services", { data: services });
+};
 
 const renderTab = (appointments: DashboardAppointment[]) => {
   const onDataChange = vi.fn(async () => {});
@@ -88,6 +151,10 @@ const pickDropdownOption = async (
   await user.click(combobox(label));
   await user.click(within(listbox(label)).getByRole("option", { name: option }));
 };
+
+/** "Agendar Cita" shows its patient and service lists once both are loaded. */
+const waitForBookingLists = () =>
+  screen.findByRole("combobox", { name: "Buscar Paciente" });
 
 describe("CalendarTab pending appointments", () => {
   it("shows a rescheduled (pending) appointment in the week and month views", async () => {
@@ -147,6 +214,8 @@ describe("CalendarTab pending appointments", () => {
 });
 
 describe("CalendarTab scheduling", () => {
+  beforeEach(() => stubBookingCatalog());
+
   it("asks for the time and never preselects an occupied opening slot", async () => {
     setNow(new Date(2026, 9, 14, 7, 0));
     const { user } = renderTab([appt({ time: "08:00 AM" }), marta]);
@@ -164,13 +233,13 @@ describe("CalendarTab scheduling", () => {
 
   it("books the chosen free time through the locked staff RPC", async () => {
     setNow(new Date(2026, 9, 14, 7, 0));
-    supabaseMock.onFrom("services", { data: { id: "srv-toxina" } });
     const { user, onDataChange } = renderTab([appt({}), marta]);
 
     await openMonthDay(user, "16");
     // The clicked (opening) time is free, so it is preselected.
     expect(combobox("Hora")).toHaveTextContent("08:00 AM");
 
+    await waitForBookingLists();
     await pickDropdownOption(user, "Buscar Paciente", "Marta López");
     await pickDropdownOption(user, "Servicio a realizar", "Toxina");
     await user.click(screen.getByRole("button", { name: "Confirmar Cita" }));
@@ -185,44 +254,165 @@ describe("CalendarTab scheduling", () => {
     expect(supabaseMock.queries("appointments")).toHaveLength(0);
   });
 
-  it("never offers an archived patient in Buscar Paciente", async () => {
+  it("books a brand-new patient and a never-booked service with an empty calendar", async () => {
+    // Right after the pre-production reset: no appointment at all.
     setNow(new Date(2026, 9, 14, 7, 0));
-    const { user } = renderTab([
-      appt({ patientStatus: "active" }),
-      appt({
-        id: "a-rosa",
-        patientId: "p-rosa",
-        patientName: "Rosa Archivada",
-        date: "21 oct 2026",
-        patientStatus: "archived",
-      }),
-      appt({
-        id: "a-luis",
-        patientId: "p-luis",
-        patientName: "Luis Suspendido",
-        date: "22 oct 2026",
-        patientStatus: "blocked",
-      }),
-      marta,
-    ]);
+    supabaseMock.reset();
+    stubBookingCatalog(
+      [patientRow("p-nueva", "Nadia", "Nueva")],
+      [serviceRow("srv-relleno", "Relleno", 60)],
+    );
+    const { user, onDataChange } = renderTab([]);
 
     await openMonthDay(user, "16");
-    await user.click(combobox("Buscar Paciente"));
-    const options = within(listbox("Buscar Paciente"));
+    await waitForBookingLists();
+    await pickDropdownOption(user, "Buscar Paciente", "Nadia Nueva");
+    await pickDropdownOption(user, "Servicio a realizar", "Relleno");
+    await user.click(screen.getByRole("button", { name: "Confirmar Cita" }));
 
-    expect(options.queryByRole("option", { name: "Rosa Archivada" })).toBeNull();
-    expect(options.getByRole("option", { name: "Ana Pérez" })).toBeInTheDocument();
-    expect(options.getByRole("option", { name: "Marta López" })).toBeInTheDocument();
-    // Suspended only blocks the public portal; the doctor can still book.
-    expect(options.getByRole("option", { name: "Luis Suspendido" })).toBeInTheDocument();
+    expect(supabaseMock.lastRpc("staff_create_appointment")?.args).toEqual({
+      p_patient_id: "p-nueva",
+      p_service_id: "srv-relleno",
+      p_start_time: "2026-10-16T14:00:00.000Z",
+    });
+    expect(onDataChange).toHaveBeenCalledTimes(1);
+  });
+
+  it("sizes the free times with the catalog duration of a never-booked service", async () => {
+    setNow(new Date(2026, 9, 14, 7, 0));
+    supabaseMock.reset();
+    stubBookingCatalog(defaultPatients, [
+      serviceRow("srv-valoracion", "Valoración", 30),
+      serviceRow("srv-relleno", "Relleno", 120),
+    ]);
+    // Friday 16: one 30-minute booking at 10:00 AM; the clinic closes at 06:00 PM.
+    const { user } = renderTab([appt({ date: "16 oct 2026", time: "10:00 AM" })]);
+
+    await openMonthDay(user, "16");
+    await waitForBookingLists();
+
+    await pickDropdownOption(user, "Servicio a realizar", "Valoración");
+    await user.click(combobox("Hora"));
+    expect(within(listbox("Hora")).getByRole("option", { name: "09:30 AM" })).toBeInTheDocument();
+    expect(within(listbox("Hora")).getByRole("option", { name: "05:30 PM" })).toBeInTheDocument();
+    await user.keyboard("{Escape}");
+
+    // Relleno (120 min) was never booked: its length comes from the catalog.
+    await pickDropdownOption(user, "Servicio a realizar", "Relleno");
+    await user.click(combobox("Hora"));
+    const times = within(listbox("Hora"));
+    expect(times.getByRole("option", { name: "08:00 AM" })).toBeInTheDocument();
+    expect(times.queryByRole("option", { name: "09:00 AM" })).toBeNull();
+    expect(times.queryByRole("option", { name: "09:30 AM" })).toBeNull();
+    expect(times.getByRole("option", { name: "04:00 PM" })).toBeInTheDocument();
+    expect(times.queryByRole("option", { name: "04:30 PM" })).toBeNull();
+  });
+
+  it("offers active, non-archived patients by name and only active services", async () => {
+    setNow(new Date(2026, 9, 14, 7, 0));
+    supabaseMock.reset();
+    stubBookingCatalog(
+      [
+        patientRow("p-rosa", "Rosa", "Archivada", { status: "archived" }),
+        patientRow("p-luis", "Luis", "Suspendido", { status: "blocked" }),
+        patientRow("p-anon", "Anónimo", "ARCO", { anonymized_at: "2026-09-01T00:00:00Z" }),
+        patientRow("p-marta", "Marta", "López"),
+        patientRow("p-ana-1", "Ana", "Pérez", { phone: "+528111111234" }),
+        patientRow("p-ana-2", "Ana", "Pérez", { phone: "+528122225678" }),
+      ],
+      [
+        serviceRow("srv-toxina", "Toxina", 30),
+        serviceRow("srv-viejo", "Peeling retirado", 45, { is_active: false }),
+      ],
+    );
+    // No appointment at all: nothing is derived from the agenda.
+    const { user } = renderTab([]);
+
+    await openMonthDay(user, "16");
+    await waitForBookingLists();
+
+    await user.click(combobox("Buscar Paciente"));
+    const patients = within(listbox("Buscar Paciente"))
+      .getAllByRole("option")
+      .map((option) => option.textContent);
+    expect(patients).toEqual([
+      // Same name: the last 4 digits of the phone tell them apart.
+      "Ana Pérez · tel. 1234",
+      "Ana Pérez · tel. 5678",
+      // Suspended only blocks the public portal; the doctor can still book.
+      "Luis Suspendido",
+      "Marta López",
+      "+ Crear nuevo paciente",
+    ]);
+    await user.keyboard("{Escape}");
+
+    await user.click(combobox("Servicio a realizar"));
+    const services = within(listbox("Servicio a realizar"));
+    expect(services.getByRole("option", { name: "Toxina" })).toBeInTheDocument();
+    expect(services.queryByRole("option", { name: "Peeling retirado" })).toBeNull();
+    // The server is asked for active services only, too.
+    expect(supabaseMock.queries("services")[0].args("eq")).toEqual(["is_active", true]);
+  });
+
+  it("shows a clear error with Reintentar when the lists cannot be loaded", async () => {
+    setNow(new Date(2026, 9, 14, 7, 0));
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    supabaseMock.reset();
+    // The first read fails; the retry answers.
+    supabaseMock.onFrom(
+      "patients",
+      { error: { message: "network down" } },
+      { data: defaultPatients },
+    );
+    supabaseMock.onFrom("services", { data: defaultServices });
+    const { user } = renderTab([]);
+
+    await openMonthDay(user, "16");
+
+    const alert = await screen.findByRole("alert");
+    expect(alert).toHaveTextContent("No se pudo cargar la lista de pacientes y servicios.");
+    expect(screen.queryByRole("combobox", { name: "Buscar Paciente" })).toBeNull();
+    expect(screen.getByRole("button", { name: "Confirmar Cita" })).toBeDisabled();
+
+    await user.click(within(alert).getByRole("button", { name: "Reintentar" }));
+
+    await waitForBookingLists();
+    expect(screen.queryByRole("alert")).toBeNull();
+    await pickDropdownOption(user, "Buscar Paciente", "Marta López");
+    expect(combobox("Buscar Paciente")).toHaveTextContent("Marta López");
+  });
+
+  it("re-reads the lists each time Agendar Cita opens, so a patient created meanwhile appears", async () => {
+    setNow(new Date(2026, 9, 14, 7, 0));
+    supabaseMock.reset();
+    supabaseMock.onFrom("services", { data: defaultServices });
+    // Each read answers with the directory of that moment.
+    let directory = [patientRow("p-ana", "Ana", "Pérez")];
+    supabaseMock.onFrom("patients", () => ({ data: directory }));
+    const { user } = renderTab([]);
+
+    await openMonthDay(user, "16");
+    await waitForBookingLists();
+    await user.click(screen.getByRole("button", { name: "Cerrar ventana" }));
+    await waitFor(() =>
+      expect(screen.queryByRole("button", { name: "Confirmar Cita" })).toBeNull(),
+    );
+
+    directory = [...directory, patientRow("p-nadia", "Nadia", "Nueva")];
+    await user.click(screen.getByText("19"));
+    await waitForBookingLists();
+    await user.click(combobox("Buscar Paciente"));
+    expect(
+      within(listbox("Buscar Paciente")).getByRole("option", { name: "Nadia Nueva" }),
+    ).toBeInTheDocument();
   });
 
   it("starts the next booking empty instead of reusing the last patient and service", async () => {
     setNow(new Date(2026, 9, 14, 7, 0));
-    supabaseMock.onFrom("services", { data: { id: "srv-toxina" } });
     const { user, onDataChange } = renderTab([appt({}), marta]);
 
     await openMonthDay(user, "16");
+    await waitForBookingLists();
     await pickDropdownOption(user, "Buscar Paciente", "Marta López");
     await pickDropdownOption(user, "Servicio a realizar", "Toxina");
     await user.click(screen.getByRole("button", { name: "Confirmar Cita" }));
@@ -233,6 +423,7 @@ describe("CalendarTab scheduling", () => {
 
     // Another day: nothing from the previous booking is carried over.
     await user.click(screen.getByText("19"));
+    await waitForBookingLists();
     expect(combobox("Buscar Paciente")).toHaveTextContent("Buscar por nombre...");
     expect(combobox("Servicio a realizar")).toHaveTextContent("Seleccione un servicio...");
     expect(screen.getByRole("button", { name: "Confirmar Cita" })).toBeDisabled();
@@ -244,6 +435,7 @@ describe("CalendarTab scheduling", () => {
     const { user, rerenderWith } = renderTab([appt({}), marta]);
 
     await openMonthDay(user, "16");
+    await waitForBookingLists();
     await pickDropdownOption(user, "Buscar Paciente", "Marta López");
     await pickDropdownOption(user, "Servicio a realizar", "Toxina");
 
@@ -268,7 +460,6 @@ describe("CalendarTab scheduling", () => {
   it("shows the server's message when the slot was taken at the same moment", async () => {
     setNow(new Date(2026, 9, 14, 7, 0));
     const toastError = vi.spyOn(toast, "error");
-    supabaseMock.onFrom("services", { data: { id: "srv-toxina" } });
     supabaseMock.onRpc("staff_create_appointment", {
       error: {
         code: "P0001",
@@ -278,6 +469,7 @@ describe("CalendarTab scheduling", () => {
     const { user, onDataChange } = renderTab([appt({}), marta]);
 
     await openMonthDay(user, "16");
+    await waitForBookingLists();
     await pickDropdownOption(user, "Buscar Paciente", "Marta López");
     await pickDropdownOption(user, "Servicio a realizar", "Toxina");
     await user.click(screen.getByRole("button", { name: "Confirmar Cita" }));

@@ -43,6 +43,10 @@ import { ChargeModal } from "../modals/ChargeModal";
 import { RecordSuppliesModal } from "../modals/RecordSuppliesModal";
 import { AppointmentPrescriptionActions } from "../../prescription/AppointmentPrescriptionActions";
 import { useCalendar } from "../../hooks/useCalendar";
+import {
+  BOOKING_CATALOG_ERROR,
+  useBookingCatalog,
+} from "../../hooks/useBookingCatalog";
 import { WeeklyView } from "./calendar/WeeklyView";
 import { DailyView } from "./calendar/DailyView";
 import { MonthlyView } from "./calendar/MonthlyView";
@@ -117,32 +121,6 @@ export const CalendarTab = ({
       workingSchedule[new Date(y, m - 1, d).getDay() as keyof WeeklySchedule];
     return !day?.isOpen;
   };
-
-  const patientOptions = useMemo(() => {
-    const patientMap = new Map<string, string>();
-    // An archived record is inactive: it must be reactivated from the patient
-    // directory before it can be booked (the server refuses it as well).
-    appointments
-      .filter((app) => app.patientStatus !== "archived")
-      .forEach((app) => patientMap.set(app.patientId, app.patientName));
-    const uniquePatients = Array.from(patientMap.entries()).map(
-      ([value, label]) => ({ label, value }),
-    );
-    return [
-      ...uniquePatients,
-      { label: "+ Crear nuevo paciente", value: "new", disabled: true },
-    ];
-  }, [appointments]);
-
-  const serviceOptions = useMemo(() => {
-    const uniqueServices = Array.from(
-      new Set(appointments.map((app) => app.service)),
-    );
-    return uniqueServices.map((service) => ({
-      label: service,
-      value: service,
-    }));
-  }, [appointments]);
 
   const timeOptions = useMemo(() => {
     return Array.from({ length: 16 }, (_, i) => {
@@ -268,8 +246,38 @@ export const CalendarTab = ({
     selectedAppointment,
   ]);
 
+  // The real patient directory and active catalog, read each time "Agendar
+  // Cita" opens: never derived from existing appointments.
+  const bookingCatalog = useBookingCatalog();
+
+  const patientOptions = useMemo(
+    () => [
+      ...bookingCatalog.patientOptions,
+      { label: "+ Crear nuevo paciente", value: "new", disabled: true },
+    ],
+    [bookingCatalog.patientOptions],
+  );
+
+  const serviceOptions = useMemo(
+    () =>
+      bookingCatalog.services.length > 0
+        ? bookingCatalog.services.map((service) => ({
+            label: service.name,
+            value: service.id,
+          }))
+        : [
+            {
+              label: "No hay servicios activos en el catálogo",
+              value: "",
+              disabled: true,
+            },
+          ],
+    [bookingCatalog.services],
+  );
+
+  // selectedService holds the catalog id; its duration sizes the free times.
   const scheduleDurationMins =
-    appointments.find((app) => app.service === selectedService)
+    bookingCatalog.services.find((service) => service.id === selectedService)
       ?.durationMins ?? DEFAULT_SLOT_MINS;
 
   const getScheduleOptions = (visualDate: string, durationMins: number) =>
@@ -316,6 +324,7 @@ export const CalendarTab = ({
   const handleOpenActionModal = (dateStr: string, timeStr: string) => {
     setActionModal({ date: dateStr, time: timeStr });
     setActionTab("schedule");
+    bookingCatalog.load();
     setSelectedPatient("");
     setSelectedService("");
     // Preselect the clicked time only when it is really free; otherwise the
@@ -996,31 +1005,56 @@ export const CalendarTab = ({
                     {actionModal.date}
                   </span>
                 </div>
-                <div className="relative z-50">
-                  <label id="schedule-patient-label" className="text-brand-dark font-bold text-sm mb-2 block">
-                    Buscar Paciente
-                  </label>
-                  <Dropdown
-                    labelledBy="schedule-patient-label"
-                    options={patientOptions}
-                    value={selectedPatient}
-                    onChange={setSelectedPatient}
-                    placeholder="Buscar por nombre..."
-                    searchable={true}
-                  />
-                </div>
-                <div className="relative z-40">
-                  <label id="schedule-service-label" className="text-brand-dark font-bold text-sm mb-2 block">
-                    Servicio a realizar
-                  </label>
-                  <Dropdown
-                    labelledBy="schedule-service-label"
-                    options={serviceOptions}
-                    value={selectedService}
-                    onChange={setSelectedService}
-                    placeholder="Seleccione un servicio..."
-                  />
-                </div>
+                {bookingCatalog.status === "ready" ? (
+                  <>
+                    <div className="relative z-50">
+                      <label id="schedule-patient-label" className="text-brand-dark font-bold text-sm mb-2 block">
+                        Buscar Paciente
+                      </label>
+                      <Dropdown
+                        labelledBy="schedule-patient-label"
+                        options={patientOptions}
+                        value={selectedPatient}
+                        onChange={setSelectedPatient}
+                        placeholder="Buscar por nombre..."
+                        searchable={true}
+                      />
+                    </div>
+                    <div className="relative z-40">
+                      <label id="schedule-service-label" className="text-brand-dark font-bold text-sm mb-2 block">
+                        Servicio a realizar
+                      </label>
+                      <Dropdown
+                        labelledBy="schedule-service-label"
+                        options={serviceOptions}
+                        value={selectedService}
+                        onChange={setSelectedService}
+                        placeholder="Seleccione un servicio..."
+                      />
+                    </div>
+                  </>
+                ) : bookingCatalog.status === "error" ? (
+                  <div
+                    role="alert"
+                    className="bg-rose-50 border border-rose-200 rounded-xl p-3 text-sm text-rose-700 flex items-center justify-between gap-3"
+                  >
+                    <span>{BOOKING_CATALOG_ERROR}</span>
+                    <button
+                      type="button"
+                      onClick={bookingCatalog.load}
+                      className="shrink-0 px-3 py-2 pointer-coarse:min-h-11 rounded-lg bg-white border border-rose-200 text-rose-700 font-bold hover:bg-rose-100 transition-colors cursor-pointer"
+                    >
+                      Reintentar
+                    </button>
+                  </div>
+                ) : (
+                  <p
+                    role="status"
+                    className="bg-slate-50 border border-slate-200 rounded-xl p-3 text-sm text-brand-gray"
+                  >
+                    Cargando pacientes y servicios...
+                  </p>
+                )}
                 <div className="relative z-30">
                   <label id="schedule-time-label" className="text-brand-dark font-bold text-sm mb-2 block">
                     Hora
@@ -1041,6 +1075,7 @@ export const CalendarTab = ({
                   onClick={handleScheduleAppointment}
                   disabled={
                     isSubmitting ||
+                    bookingCatalog.status !== "ready" ||
                     !selectedPatient ||
                     !selectedService ||
                     !scheduleTime
