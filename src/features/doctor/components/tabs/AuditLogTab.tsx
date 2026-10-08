@@ -24,6 +24,13 @@ const TABLE_LABELS: Record<string, string> = {
   payments: "un cobro",
   service_supplies: "los insumos de un tratamiento",
   prescriber_profile: "los datos de la receta",
+  // Migration 28: non-clinical tables, audited for traceability.
+  profiles: "una cuenta de usuario",
+  clinic_settings: "los ajustes de la clínica",
+  services: "un servicio del catálogo",
+  inventory: "un artículo del inventario",
+  inventory_movements: "un movimiento de inventario",
+  blocked_slots: "un bloqueo de agenda",
 };
 
 /** log_prescription_shared (migration 25): how the prescription PDF left. */
@@ -102,6 +109,16 @@ const COLUMN_LABELS: Record<string, string> = {
   prescriber_snapshot: "datos impresos de la receta",
   issued_at: "emisión",
   folio: "folio",
+  role: "rol",
+  doctor_only_mode: "modo solo doctora",
+  schedule: "horario",
+  name: "nombre",
+  price: "precio",
+  duration_mins: "duración",
+  is_active: "activo",
+  stock_quantity: "existencias",
+  end_time: "hora de fin",
+  reason: "motivo",
 };
 
 const actorLabel = (entry: AuditEntry): string =>

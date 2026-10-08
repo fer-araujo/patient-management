@@ -1,5 +1,6 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { decideNotification } from "./notificationDecision.ts";
 
 const twilioAccountSid = Deno.env.get("TWILIO_ACCOUNT_SID");
 const twilioAuthToken = Deno.env.get("TWILIO_AUTH_TOKEN");
@@ -75,19 +76,15 @@ serve(async (req: Request) => {
   try {
     const payload = (await req.json()) as WebhookPayload;
     const record = payload.record;
-    const oldRecord = payload.old_record;
     appointmentId = record?.id ?? "unknown";
 
-    const isReschedule =
-      payload.type === "UPDATE" &&
-      !!oldRecord &&
-      oldRecord.start_time !== record.start_time;
+    // Only a change the patient cares about sends a (paid) message: a new
+    // status for confirmed / cancelled, a new start_time for a reschedule.
+    // Any other UPDATE (notes, reschedule counter, supplies, ...) is skipped
+    // before any database or Twilio call. See notificationDecision.ts.
+    const kind = decideNotification(payload);
 
-    if (
-      payload.type === "UPDATE" &&
-      !["confirmed", "cancelled"].includes(record.status) &&
-      !isReschedule
-    ) {
+    if (kind === null) {
       console.log(`Appointment ${appointmentId}: no notification needed.`);
       return new Response(JSON.stringify({ skipped: true }), {
         status: 200,
@@ -118,7 +115,7 @@ serve(async (req: Request) => {
     const doctorOnlyMode = clinicModeError ? true : doctorOnlyModeKnown;
 
     // A request "pending confirmation" only exists with online booking.
-    if (doctorOnlyModeKnown && payload.type === "INSERT" && record.status !== "confirmed") {
+    if (doctorOnlyModeKnown && kind === "request_received") {
       console.log(`Appointment ${appointmentId}: doctor-only mode, no pending notice.`);
       return new Response(JSON.stringify({ skipped: true }), {
         status: 200,
@@ -189,7 +186,7 @@ serve(async (req: Request) => {
     const CHANGE_HINT = `Si necesitas cambiarla, comunícate con la clínica.\n\n`;
     const REBOOK_HINT = `Para agendar otra cita, comunícate con la clínica.\n\n`;
 
-    if (payload.type === "INSERT" && record.status === "confirmed") {
+    if (kind === "booked_confirmed") {
       // Booked by the clinic from the calendar: it is born confirmed, so no
       // later UPDATE will send the confirmation.
       messageBody =
@@ -199,13 +196,13 @@ serve(async (req: Request) => {
           ? CHANGE_HINT
           : `*Si este horario no te funciona*, entra a tu portal para reprogramarla o cancelarla.\n\n`) +
         `_Atte: ${CLINIC_NAME}_ 🏥`;
-    } else if (payload.type === "INSERT") {
+    } else if (kind === "request_received") {
       messageBody =
         `¡Hola ${firstName}! 👋\n\n` +
         `Recibimos tu solicitud de cita para el *${formattedDate}* a las *${formattedTime}*. ` +
         `Está pendiente de confirmación por la doctora.\n\nTe avisaremos en breve.\n\n` +
         `_Atte: ${CLINIC_NAME}_ 🏥`;
-    } else if (payload.type === "UPDATE" && record.status === "cancelled") {
+    } else if (kind === "cancelled") {
       messageBody =
         updatedBy === "patient"
           ? `¡Hola ${firstName}! ❌\n\n` +
@@ -220,7 +217,7 @@ serve(async (req: Request) => {
               ? REBOOK_HINT
               : `Por favor entra a tu portal para elegir un nuevo día.\n\n`) +
             `_Atte: ${CLINIC_NAME}_`;
-    } else if (isReschedule) {
+    } else if (kind === "rescheduled") {
       messageBody =
         updatedBy === "patient"
           ? `¡Hola ${firstName}! 📅\n\n` +
@@ -232,7 +229,7 @@ serve(async (req: Request) => {
               ? CHANGE_HINT
               : `*Si este nuevo horario no te funciona*, entra a tu portal para elegir otro día o cancelarla.\n\n`) +
             `_Atte: ${CLINIC_NAME}_`;
-    } else if (payload.type === "UPDATE" && record.status === "confirmed") {
+    } else if (kind === "confirmed") {
       messageBody =
         `¡Hola ${firstName}! ✅\n\n` +
         `Tu cita del *${formattedDate}* a las *${formattedTime}* ha sido CONFIRMADA.\n\n` +
