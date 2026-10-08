@@ -119,6 +119,8 @@ const COLUMN_LABELS: Record<string, string> = {
   stock_quantity: "existencias",
   end_time: "hora de fin",
   reason: "motivo",
+  requested_online: "solicitud en línea",
+  patient_cancelled_at: "cancelación en línea",
 };
 
 const actorLabel = (entry: AuditEntry): string =>
