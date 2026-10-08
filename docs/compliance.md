@@ -111,7 +111,7 @@ beyond that catalog entry.
 | --- | --- | --- | --- |
 | Confidentiality of identity, integrity and reliability of clinical information | S4 num. 5.3 | Partial | RLS (Phase 1), frozen notes, append-only addenda and audit log (Phase 2). |
 | Keep the system operating to preserve integrity and availability over time | S4 num. 5.6 | Partial | Depends on Supabase backups and plan; no documented backup/restore test (G13). |
-| Information security management system ensuring confidentiality, integrity, availability, **traceability** and non-repudiation | S4 num. 6.6.1 | Partial | Traceability: `audit_log` for every write on patients, appointments, clinical_notes, prescriptions, patient_files, addenda, consents, arco_requests, plus FINALIZE/EXPORT/ANONYMIZE events. Stores column names only. **Reads are not logged** (G6). No formal ISMS (process). |
+| Information security management system ensuring confidentiality, integrity, availability, **traceability** and non-repudiation | S4 num. 6.6.1 | Partial | Traceability: `audit_log` for every write on patients, appointments, clinical_notes, prescriptions, patient_files, addenda, consents, arco_requests, plus FINALIZE/EXPORT/ANONYMIZE events; since migration 28 every table in the schema is covered (accounts and roles, clinic settings, catalog, agenda blocks, inventory). Stores column names only. **Reads are not logged** (G6). No formal ISMS (process). |
 | Records kept as **structured, unalterable electronic documents**; allow **firma electrónica avanzada** of the professional | S4 num. 6.6.2 | **Partial** | Unalterable after finalization (triggers). **No FEA** (G5). |
 | All users authenticated at least by username + password; additional factors recommended | S4 num. 6.6.3 | Partial | Staff: email + password; patients: phone OTP. MFA for staff not enforced (G8). |
 | Role-based authorization | S4 num. 6.6.4 | Met | `is_staff()` / `current_patient_id()` (Phase 1). |
@@ -201,7 +201,7 @@ Phase 3 (runbook, "Phase 3 — Verified booking"):
 | G3 | High (accepted risk) | The online notice omits the controller's address: the practice operates from the doctor's home and she will not publish it. The notice states the address is given when an appointment is confirmed and in the integral notice available on request. Supabase region disclosed: East US (North Virginia), i.e. a cross-border transfer to the United States | Art. 15 fr. I requires identity and address in the notice; omitting it online is a knowingly accepted gap, not compliance. Mitigations: a commercial/virtual office address for notifications would close it | Owner decision, 2026-09-24, with no legal counsel. Keep a printed integral notice (with an address) at the practice |
 | G4 | Fixed | The back arrow in the consultation screen used to call the same handler as "Finalizar Consulta", which would have permanently frozen an unfinished note | — | Fixed: the back arrow saves a draft only (`saveConsultation(false)`); only "Finalizar Consulta" finalizes |
 | G5 | Medium (partly fixed) | No electronic signature and no cédula on the note. The author's full name and the time are rendered since migration 20. Since migration 25 the prescription PDF carries the cédula and a simple electronic signature (drawn image), but consultation notes do not | NOM-004 5.10, NOM-024 6.6.2 | e.firma (SAT) or an FEA provider for finalized notes and prescriptions; render the cédula on the note |
-| G6 | Medium | Reads are not audited (who viewed which record) | NOM-024 6.6.1 traceability | Log views through an RPC or edge function; Postgres triggers cannot see SELECTs |
+| G6 | Medium | Reads are not audited (who viewed which record), and neither are downloads of clinical files through signed URLs. Writes, exports and prescription shares are | NOM-024 6.6.1 traceability | See "Addendum — audit coverage and read traceability (migration 28)": a staff `log_record_view` event first, then audited read RPCs and signed URLs issued by an audited function |
 | G7 | Medium | Database owner can disable triggers and alter the log; no off-site copy | Append-only is only as strong as the owner account | Periodic export of `audit_log` to write-once storage; restrict who holds owner credentials |
 | G8 | Medium | MFA not enforced for staff | NOM-024 6.6.3 recommends additional factors | Enable Supabase Auth MFA (TOTP) for doctor/admin |
 | G9 | Medium | No breach-response procedure | LFPDPPP art. 19 requires immediate notice to titulares | Write an incident runbook: detection, assessment, WhatsApp/email notice template |
@@ -347,3 +347,71 @@ an official PDF the doctor sends by WhatsApp:
   only.
 - **Patients:** "Mis Medicamentos" and the printable "Mis datos" say the list
   is a record and the official prescription is the PDF the doctor sends.
+
+## Addendum — audit coverage and read traceability (migration 28)
+
+**What changed.** `20261008100000_audit_coverage.sql` attaches the generic
+audit trigger (column names only, never values) to the six tables that had
+none: `profiles` (a role change is now traceable: who, when, column `role`),
+`clinic_settings` (the doctor-only toggle and the opening hours), `services`,
+`blocked_slots`, `inventory` and `inventory_movements`. Every table of the
+schema except the log itself is now audited, and the migration's gate fails
+if a later table is added without it. These entries carry no patient. Changes
+made from the database console (including account creation at sign-up) are
+attributed to "system", not to a person: whoever holds the owner credentials
+must be identified by process (see G7).
+
+**Gap that remains: reads (G6).** NOM-024 6.6.1 asks for traceability of
+access to health information. Today the system can answer "who CHANGED this
+record and when", but not "who LOOKED at it":
+
+- Opening a patient's chart, the consultation screen or the portal reads the
+  tables directly through the API under RLS. RLS decides who may read; it
+  leaves no record of the read, and Postgres triggers cannot fire on SELECT.
+- Clinical files (`clinical_records` bucket) are viewed through short-lived
+  signed URLs created in the browser (60 s / 1 h). Neither creating the URL
+  nor downloading the file is in `audit_log`. Supabase's own Storage and API
+  logs show requests for a short retention window, but by database role, not
+  by named user, and they are not part of the clinical record.
+- What IS logged: patient data exports (`EXPORT`), every prescription PDF
+  that leaves the app (`log_prescription_shared`), finalizations and
+  anonymizations.
+
+Proposed future work, in order of cost:
+
+1. **View events from the staff UI (small).** A `log_record_view(patient_id,
+   context)` RPC (doctor only) that writes a `VIEW` entry (new action value)
+   when the doctor opens a chart, a consultation or a file. Cheap and it
+   covers the normal path, but it is best-effort: a direct API read skips it,
+   so it records use, not every possible access.
+2. **Signed URLs issued by an audited function (medium).** Move signed-URL
+   creation for `clinical_records` into a SECURITY DEFINER RPC or an edge
+   function that checks the caller, writes the audit entry and returns the
+   URL; then remove the staff and patient SELECT policies on the bucket so
+   the browser cannot sign URLs itself.
+3. **Audited read RPCs for clinical data (large).** Replace direct table
+   reads of the chart (notes, prescriptions, background, measurements) with
+   SECURITY DEFINER read functions that log and return the data in the same
+   call, and narrow the table SELECT policies. This is the only option that
+   makes the read log complete.
+4. **`pgaudit` (complementary).** Session or object logging of SELECTs on
+   clinical tables in the Postgres log. It records the database role
+   (`authenticated`), not the person, and depends on the plan's log
+   retention, so it supports an investigation but does not replace 1–3.
+
+Owner decision pending; until then, G6 stays open and the doctor should not
+share her login (non-repudiation, §3).
+
+**Registration ceiling trade-off.** `assert_new_patient_quota()` allows at
+most 30 new patient records per rolling hour, clinic-wide. Since the
+anonymous booking RPC was removed (Phase 3) it is reached only through
+`register_me()`, which requires a phone confirmed by OTP, so exhausting it
+takes 30 verified phones within an hour; in doctor-only mode online
+registration is closed anyway. It also counts records the doctor creates, so
+entering 30+ patients by hand in one hour pauses online sign-ups for the rest
+of that hour (existing patients can still book). The limit fails closed on
+purpose: losing an hour of online sign-ups costs less than unbounded fake
+records, held calendar slots and paid WhatsApp messages. Options if it ever
+bites: count only rows created by `register_me()` (a `created_via` column
+set by the RPC), add a per-phone-prefix or per-IP limit at the edge, or raise
+the constant (`booking_limit_new_patients_per_hour()`).
