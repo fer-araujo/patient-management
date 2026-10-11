@@ -22,6 +22,18 @@ const openFinances = async (role: "doctor" | "admin") => {
   supabaseMock.onFrom("profiles", { data: { role } });
   supabaseMock.onFrom("inventory", { data: [] });
   supabaseMock.onFrom("payments", { data: PAYMENTS });
+  // What get_finance_payments returns to the admin: no patient at all.
+  supabaseMock.onRpc("get_finance_payments", {
+    data: PAYMENTS.map((p) => ({
+      id: p.id,
+      status: p.status,
+      amount_charged: p.amount_charged,
+      list_price: p.list_price,
+      created_at: p.created_at,
+      method: "card",
+      service_name: p.services.name,
+    })),
+  });
   supabaseMock.onFrom("inventory_movements", { data: [] });
 
   render(<DoctorAdminDashboard />);
@@ -40,9 +52,9 @@ describe("DoctorAdminDashboard Finanzas privacy", () => {
 
     expect(await screen.findByText("Hilos Tensores")).toBeInTheDocument();
     expect(screen.queryByText(/Ana|Pérez/)).not.toBeInTheDocument();
-    for (const query of supabaseMock.queries("payments")) {
-      expect(String(query.args("select")?.[0])).not.toContain("patients");
-    }
+    // The payments table is never read by the admin (migration 26).
+    expect(supabaseMock.queries("payments")).toHaveLength(0);
+    expect(supabaseMock.rpcCalls("get_finance_payments").length).toBeGreaterThan(0);
   });
 
   it("the doctor still sees who each charge was for", async () => {

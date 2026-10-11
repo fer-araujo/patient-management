@@ -1118,6 +1118,9 @@ order by c.accepted_at desc;
 longer guard a public endpoint. What still applies:
 
 - `booking_limit_pending_per_patient()` in `request_my_appointment`;
+- since migration 29, at most 3 online requests and 3 online cancellations
+  per patient per rolling 24 hours (`patient_online_request_limit()`,
+  `patient_online_cancel_limit()`);
 - `booking_limit_new_patients_per_hour()` in `register_me`;
 - Supabase Auth's own OTP rate limits (and CAPTCHA, if enabled), which do
   cover the OTP endpoints.
@@ -2118,3 +2121,594 @@ unknown or null channel; the admin, the patient and `anon` read no
 prescription data, see no signature object, cannot write one, and cannot
 issue or log; the Bitácora has the doctor's profile insert, her
 `signature_path` update and the issue (an UPDATE with `folio`).
+
+---
+
+# Phase 7 — Pre-production
+
+Order for this phase (paste each file whole into the SQL editor):
+
+1. `supabase/migrations/20261007100000_admin_payments_view.sql` (migration 26)
+2. `supabase/tests/admin_payments_check.sql`
+3. `supabase/migrations/20261007110000_security_hardening.sql` (migration 27)
+4. `supabase/tests/security_hardening_check.sql`
+5. `supabase/migrations/20261008100000_audit_coverage.sql` (migration 28)
+6. `supabase/tests/audit_coverage_check.sql`
+7. `supabase/migrations/20261008110000_reaudit_fixes.sql` (migration 29)
+8. `supabase/tests/reaudit_fixes_check.sql`
+9. Deploy the edge function (it no longer resends "CONFIRMADA" or
+   "CANCELADA" on unrelated updates; see "When a WhatsApp is sent"):
+   `supabase functions deploy notify-appointment --no-verify-jwt`
+10. Re-run the older checks that changed with these migrations:
+    `rls_check.sql`, `roles_check.sql`, `nom004_check.sql`,
+    `service_supplies_check.sql`, `archived_booking_check.sql`,
+    `doctor_only_mode_check.sql`, `finance_check.sql`,
+    `body_measurements_check.sql`, `digital_prescription_check.sql`,
+    `security_hardening_check.sql`.
+11. Deploy the frontend (it calls `get_finance_payments`, `get_my_profile` and
+    `get_item_movements`, which exist only after migrations 26 and 27; the
+    Bitácora also gets labels for the tables migration 28 audits and the two
+    columns migration 29 adds).
+
+Every check runs inside `begin; … rollback;`. Patient sessions in the checks
+now use auth users whose phone is confirmed (migration 27 requires it), and
+the checks that need patient sessions turn doctor-only mode off inside their
+own transaction.
+
+## Migration 26 — Finance for the admin without identifiers; Security Advisor fixes
+
+**File:** `supabase/migrations/20261007100000_admin_payments_view.sql`.
+Idempotent.
+
+- Expected: one notice starting with `Migration 26 PASSED`.
+- A failure raises `Migration 26 FAILED: …` and nothing is changed (the
+  editor runs the file as one transaction).
+- `unreviewed SECURITY DEFINER function executable by …` means the database
+  has a function (or a new overload) this review did not cover; `has no
+  internal … guard in its code` means a reviewed RPC lost its role or patient
+  check. Report the message; do not grant or revoke anything by hand.
+
+What it changes:
+
+- `payments` is readable directly **only by the doctor** again
+  (`payments_select_staff` uses `is_staff()`, the migration 17 body). The
+  admin can no longer read `patient_id`, `appointment_id` or the free-text
+  `note` through the API.
+- New `get_finance_payments(p_from, p_to)`: business staff (doctor or admin)
+  get, per payment, the date, status, method, amount, list price and service
+  name. Nothing else. Finanzas uses it for the admin view; the doctor's view
+  still reads the table with the patient's name. The browser pages it like
+  any other read, so it is not cut at 1,000 rows.
+- Security Advisor: EXECUTE is revoked from `public`, `anon`,
+  `authenticated` and `service_role` on every `returns trigger` function in
+  `public`
+  (`appointments_set_updated_by`, `handle_new_user`,
+  `profiles_block_role_escalation` were the ones still open). Triggers keep
+  firing: Postgres checks EXECUTE only when a trigger is created.
+- `finalize_consultation(uuid)` is no longer client-callable. "Finalizar
+  Consulta" uses `finalize_consultation_with_payment`, which calls it as its
+  owner. The unused client function `finalizeConsultation` was removed.
+
+**Rollback:** re-run migration 18's policy block for `payments_select_staff`
+(reopens payments to the admin) and `drop function
+public.get_finance_payments(timestamptz, timestamptz);` after deploying a
+frontend that does not call it. The revoked grants need no rollback.
+
+## Admin payments check — `supabase/tests/admin_payments_check.sql`
+
+- Expected: one notice starting with `ADMIN PAYMENTS CHECK PASSED`.
+- It proves: the doctor reads payments directly with the patient's name; the
+  admin reads zero payment rows directly and gets exactly the seven reviewed
+  columns through the RPC (amounts add up, the ids resolve to nothing); a bad
+  range is refused; a patient and `anon` get nothing; `finalize_consultation`
+  is refused for the doctor and the admin while
+  `finalize_consultation_with_payment` still charges and freezes the note; no
+  trigger function is executable by `anon` or `authenticated`.
+
+## Security Advisor
+
+The owner ran the Supabase Security Advisor before migration 26: 42 warnings,
+no errors. Triage:
+
+| Warning | Decision |
+| --- | --- |
+| Trigger functions executable by `anon` / `authenticated` | **Fixed** in migration 26 (revoked from `anon`, `authenticated` and `service_role` on every `returns trigger` function). |
+| `finalize_consultation(uuid)` executable by `authenticated` | **Fixed** in migration 26 (only through `finalize_consultation_with_payment`). |
+| `get_availability`, `get_clinic_schedule`, `get_clinic_mode` executable by `anon` | **Accepted.** Public booking needs them. See below. |
+| `is_staff`, `is_business_staff`, `current_patient_id` executable by `authenticated` | **Accepted.** RLS policies call them as the requesting role. |
+| Every other SECURITY DEFINER RPC executable by `authenticated` | **Accepted.** Each one guards itself; table below. |
+| Leaked password protection disabled | **Pre-production checklist** (dashboard setting, may need the Pro plan). |
+
+**Anon-callable reads (no identities):**
+
+- `get_availability(from, to)`: opaque busy windows, `start_time` and
+  `end_time` only. No patient, service, status or block reason.
+- `get_clinic_schedule()`: the weekly opening hours (the `schedule` jsonb).
+- `get_clinic_mode()`: one boolean, doctor-only mode on or off.
+
+**Helpers** (`is_staff`, `is_business_staff`, `current_patient_id`): they must
+stay executable by `authenticated` because RLS policies call them as the
+requesting role. They return only the caller's own role check or own patient
+id.
+
+**Authenticated RPCs and their internal guard:**
+
+| RPC | Guard | Caller |
+| --- | --- | --- |
+| `accept_privacy_notice` | `current_patient_id()`, portal open | patient |
+| `adjust_stock` | `is_business_staff()` | doctor, admin |
+| `anonymize_patient` | `is_staff()` | doctor |
+| `cancel_my_appointment` | `current_patient_id()`, portal open, own appointment, 3 per 24 h (mig. 29) | patient |
+| `export_my_data` | `current_patient_id()`; finalized prescriptions only (mig. 29) | patient |
+| `finalize_consultation_with_payment` | `is_staff()` | doctor |
+| `get_finance_payments` (mig. 26) | `is_business_staff()` | doctor, admin |
+| `get_item_movements` (mig. 27) | `is_business_staff()` | doctor, admin |
+| `get_my_booking_profile` | `current_patient_id()` | patient |
+| `get_my_profile` (mig. 27) | `current_patient_id()` | patient |
+| `get_procedure_profit` | `is_business_staff()` | doctor, admin |
+| `issue_prescription` | `is_staff()` | doctor |
+| `log_prescription_shared` | `is_staff()` | doctor |
+| `record_consent_in_person` | `is_staff()` | doctor |
+| `record_consultation_supplies` | `is_staff()` | doctor |
+| `record_payment` | `is_staff()` | doctor |
+| `register_me` | verified phone, portal open, refuses `is_business_staff()` | patient |
+| `register_my_upload` | `current_patient_id()`, portal open, own folder | patient |
+| `request_my_appointment` | `current_patient_id()`, portal open, booking window, 3 per 24 h (mig. 29) | patient |
+| `reschedule_my_appointment` | `current_patient_id()`, portal open, own appointment, window, limit | patient |
+| `resolve_arco_request` | `is_staff()` | doctor |
+| `set_clinic_mode` | `is_staff()` | doctor |
+| `set_service_supplies` | `is_business_staff()` | doctor, admin |
+| `staff_create_appointment` | `is_staff()` | doctor |
+| `staff_register_arco_request` | `is_staff()` | doctor |
+| `staff_reschedule_appointment` | `is_staff()` | doctor |
+| `submit_arco_request` | `current_patient_id()`, portal open | patient |
+
+Migrations 26 to 29 enforce this list in their gates, **by signature**
+(a new overload of a reviewed name is not covered): a SECURITY DEFINER
+function outside it that `anon` or `authenticated` can execute makes the
+migration fail, and each guarded RPC must contain its guard as code (`if not
+public.is_staff() then raise`, `if not public.is_business_staff() then
+raise`, or the `current_patient_id()` null check). Comments and string
+literals are stripped from the body before matching, so a guard that only
+appears in a comment or a message does not count. After migrations 26 and
+27, re-run the Advisor: the remaining warnings must be exactly the accepted
+rows above.
+
+## Migration 27 — Security hardening (whole-codebase audit)
+
+**File:** `supabase/migrations/20261007110000_security_hardening.sql`. Run it
+after migration 26. Idempotent.
+
+- Expected: one notice starting with `Migration 27 PASSED`.
+- A failure raises `Migration 27 FAILED: …` and nothing is changed.
+
+What it changes (audit finding in brackets):
+
+- **[F1]** Patients no longer read the `patients` table at all
+  (`patients_select_own` is dropped), so the doctor's private notes never
+  reach the browser. The portal reads `get_my_profile()`: id, names, phone and
+  email. The doctor's access is unchanged.
+- **[F2]** `current_patient_id()` returns NULL while doctor-only mode is on.
+  Every patient read (appointments, prescriptions, files, consents, ARCO,
+  storage, `export_my_data`) closes with the mode, not only the writes. No
+  staff policy or RPC uses it.
+- **[NV1]** `current_patient_id()` and `register_me()` require that the auth
+  user behind the session has `phone_confirmed_at` set and the same phone as
+  the JWT claim. A confirmed OTP sign-in sets it. Note: with "Confirm phone"
+  turned off, Supabase also marks phone+password sign-ups as confirmed, so
+  "Confirm phone" ON and OTP-only phone sign-up are a ⛔ BLOQUEANTE release
+  gate in the checklist. A check on `auth.mfa_amr_claims` was considered and
+  left out (see "Possible future hardening").
+- **[F3]** `cancel_my_appointment` and `reschedule_my_appointment` refuse an
+  appointment that already started, or that has a clinical note or a
+  prescription.
+- **[F4]** `request_my_appointment` and `reschedule_my_appointment` enforce on
+  the server the opening hours of that weekday (America/Monterrey, the
+  service must end by closing time), the 15-minute grid of the booking screen
+  and a 120-day horizon (the booking calendar now stops there too). Staff
+  bookings are not limited. A closing time of 00:00 ("12:00 AM") means midnight at
+  the end of the day, and a malformed saved schedule gives the patient a
+  clear "call the clinic" message instead of an error.
+- **[F5]** At most 3 online reschedules per appointment
+  (`appointments.patient_reschedule_count`, written only by the RPC; a
+  trigger refuses any other change, even from the doctor).
+- **[F6]** Patients see only finalized prescriptions.
+- **[NV2]** The admin no longer sees which consultation used which supply:
+  `inventory_movements` rows tied to an appointment are doctor-only. The item
+  history uses `get_item_movements()` (no `appointment_id`). Payments were
+  closed by migration 26.
+- **[NV3]** `clinical_records` and `prescriber_private` are forced private.
+
+**Deploy order:** migration first, then the frontend. Until the new frontend
+is live, the patient portal's profile card fails (it read `patients`
+directly).
+
+**Rollback:** re-run migrations 02 (`current_patient_id`), the
+`patients_select_own` / `prescriptions_select_own` blocks of 05, the
+`inventory_movements_select_staff` block of 18 and the patient RPCs and
+`register_me` of 23. The counter column and its trigger can stay.
+
+## Security hardening check — `supabase/tests/security_hardening_check.sql`
+
+- Expected: one notice starting with `SECURITY HARDENING CHECK PASSED`.
+- `ABORTED` means it could not set up (no free weekday 100–118 days ahead,
+  no `clinic_settings` row, or the migrations are missing). Nothing was
+  proven.
+- It proves every item of migration 27 with throwaway users: the direct read
+  of `notes` is refused, patient reads are empty with the mode on and for an
+  unconfirmed phone (which also cannot register), the admin reads neither
+  `payments.note` nor a movement's appointment, a draft prescription is
+  invisible to the patient, started or recorded visits cannot be cancelled or
+  moved, the booking window (horizon, grid, closed day, before opening, past
+  closing) and the reschedule limit hold, and both buckets are private. It
+  sets a known schedule and the mode inside its own transaction.
+
+`archived_booking_check.sql` and `doctor_only_mode_check.sql` book
+appointments years ahead on purpose, so they replace
+`assert_patient_booking_window()` with a no-op inside their transaction (the
+rollback restores it), the same way they disable the overlap trigger.
+
+## Migration 28 — Audit coverage for every table
+
+**File:** `supabase/migrations/20261008100000_audit_coverage.sql`. Run it
+after migration 27. Idempotent. No frontend dependency.
+
+- Expected: one notice starting with `Migration 28 PASSED`.
+- A failure raises `Migration 28 FAILED: …` and nothing is changed.
+
+What it changes:
+
+- The generic `audit_row_change` trigger (column NAMES only, never values) is
+  attached to the six tables that had no trail: `profiles` (role changes,
+  names), `clinic_settings` (doctor-only toggle, opening hours), `services`,
+  `blocked_slots`, `inventory` and `inventory_movements` (inserts only; the
+  ledger is append-only). Every table in `public` except `audit_log` is now
+  audited; the gate fails if a later table is added without the trigger.
+- These entries have **no patient** (`patient_id` NULL). The trigger reads
+  `id`, `patient_id` and the addendum's `note_id` only when they are uuids, so
+  a table without them logs NULL instead of failing the write.
+- `audit_row_change()`, `write_audit_event()` and `audit_actor_role()` are no
+  longer executable by `service_role` either (before, `service_role` could
+  call `write_audit_event()` directly and forge an entry).
+- The gate repeats migration 27's SECURITY DEFINER surface check; this file
+  adds no API-callable function, so the reviewed list is unchanged.
+
+Effects to expect in the Bitácora: account creation (sign-up) and anything
+done from the SQL editor shows "La consola de base de datos"; each
+consultation with supplies adds one inventory change and one inventory
+movement per supply. `audit_log.id` can skip numbers: every check script and
+gate that writes inside a rolled-back transaction consumes ids, and Postgres
+never reuses them. A gap is not a deleted entry (the table refuses deletes).
+
+The pre-production reset needs no change: the trigger never refuses a
+delete, and the entries written while the reset runs are removed by its final
+`audit_log` delete.
+
+**Rollback:** `drop trigger audit_row_change on public.<table>` for the six
+tables, and re-run the `audit_row_change` block of migration 08.
+
+## Audit coverage check — `supabase/tests/audit_coverage_check.sql`
+
+- Expected: one notice starting with `AUDIT COVERAGE CHECK PASSED`.
+- `ABORTED` means migration 28 is missing or `clinic_settings` has no row.
+- With throwaway doctor and admin users it proves: every table except
+  `audit_log` has the trigger; a new account and a role change from the SQL
+  editor are logged (actor `system`); the doctor-only toggle, a schedule
+  change, a service (insert, price, archive), an agenda block (insert,
+  delete), an inventory item with its movements and a profile edit are
+  logged with the doctor as actor and no patient; a no-op update logs
+  nothing; every logged name is a real column (no values); the admin's change
+  is logged as `admin` and the admin still reads no entry; no API role can
+  execute the audit helpers. It creates no appointment, so no WhatsApp can
+  fire.
+
+## Migration 29 — Re-audit fixes
+
+**File:** `supabase/migrations/20261008110000_reaudit_fixes.sql`. Run it
+after migration 28. Idempotent. No frontend dependency: the portal already
+shows `P0001` messages as they are, and the Bitácora only gets labels for the
+two new columns.
+
+- Expected: one notice starting with `Migration 29 PASSED`.
+- A failure raises `Migration 29 FAILED: …` and nothing is changed.
+
+What it changes (re-audit finding in brackets):
+
+- **[N1]** `export_my_data()` exports **finalized** prescriptions only, the
+  same rule as the direct read since migration 27. A draft stays with the
+  doctor until the consultation is closed.
+- **[N2]** Online requests and cancellations are capped per patient, per
+  rolling 24 hours:
+  - `request_my_appointment` refuses the 4th online request with "Alcanzaste
+    el límite de solicitudes en línea por hoy. Comunícate con la clínica."
+    Every online request counts, whatever its status now (cancelled ones
+    too).
+  - `cancel_my_appointment` refuses the 4th online cancellation with
+    "Alcanzaste el límite de cancelaciones en línea por hoy. Comunícate con
+    la clínica." It now also takes the booking lock, so two concurrent
+    cancellations cannot both pass the count.
+  - The counts come from two new `appointments` columns that only those RPCs
+    write: `requested_online` (set on insert, never changed) and
+    `patient_cancelled_at`. A trigger (`appointments_guard_online_markers`)
+    clears them on any other insert and refuses any other change, even from
+    the doctor (`42501`). Staff bookings, staff cancellations and the
+    doctor's agenda are not limited.
+  - Why columns and not a new table or `audit_log`:
+    - a new table would make the pre-production reset refuse to run (it
+      aborts on unknown tables);
+    - `audit_log` cannot tell an online cancellation from a reschedule;
+    - `updated_by` is rewritten on every update.
+
+    Patients cannot write `appointments` directly, so they cannot lower the
+    counts.
+  - Requests and cancellations made before the migration do not count, which
+    gives at most one day of slack.
+- **[O3]** New functions are no longer executable by `PUBLIC`, `anon` or
+  `authenticated` by default (`alter default privileges for role postgres`).
+  - The `PUBLIC` revoke is global (all schemas), because Postgres ignores a
+    per-schema revoke of the built-in `PUBLIC` grant.
+  - Existing functions keep their grants, and `service_role` keeps its
+    default.
+  - The gate reads `pg_default_acl`, then creates and drops a probe function
+    to prove it.
+- The three redefined RPCs keep their signatures, so the reviewed SECURITY
+  DEFINER list is unchanged. Their grants are re-stated and now also revoked
+  from `service_role`.
+
+### Rule for every new function (from migration 29 on)
+
+A function that `postgres` creates is executable only by its owner. Every
+migration that creates a function must end its section with explicit grants,
+as migrations 26–29 do:
+
+```sql
+revoke all on function public.my_fn(args) from public, anon, authenticated, service_role;
+grant execute on function public.my_fn(args) to authenticated;  -- only if the API needs it
+```
+
+- A function that RLS policies call as the requesting role (like
+  `is_staff()`) also needs the grant. Trigger functions need none.
+- After you enable a Postgres extension, check that the roles that call its
+  functions can still execute them.
+- If `anon` or `authenticated` can call a new SECURITY DEFINER function, add
+  it to the reviewed list of the next migration's gate. Otherwise that gate
+  fails.
+
+**Rollback:**
+
+- Re-run the `export_my_data` block of migration 24 and the
+  `request_my_appointment` / `cancel_my_appointment` blocks of migration 27.
+  This removes the limits; the columns and the trigger can stay.
+- For O3, run `alter default privileges for role postgres grant execute on
+  functions to public;` and `alter default privileges for role postgres in
+  schema public grant execute on functions to anon, authenticated;`.
+
+## Re-audit fixes check — `supabase/tests/reaudit_fixes_check.sql`
+
+- Expected: one notice starting with `REAUDIT FIXES CHECK PASSED`.
+- `ABORTED` means one of these, and nothing was proven:
+  - migration 29 is missing;
+  - `clinic_settings` has no row;
+  - there is no free weekday 100–118 days ahead;
+  - the script is not running as `postgres`.
+- With a throwaway doctor and a patient with a confirmed phone, it proves:
+  - the export carries the finalized prescription and not the draft;
+  - three online requests and three online cancellations work, and the 4th
+    of each is refused with the daily-limit message;
+  - the doctor still books and cancels for that patient without a marker,
+    and cannot forge or reset the markers;
+  - once the markers are older than 24 hours, the patient can request and
+    cancel again;
+  - the three RPCs have the right grants;
+  - a function created now in `public` is not executable by `anon` or
+    `authenticated`.
+- It turns doctor-only mode off and disables the WhatsApp and overlap
+  triggers inside its own transaction.
+
+## When a WhatsApp is sent (`notify-appointment`)
+
+The `whatsapp_notifications` trigger posts EVERY insert and update of
+`appointments`, including bookkeeping updates (notes, the reschedule counter,
+`updated_by`). Before this change the function resent "CONFIRMADA" or
+"CANCELADA" for any update of a confirmed or cancelled row, and every one is
+a paid Twilio message. The decision now lives in
+`supabase/functions/notify-appointment/notificationDecision.ts` (pure, no
+Deno API) and is unit-tested in
+`src/lib/notifications/notifyAppointmentDecision.test.ts`:
+
+| Event | Condition | Message |
+| --- | --- | --- |
+| INSERT | status `confirmed` (booked by the clinic) | "AGENDADA y CONFIRMADA" |
+| INSERT | status `pending` (online request) | "Recibimos tu solicitud" (not sent in doctor-only mode) |
+| INSERT | any other status | none |
+| UPDATE | status changed to `cancelled` | "CANCELADA" (by the patient or by the clinic, from `updated_by`) |
+| UPDATE | `start_time` changed and status is `pending` or `confirmed` | "REPROGRAMADA" |
+| UPDATE | status changed to `confirmed`, same `start_time` | "CONFIRMADA" |
+| UPDATE | anything else: same status and same `start_time`, a change to `completed` or `rejected`, a moved cancelled row | none |
+| UPDATE | no `old_record` in the payload (a change cannot be proven) | none |
+
+A cancellation wins when the status and the time change together; a
+reschedule wins over a confirmation (its message carries the new date).
+Patient-triggered sends are bounded on the database side: 3 online requests
+and 3 online cancellations per patient per rolling 24 hours (migration 29)
+and 3 online reschedules per appointment (migration 27). The
+webhook-secret check still runs first, nothing new is logged (only the
+appointment id), and the doctor-only wording is unchanged. A skipped event
+returns `200 {"skipped": true}` before any database or Twilio call.
+
+**Deploy:** `supabase functions deploy notify-appointment --no-verify-jwt`
+(from the repository root; it uploads `index.ts` and
+`notificationDecision.ts`). No secret or trigger change. Check in Edge
+Functions → notify-appointment → Logs that an update such as a supplies
+change on a confirmed appointment logs "no notification needed".
+
+## Known gaps after migration 29 (not fixed, by design)
+
+- **Reads are not audited (NOM-024 6.6.1 traceability).** `audit_log`
+  records writes, finalizations, exports and prescription shares. Nothing
+  records that the doctor (or the patient, in the portal) OPENED a record,
+  and downloads from the `clinical_records` bucket through signed URLs are
+  not logged either. Postgres triggers cannot see SELECTs. See
+  `docs/compliance.md` (G6) for the proposed future work.
+- **The new-patient ceiling is clinic-wide.**
+  `assert_new_patient_quota()` (30 new `patients` rows per rolling hour) is
+  called only by `register_me()` now, so filling it takes 30 phones that each
+  completed an OTP within an hour. It counts every new row, including those
+  the doctor creates, so a hand import of 30+ patients in an hour also pauses
+  online registration (returning patients can still book). It fails closed on
+  purpose: an hour without online sign-ups is cheaper than unbounded records,
+  calendar holds and WhatsApp sends. See `docs/compliance.md` for options.
+
+---
+
+# Pre-production reset  ⚠️ DESTRUCTIVE
+
+**File:** `supabase/maintenance/reset_test_data.sql`. Not a migration. It
+deletes **every** patient, appointment, consultation, prescription,
+payment, consent, ARCO request, measurement, file record, stock movement,
+blocked slot and audit entry in one transaction. It cannot be undone except
+from a backup.
+
+It keeps: the service catalog, the inventory items (stock set to 0, because
+the movement ledger is emptied), the supplies per service, the opening hours,
+the prescriber data and signatures, and every profile. The prescription folio
+and the audit log numbering restart at 1. **Doctor-only mode is left ON**, so
+the patient portal stays closed until the manual checklist is done; turn it
+off in the app only after that, and only if the clinic takes online bookings.
+
+**When:** only at the end of Phase 8, after the OWASP ZAP scan and its fixes,
+**after the QA walkthrough** (`docs/qa-walkthrough.md`) and right before
+announcing the app to patients. After the reset, only read-only smoke checks
+are allowed: log in as the doctor, see empty dashboards. Any test booking or
+consultation after the reset is real data.
+
+> **Nunca guardes el script editado en el SQL Editor ni lo subas a git.** The
+> confirmation phrase and the deadline must be typed fresh for every run.
+
+**How:**
+
+1. **Backup (go/no-go).** Back up the `public` AND `auth` schemas:
+   - `pg_dump "<connection string from Project Settings > Database>" --schema=public --schema=auth --format=custom --file=pre-reset-YYYYMMDD.dump`, or
+   - the Supabase backup under Database → Backups, if the plan includes one
+     (it depends on the plan; Point-in-Time Recovery is a paid add-on).
+   - Plus a download of the Storage buckets if the files matter
+     (`prescriber_private` holds the doctor's signatures).
+
+   Write down the backup time. **No backup = NO-GO:** if the plan has no
+   restorable backup, the `pg_dump` is mandatory; if neither is possible, do
+   not run the reset.
+2. **Dry run:** paste the file as it is. Nothing changes. It checks every
+   precondition the real run needs (known tables, the eight protective
+   triggers present and enabled, ownership of every table and sequence it
+   touches, a doctor profile, one `clinic_settings` row), and prints the rows
+   it would delete, **the exact confirmation phrase** (`BORRAR <N> FILAS`),
+   the files in `clinical_records` and the test auth users.
+3. **Execute, right after that dry run,** in a fresh copy of the file:
+   ```sql
+   set local app.confirm_reset  = 'BORRAR <N> FILAS';  -- exactly as the dry run printed it
+   set local app.reset_deadline = 'YYYY-MM-DD';        -- today, at most 7 days ahead
+   set local app.reset_mode     = 'execute';
+   ```
+   The script locks the tables (waiting at most 5 seconds; otherwise it
+   aborts), counts again and aborts if the count is not exactly N. An old
+   copy cannot delete data added later, and an expired deadline aborts.
+4. Expected: `RESET DONE: …`. Any `RESET ABORTED` / `RESET FAILED` means the
+   transaction rolled back and nothing changed.
+5. Do the manual checklist it prints (see the checklist below).
+
+Safety built in: it refuses to run if `public` has a table it does not know;
+it disables only the eight protective triggers it must bypass, re-enables
+them before the end, and verifies that every trigger enabled at the start is
+enabled again; it verifies that the wiped tables are empty, the kept tables
+are unchanged (except stock and the mode), the mode is ON and both sequences
+restart at 1. Storage files are not deleted by SQL: Supabase blocks direct
+deletes on `storage.objects` and they would leave orphaned files, so the
+script lists them for the dashboard.
+
+---
+
+# Pre-production checklist
+
+Do these **in this order** before announcing the app to patients.
+
+**Before the reset**
+
+- [ ] Migrations 1–29 applied; every gate printed `PASSED`.
+- [ ] Every check script passes: `rls_check`, `roles_check`, `finance_check`,
+      `inventory_check`, `staff_booking_check`, `nom004_check`,
+      `archived_booking_check`, `service_supplies_check`,
+      `doctor_only_mode_check`, `body_measurements_check`,
+      `digital_prescription_check`, `admin_payments_check`,
+      `security_hardening_check`, `audit_coverage_check`,
+      `reaudit_fixes_check`.
+- [ ] `notify-appointment` deployed with the change-only decision
+      (`supabase functions deploy notify-appointment --no-verify-jwt`).
+- [ ] Supabase Security Advisor re-run: only the accepted warnings of the
+      "Security Advisor" section remain.
+- [ ] ⛔ **BLOQUEANTE** — Auth → Phone: **"Confirm phone" ON** and phone
+      sign-up by **OTP only** (no phone+password sign-up). Migration 27
+      trusts `auth.users.phone_confirmed_at`; with confirmations off,
+      Supabase marks phone+password sign-ups as confirmed and anyone could
+      claim a doctor-created patient's phone. Do not release until both
+      settings are verified, and **never turn "Confirm phone" off later**,
+      not even to debug: it must stay ON for the life of the app.
+- [ ] ⛔ **BLOQUEANTE** — Settings → Data API → **Exposed schemas** is
+      exactly `public` and `graphql_public`. Every SECURITY DEFINER gate
+      (migrations 26–29) checks only `public`; another exposed schema (for
+      example `extensions`) would publish functions no gate reviewed. If
+      another schema is listed, remove it.
+- [ ] Auth → Attack protection: turn on **leaked password protection**
+      (it may require the Pro plan). It protects the doctor and admin
+      password logins.
+- [ ] Auth → Rate limits: lower the SMS / OTP limits to what a small clinic
+      needs (SMS pumping and quota exhaustion).
+- [ ] ⛔ **BLOQUEANTE (Phase 8)** — CAPTCHA (Cloudflare Turnstile or
+      hCaptcha) on the phone login: Auth → Attack protection, plus the
+      `captchaToken` in `PatientPhoneLogin`. Without it, OTP SMS can be
+      pumped up to the rate limits.
+- [ ] Twilio: restrict SMS/WhatsApp to Mexico (+52) and the US if needed,
+      set a spending alert, and use the approved production WhatsApp
+      template and sender.
+- [ ] OWASP ZAP scan of the published site done and its findings fixed
+      (Phase 8).
+- [ ] **QA walkthrough** (`docs/qa-walkthrough.md`) complete on desktop, iPad
+      and iPhone. It uses test data, so it must happen before the reset.
+- [ ] Rotate `WEBHOOK_SECRET` (Edge Functions → Secrets), recreate the
+      `whatsapp_notifications` trigger with the new value (step 8c) and check
+      the 401 (step 8d).
+- [ ] **Backup (go/no-go):** `public` + `auth` schemas (pg_dump or the plan's
+      backup) and Storage if needed; write down the backup time. No backup,
+      no reset.
+
+**The reset**
+
+- [ ] Pre-production reset: dry run, then execute with the printed phrase
+      and today's deadline. It also deletes the "Dato de prueba" InBody
+      measurements and leaves doctor-only mode ON.
+
+**After the reset (read-only from here on)**
+
+- [ ] Storage → `clinical_records`: delete every test folder (the reset lists
+      them). Leave `prescriber_private` alone.
+- [ ] Authentication → Users: delete the test patient users the reset lists.
+- [ ] ⛔ **BLOQUEANTE** — Remove every Supabase Auth **test phone number**
+      (fixed OTPs). A fixed OTP lets anyone sign in as that number.
+- [ ] ⛔ **BLOQUEANTE** — Demote the development account if it is not the
+      doctor (set its role back to `patient`, or delete it). Otherwise it is
+      a second login with full access to every record.
+- [ ] ⛔ Re-check Auth → Phone: **"Confirm phone" is still ON**.
+- [ ] Residual personal data: check `auth.audit_log_entries`,
+      `net._http_response` (webhook responses), the Edge Function logs and
+      the Twilio message logs; purge them if they hold patient phones or
+      names.
+- [ ] Register the real inventory stock (purchase with cost, or adjustment).
+- [ ] Read-only smoke checks: the doctor logs in; agenda, patients, finance
+      and inventory are empty; the opening hours in Ajustes are right.
+- [ ] Only now, if the clinic takes online bookings: turn doctor-only mode
+      OFF in the app.
+
+**Possible future hardening (not in place):** Supabase stores the sign-in
+method of each session in `auth.mfa_amr_claims`; `current_patient_id()` could
+additionally require an OTP sign-in there. It was not added because its
+behavior on this Auth version is unverified and a wrong check would lock real
+patients out. Revisit it with a test project first.

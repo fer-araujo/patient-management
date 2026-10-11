@@ -42,6 +42,23 @@
 begin;
 
 -- -----------------------------------------------------------------------------
+-- Since migration 27, doctor-only mode also closes every patient READ
+-- (current_patient_id() is NULL while it is on). This check needs patient
+-- sessions, so the mode is turned off INSIDE this transaction; the ROLLBACK
+-- restores it.
+-- -----------------------------------------------------------------------------
+do $$
+begin
+  if exists (
+    select 1 from information_schema.columns
+    where table_schema = 'public' and table_name = 'clinic_settings'
+      and column_name = 'doctor_only_mode'
+  ) then
+    execute 'update public.clinic_settings set doctor_only_mode = false where doctor_only_mode';
+  end if;
+end $$;
+
+-- -----------------------------------------------------------------------------
 -- 0. No outbound side effects, migration 24 applied
 -- -----------------------------------------------------------------------------
 do $$
@@ -127,6 +144,11 @@ begin
      null, 'body-check-admin-' || v_user_a || '@example.invalid', '{}'::jsonb, '{}'::jsonb, now(), now()),
     (v_user_p, '00000000-0000-0000-0000-000000000000', 'authenticated', 'authenticated',
      public.normalize_phone(v_phone), null, '{}'::jsonb, '{}'::jsonb, now(), now());
+
+  -- Migration 27: a patient session needs an auth user whose phone was
+  -- confirmed by Auth (phone_confirmed_at). Harmless before migration 27.
+  update auth.users set phone_confirmed_at = now()
+   where id in (v_user_p) and phone is not null;
 
   update public.profiles set role = 'doctor' where id = v_user_d;
   update public.profiles set role = 'admin'  where id = v_user_a;

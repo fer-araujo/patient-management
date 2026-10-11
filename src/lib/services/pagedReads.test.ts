@@ -132,17 +132,18 @@ describe("paged reads (fetchAllRows call sites)", () => {
   });
 
   it("getFinanceSummary reads every payment and every purchase", async () => {
-    supabaseMock.onFrom(
-      "payments",
-      ...pagesOf((i) => ({
-        id: `pay${i}`,
-        status: "paid",
-        amount_charged: "1.00",
-        list_price: "1.00",
-        created_at: "2026-09-10T16:00:00+00:00",
-        services: { name: "Consulta" },
-      })),
-    );
+    // The admin's payments come from get_finance_payments (migration 26).
+    const paymentPages = pagesOf((i) => ({
+      id: `pay${i}`,
+      status: "paid",
+      method: "cash",
+      amount_charged: "1.00",
+      list_price: "1.00",
+      created_at: "2026-09-10T16:00:00+00:00",
+      service_name: "Consulta",
+    }));
+    let call = 0;
+    supabaseMock.onRpc("get_finance_payments", () => paymentPages[call++]);
     supabaseMock.onFrom(
       "inventory_movements",
       ...pagesOf((i) => ({
@@ -158,7 +159,7 @@ describe("paged reads (fetchAllRows call sites)", () => {
 
     expect(summary.income).toBe(1002);
     expect(summary.expenses).toBe(1002);
-    expect(ranges("payments")).toEqual(EXPECTED_RANGES);
+    expect(ranges("rpc:get_finance_payments")).toEqual(EXPECTED_RANGES);
     expect(ranges("inventory_movements")).toEqual(EXPECTED_RANGES);
   });
 });

@@ -79,10 +79,13 @@ export const FinanceTab = ({ showPatientNames = false }: FinanceTabProps) => {
       getFinanceSummary(range.from, range.to, {
         includePatientNames: showPatientNames,
       }),
-      // Only its monthly totals are used, so no names are ever requested.
+      // Only its monthly totals are used. Same source as the period: the
+      // doctor reads the table, the admin get_finance_payments().
       chartFrom === range.from
         ? null
-        : getFinanceSummary(chartFrom, range.to),
+        : getFinanceSummary(chartFrom, range.to, {
+            includePatientNames: showPatientNames,
+          }),
       // Its own failure only empties its card; the cash view still loads.
       getProcedureProfit(range.from, range.to).catch((error: unknown) => {
         console.error(

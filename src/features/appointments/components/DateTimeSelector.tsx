@@ -34,8 +34,20 @@ import {
 
 const SHORT_DAY_NAMES = ["Dom", "Lun", "Mar", "Mié", "Jue", "Vie", "Sáb"];
 
-/** How far ahead the booking calendar may be browsed. */
+/**
+ * How far ahead the booking calendar may be browsed and booked. Must match
+ * booking_horizon_days() in the database (migration 27), which refuses a
+ * patient booking on or after clinic today + this many days.
+ */
 const AVAILABILITY_WINDOW_DAYS = 120;
+
+/** "YYYY-MM-DD" of the last clinic day a patient may book. */
+const lastBookableDate = (): string => {
+  const [year, month, day] = nowInClinic().isoDate.split("-").map(Number);
+  return new Date(Date.UTC(year, month - 1, day + AVAILABILITY_WINDOW_DAYS - 1))
+    .toISOString()
+    .slice(0, 10);
+};
 
 interface Props {
   serviceId: string;
@@ -466,6 +478,7 @@ export const DateTimeSelector = ({
         onClose={() => setIsCalendarOpen(false)}
         selectedDate={selectedDay}
         minDate={visibleStartDate} // Usamos visibleStartDate como mínimo para no permitir viajar al pasado
+        maxDate={lastBookableDate()}
         onSelectDate={handleModalDateSelect}
         isDateDisabled={isDateDisabled}
       />

@@ -1,7 +1,11 @@
 import { describe, expect, it } from "vitest";
 import { supabaseMock } from "../../test/supabaseMock";
 import { withBrowserTimeZone } from "../../test/browserTimeZone";
-import { fetchMyAppointments, fetchMyCarePlan } from "./patientDashboardService";
+import {
+  fetchMyAppointments,
+  fetchMyCarePlan,
+  fetchMyProfile,
+} from "./patientDashboardService";
 
 const row = (id: string, startTime: string) => ({
   id,
@@ -43,7 +47,41 @@ describe("fetchMyAppointments", () => {
   });
 });
 
+describe("fetchMyProfile", () => {
+  it("reads the profile through get_my_profile, never the patients table", async () => {
+    supabaseMock.onRpc("get_my_profile", {
+      data: {
+        id: "p1",
+        first_name: "Ana",
+        last_name: "Pérez",
+        phone: "+528112345678",
+        email: null,
+      },
+    });
+
+    await expect(fetchMyProfile()).resolves.toMatchObject({
+      id: "p1",
+      firstName: "Ana",
+      lastName: "Pérez",
+      phone: "+528112345678",
+    });
+    expect(supabaseMock.rpcCalls("get_my_profile")).toHaveLength(1);
+    expect(supabaseMock.queries("patients")).toHaveLength(0);
+  });
+
+  it("fails with a Spanish message when there is no record for the session", async () => {
+    await expect(fetchMyProfile()).rejects.toThrow("No se pudo cargar el perfil del paciente.");
+  });
+});
+
 describe("fetchMyCarePlan", () => {
+  it("asks only for finalized prescriptions", async () => {
+    await fetchMyCarePlan("p1");
+
+    const query = supabaseMock.queries("prescriptions")[0];
+    expect(query.args("not")).toEqual(["finalized_at", "is", null]);
+  });
+
   it("shows an old item, a structured item and a whitespace-only item sensibly", async () => {
     supabaseMock.onFrom("prescriptions", {
       data: {

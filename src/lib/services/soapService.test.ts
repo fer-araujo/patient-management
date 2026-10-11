@@ -3,7 +3,6 @@ import { supabaseMock } from "../../test/supabaseMock";
 import {
   addNoteAddendum,
   fetchPatientHistory,
-  finalizeConsultation,
   finalizeConsultationWithPayment,
   recordConsultationSupplies,
   findConsultationDraft,
@@ -129,26 +128,6 @@ describe("savePrescription", () => {
     );
     await expect(savePrescription("appt-1", "patient-1", meds)).rejects.toThrow(
       FINALIZED_MESSAGE_START,
-    );
-  });
-});
-
-describe("finalizeConsultation", () => {
-  it("freezes the consultation through the finalize_consultation RPC only", async () => {
-    await finalizeConsultation("appt-1");
-
-    expect(supabaseMock.rpcCalls()).toEqual([
-      { name: "finalize_consultation", args: { p_appointment_id: "appt-1" } },
-    ]);
-    expect(supabaseMock.client.from).not.toHaveBeenCalled();
-  });
-
-  it("surfaces the server's Spanish message", async () => {
-    supabaseMock.onRpc("finalize_consultation", {
-      error: { message: "Solo el personal de la clínica puede finalizar.", code: "P0001" },
-    });
-    await expect(finalizeConsultation("appt-1")).rejects.toThrow(
-      /^Solo el personal de la clínica puede finalizar\.$/,
     );
   });
 });

@@ -78,13 +78,11 @@ describe("fetchDoctorAppointments suppliesPending", () => {
 });
 
 describe("createAppointment", () => {
-  it("books through staff_create_appointment with the service id and the UTC start", async () => {
-    supabaseMock.onFrom("services", { data: { id: "srv-toxina" } });
+  it("books through staff_create_appointment with the catalog service id and the UTC start", async () => {
+    await createAppointment("p-marta", "srv-toxina", "16 oct 2026", "08:00 AM");
 
-    await createAppointment("p-marta", "Toxina", "16 oct 2026", "08:00 AM");
-
-    const lookup = supabaseMock.queries("services")[0];
-    expect(lookup.args("eq")).toEqual(["name", "Toxina"]);
+    // The id comes from the active catalog: no lookup by name.
+    expect(supabaseMock.queries("services")).toHaveLength(0);
     expect(supabaseMock.rpcCalls()).toEqual([
       {
         name: "staff_create_appointment",
@@ -100,34 +98,34 @@ describe("createAppointment", () => {
     expect(supabaseMock.queries("appointments")).toHaveLength(0);
   });
 
-  it("does not call the RPC when the service is not in the catalog", async () => {
-    supabaseMock.onFrom("services", { data: null, error: { message: "0 rows" } });
-
-    await expect(
-      createAppointment("p-marta", "Borrado", "16 oct 2026", "08:00 AM"),
-    ).rejects.toThrow("El servicio seleccionado no existe en el catálogo.");
-    expect(supabaseMock.rpcCalls()).toHaveLength(0);
-  });
-
   it("passes the server's Spanish message through for a P0001 error", async () => {
-    supabaseMock.onFrom("services", { data: { id: "srv-toxina" } });
     supabaseMock.onRpc("staff_create_appointment", {
       error: { code: "P0001", message: SLOT_TAKEN },
     });
 
     await expect(
-      createAppointment("p-marta", "Toxina", "16 oct 2026", "08:00 AM"),
+      createAppointment("p-marta", "srv-toxina", "16 oct 2026", "08:00 AM"),
     ).rejects.toThrow(SLOT_TAKEN);
   });
 
+  it("passes through the refusal of a service that is not in the catalog", async () => {
+    const missing = "El servicio seleccionado no existe en el catálogo.";
+    supabaseMock.onRpc("staff_create_appointment", {
+      error: { code: "P0001", message: missing },
+    });
+
+    await expect(
+      createAppointment("p-marta", "srv-borrado", "16 oct 2026", "08:00 AM"),
+    ).rejects.toThrow(missing);
+  });
+
   it("hides any other error behind a generic message", async () => {
-    supabaseMock.onFrom("services", { data: { id: "srv-toxina" } });
     supabaseMock.onRpc("staff_create_appointment", {
       error: { code: "42501", message: "permission denied for function staff_create_appointment" },
     });
 
     await expect(
-      createAppointment("p-marta", "Toxina", "16 oct 2026", "08:00 AM"),
+      createAppointment("p-marta", "srv-toxina", "16 oct 2026", "08:00 AM"),
     ).rejects.toThrow(/^No se pudo agendar la cita\.$/);
   });
 });

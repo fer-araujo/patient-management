@@ -133,6 +133,11 @@ begin
     (v_user_p, '00000000-0000-0000-0000-000000000000', 'authenticated', 'authenticated',
      public.normalize_phone(v_phone), null, '{}'::jsonb, '{}'::jsonb, now(), now());
 
+  -- Migration 27: a patient session needs an auth user whose phone was
+  -- confirmed by Auth (phone_confirmed_at). Harmless before migration 27.
+  update auth.users set phone_confirmed_at = now()
+   where id in (v_user_p) and phone is not null;
+
   update public.profiles set role = 'doctor' where id = v_user_d;
   update public.profiles set role = 'admin'  where id = v_user_a;
 
