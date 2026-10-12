@@ -31,12 +31,13 @@ export const NextAppointmentCard = ({
           <div>
             <h3 className="text-2xl font-bold text-brand-dark">{service}</h3>
             <div className="flex items-center gap-2 mt-2 text-brand-gray font-medium">
-              <div className="w-6 h-6 rounded-full bg-brand-light/50 flex items-center justify-center text-brand-primary overflow-hidden">
-                <img
-                  src="https://ui-avatars.com/api/?name=Carmen+Torres&background=07A996&color=fff"
-                  alt="Dra"
-                  className="w-full h-full object-cover"
-                />
+              {/* Local initials instead of a third-party avatar service: no
+                  request leaves the app, and the CSP keeps img-src tight. */}
+              <div
+                aria-hidden="true"
+                className="w-6 h-6 rounded-full bg-brand-primary flex items-center justify-center text-white text-[10px] font-bold overflow-hidden"
+              >
+                CT
               </div>
               <span>{doctor}</span>
             </div>

@@ -269,7 +269,7 @@ const buildDocument = (data: MyDataExport): string => {
     <h1>Mis datos personales</h1>
     <p>Dra. Carmen Torres · Generado el ${escapeHtml(formatDate(data.generated_at, true))}</p>
   </div>
-  <button onclick="window.print()">Imprimir o guardar PDF</button>
+  <button type="button" data-action="print">Imprimir o guardar PDF</button>
 </header>
 ${profile}${clinicalHistory}${appointments}${clinicalSummary}${medications}${measurements}${files}${consents}${requests}
 </body>
@@ -294,4 +294,10 @@ export const renderMyDataDocument = (win: Window, data: MyDataExport): void => {
   win.document.open();
   win.document.write(buildDocument(data));
   win.document.close();
+  // The blank window inherits this app's Content-Security-Policy, which
+  // blocks inline event handlers (no 'unsafe-inline' in script-src). The
+  // print button is wired from here instead of an onclick attribute.
+  win.document
+    .querySelector<HTMLButtonElement>('button[data-action="print"]')
+    ?.addEventListener("click", () => win.print());
 };

@@ -47,7 +47,9 @@ const baseExport = (over: Partial<MyDataExport> = {}): MyDataExport => ({
 /** Renders into a fake window and returns the written HTML. */
 const render = (data: MyDataExport): string => {
   const write = vi.fn();
-  const win = { document: { open: vi.fn(), write, close: vi.fn() } } as unknown as Window;
+  const win = {
+    document: { open: vi.fn(), write, close: vi.fn(), querySelector: () => null },
+  } as unknown as Window;
   renderMyDataDocument(win, data);
   expect(write).toHaveBeenCalledTimes(1);
   return write.mock.calls[0][0] as string;
@@ -310,5 +312,50 @@ describe("openMyDataWindow", () => {
   it("returns null when the popup is blocked", () => {
     vi.spyOn(window, "open").mockReturnValue(null);
     expect(openMyDataWindow()).toBeNull();
+  });
+});
+
+describe("renderMyDataDocument print button", () => {
+  /**
+   * The written HTML is parsed into a real DOM so the listener the opener
+   * attaches can be clicked, as it would be in the new window.
+   */
+  const renderIntoDom = () => {
+    let doc: Document | null = null;
+    const print = vi.fn();
+    const win = {
+      print,
+      document: {
+        open: vi.fn(),
+        write: (html: string) => {
+          doc = parse(html);
+        },
+        close: vi.fn(),
+        querySelector: (selector: string) => doc!.querySelector(selector),
+      },
+    } as unknown as Window;
+    renderMyDataDocument(win, baseExport());
+    return { doc: doc! as Document, print };
+  };
+
+  it("has no inline event handlers or scripts the inherited CSP would block", () => {
+    const { doc } = renderIntoDom();
+    const inlineHandlers = [...doc.querySelectorAll("*")].flatMap((el) =>
+      el.getAttributeNames().filter((name) => name.toLowerCase().startsWith("on")),
+    );
+
+    expect(inlineHandlers).toEqual([]);
+    expect(doc.querySelectorAll("script")).toHaveLength(0);
+    expect(doc.documentElement.outerHTML).not.toMatch(/javascript:/i);
+  });
+
+  it("prints the window when the button is clicked", () => {
+    const { doc, print } = renderIntoDom();
+    const button = doc.querySelector<HTMLButtonElement>('button[data-action="print"]');
+
+    expect(button?.textContent).toBe("Imprimir o guardar PDF");
+    expect(print).not.toHaveBeenCalled();
+    button!.click();
+    expect(print).toHaveBeenCalledTimes(1);
   });
 });
