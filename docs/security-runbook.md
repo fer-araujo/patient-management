@@ -2505,6 +2505,107 @@ grant execute on function public.my_fn(args) to authenticated;  -- only if the A
 - It turns doctor-only mode off and disables the WhatsApp and overlap
   triggers inside its own transaction.
 
+## Migration 30 — Past visits from the paper agenda
+
+**File:** `supabase/migrations/20261012100000_past_visits.sql`. Run it after
+migration 29. Idempotent.
+
+- Expected: one notice starting with `Migration 30 PASSED`.
+- A failure raises `Migration 30 FAILED: …` and nothing is changed.
+
+**Paste order (frontend last):**
+
+1. `supabase/migrations/20261012100000_past_visits.sql` (migration 30)
+2. `supabase/tests/past_visits_check.sql`
+3. Re-run `admin_payments_check.sql`, `finance_check.sql`,
+   `service_supplies_check.sql` and `staff_booking_check.sql` (finance now
+   reads `received_at`; the overlap trigger changed).
+4. Deploy the edge function:
+   `supabase functions deploy notify-appointment --no-verify-jwt`.
+5. Deploy the frontend (it calls `staff_record_past_visit` and reads
+   `payments.received_at`, which exist only after migration 30).
+
+What it changes:
+
+- **`staff_record_past_visit(patient, service, start, payment_status, amount,
+  method, note)`** ("Registrar cita pasada" in the Calendario). Only the
+  doctor (`is_staff()`) can use it. It is not blocked by doctor-only mode.
+  - It refuses:
+    - a start in the future;
+    - an archived or anonymized patient;
+    - an inactive service;
+    - an overlap with a visit that is not cancelled or rejected, or with a
+      block.
+  - It takes the booking lock and inserts the appointment as `completed`.
+  - It records the charge through `record_payment()`, so the same rules
+    apply: paid needs more than 0 and a method, and a courtesy is stored as
+    0 with no method. The appointment and the charge are saved in one
+    transaction.
+  - It writes no clinical note and moves no stock, so the calendar shows no
+    "Sin insumos" flag for these visits.
+- **`assert_slot_free_at(…, p_allow_past)`** holds the slot rules.
+  `assert_slot_free()` calls it with the past refused, so every existing
+  booking path behaves as before.
+- **`appointments_prevent_overlap`** allows a past start only for the
+  `completed` row that `staff_record_past_visit()` is inserting (the
+  transaction-local `app.recording_past_visit` flag holds its id). Every
+  other insert, move or re-activation into the past is still refused.
+- **`payments.received_at`** is the date a charge counts in Finanzas.
+  - Existing rows were backfilled from `created_at`.
+  - The `payments_guard_received_at` trigger owns the column: it is `now()`
+    on insert, or the visit's start for a past visit. Any change afterwards
+    is refused (`42501`), even from the SQL editor.
+  - "Editar cobro" keeps the original date.
+- **Finanzas** counts by `received_at`: `get_finance_payments()`,
+  `get_procedure_profit()` and the doctor's direct read. The output column
+  of `get_finance_payments()` is still named `created_at` (its return type
+  did not change) and now holds `received_at`.
+- **`notify-appointment`** sends nothing for an INSERT with status
+  `completed`, so a past visit never notifies, even with the WhatsApp
+  trigger on.
+- `staff_record_past_visit` is on the reviewed SECURITY DEFINER list of
+  migration 30's gate. It was also added to the lists of migrations 26–29, so
+  re-running any of them still passes.
+
+**Rollback:**
+
+1. Revoke the RPC: `revoke execute on function
+   public.staff_record_past_visit(uuid, uuid, timestamptz, text, numeric,
+   text, text) from authenticated;`
+2. Re-run the `appointments_prevent_overlap` block of migration 21.
+3. To count by the recording date again, re-run the `get_finance_payments`
+   block of migration 26 and the `get_procedure_profit` block of migration 22.
+
+`received_at` and its trigger can stay.
+
+**Maintainers:** re-running migration 06, 21, 22 or 26 restores the older
+body of the function it defines. Run migration 30 again afterwards.
+Migration 19's gate looks for the busy rule inside `assert_slot_free()`. That
+rule now lives in `assert_slot_free_at()`, so re-running 19 on its own fails
+its gate and changes nothing (19 has nothing left to apply after 21).
+
+## Past visits check — `supabase/tests/past_visits_check.sql`
+
+- Expected: one notice starting with `PAST VISITS CHECK PASSED`.
+- `ABORTED` means one of these, and nothing was proven:
+  - migration 30 is missing;
+  - there is no free weekday 100–118 days ago or 100–118 days ahead.
+- With a throwaway doctor, admin and patients, it proves:
+  - a paid visit and a courtesy are recorded as `completed`, each with its
+    charge dated to the visit, in doctor-only mode, with no note or
+    supplies;
+  - Finanzas counts them on that day and not today;
+  - a future start, an overlap with a visit or with a block, archived and
+    anonymized patients, and a paid visit with 0 or without a method are
+    refused, with no appointment left behind;
+  - the admin cannot call the RPC;
+  - direct past inserts and moves are still refused by the trigger;
+  - `authenticated` cannot insert or update `payments`, and the owner cannot
+    change `received_at`;
+  - a correction keeps `received_at`, and a normal charge gets `now()`.
+- It turns doctor-only mode on and disables the WhatsApp trigger inside its
+  own transaction. The overlap trigger stays on.
+
 ## When a WhatsApp is sent (`notify-appointment`)
 
 The `whatsapp_notifications` trigger posts EVERY insert and update of
@@ -2520,6 +2621,7 @@ Deno API) and is unit-tested in
 | --- | --- | --- |
 | INSERT | status `confirmed` (booked by the clinic) | "AGENDADA y CONFIRMADA" |
 | INSERT | status `pending` (online request) | "Recibimos tu solicitud" (not sent in doctor-only mode) |
+| INSERT | status `completed` (a past visit from the paper agenda, migration 30) | none |
 | INSERT | any other status | none |
 | UPDATE | status changed to `cancelled` | "CANCELADA" (by the patient or by the clinic, from `updated_by`) |
 | UPDATE | `start_time` changed and status is `pending` or `confirmed` | "REPROGRAMADA" |
@@ -2576,6 +2678,20 @@ and the audit log numbering restart at 1. **Doctor-only mode is left ON**, so
 the patient portal stays closed until the manual checklist is done; turn it
 off in the app only after that, and only if the clinic takes online bookings.
 
+**Scope** (`set local app.reset_scope`): `'test_data'` (default) is what is
+described above. `'everything'` makes the clinic start completely empty: it
+also deletes the service catalog, every inventory item and the supplies per
+service, sets the opening hours (`clinic_settings.schedule`) to NULL (the app
+and the booking RPCs use the default hours until the doctor saves hers) and
+sets `prescriber_profile.signature_path` to NULL (the rest of the prescriber
+data is kept; she draws a new signature before issuing prescriptions). It
+keeps every profile, the single `clinic_settings` row with doctor-only mode
+ON, and the other prescriber fields, and verifies all of that before
+committing. Its phrase is `BORRAR TODO <N> FILAS`, so a `test_data` dry run
+can never authorize it. With `'everything'`, the old signature PNGs in the
+`prescriber_private` bucket must be deleted by hand afterwards (the checklist
+says so); with `'test_data'`, do NOT touch that bucket.
+
 **When:** only at the end of Phase 8, after the OWASP ZAP scan and its fixes,
 **after the QA walkthrough** (`docs/qa-walkthrough.md`) and right before
 announcing the app to patients. After the reset, only read-only smoke checks
@@ -2597,7 +2713,9 @@ consultation after the reset is real data.
    Write down the backup time. **No backup = NO-GO:** if the plan has no
    restorable backup, the `pg_dump` is mandatory; if neither is possible, do
    not run the reset.
-2. **Dry run:** paste the file as it is. Nothing changes. It checks every
+2. **Dry run:** paste the file as it is (for `'everything'`, change only the
+   `app.reset_scope` line). Nothing changes. It prints the scope it evaluated
+   and checks every
    precondition the real run needs (known tables, the eight protective
    triggers present and enabled, ownership of every table and sequence it
    touches, a doctor profile, one `clinic_settings` row), and prints the rows
@@ -2607,11 +2725,13 @@ consultation after the reset is real data.
    ```sql
    set local app.confirm_reset  = 'BORRAR <N> FILAS';  -- exactly as the dry run printed it
    set local app.reset_deadline = 'YYYY-MM-DD';        -- today, at most 7 days ahead
+   set local app.reset_scope    = 'test_data';         -- or 'everything', the same as the dry run
    set local app.reset_mode     = 'execute';
    ```
    The script locks the tables (waiting at most 5 seconds; otherwise it
-   aborts), counts again and aborts if the count is not exactly N. An old
-   copy cannot delete data added later, and an expired deadline aborts.
+   aborts), counts again and aborts if the phrase is not exactly the one for
+   this scope and count. An old copy cannot delete data added later, a
+   phrase from another scope never matches, and an expired deadline aborts.
 4. Expected: `RESET DONE: …`. Any `RESET ABORTED` / `RESET FAILED` means the
    transaction rolled back and nothing changed.
 5. Do the manual checklist it prints (see the checklist below).
@@ -2620,7 +2740,8 @@ Safety built in: it refuses to run if `public` has a table it does not know;
 it disables only the eight protective triggers it must bypass, re-enables
 them before the end, and verifies that every trigger enabled at the start is
 enabled again; it verifies that the wiped tables are empty, the kept tables
-are unchanged (except stock and the mode), the mode is ON and both sequences
+are unchanged (except stock and the mode; with `'everything'`, also the
+schedule and the signature path, both checked NULL), the mode is ON and both sequences
 restart at 1. Storage files are not deleted by SQL: Supabase blocks direct
 deletes on `storage.objects` and they would leave orphaned files, so the
 script lists them for the dashboard.

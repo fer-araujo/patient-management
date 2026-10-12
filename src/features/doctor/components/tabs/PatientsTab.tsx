@@ -8,16 +8,13 @@ import {
   ShieldAlert,
   Archive,
   FileText,
-  UserPlus,
   UserPen,
   ShieldCheck,
   Scale,
-  Calendar as CalendarIcon,
 } from "lucide-react";
 import { Button } from "../../../../components/ui/Button";
 import { DataGrid, type ColumnDef } from "../../../../components/ui/DataGrid";
 import { Modal } from "../../../../components/ui/Modal";
-import { Dropdown } from "../../../../components/ui/Dropdown";
 import {
   TOUCH_ICON_BUTTON,
   TOUCH_LABELED_BUTTON,
@@ -25,49 +22,15 @@ import {
   PHONE_LABELED_BUTTON,
   PHONE_ONLY_LABEL,
 } from "../../../../components/ui/touchTargets";
-import { DatePicker } from "../../../../components/ui/DatePicker";
 import {
   fetchPatients,
   updatePatientStatus,
-  createPatient,
-  PATIENT_GENDERS,
   type DashboardPatient,
 } from "../../../../lib/services/patientService";
 import { ConsultationWorkspace } from "../ConsultationWorkspace";
 import { EditPatientModal } from "../modals/EditPatientModal";
-import { PaperConsentCheckbox } from "../PaperConsentCheckbox";
-import { recordInPersonConsent } from "../../../../lib/services/privacyService";
+import { NewPatientModal } from "../modals/NewPatientModal";
 import { toast } from "react-hot-toast/headless";
-
-const GENDER_OPTIONS = [
-  { label: "Sin especificar", value: "" },
-  ...PATIENT_GENDERS.map((g) => ({ label: g, value: g })),
-];
-
-const EMPTY_NEW_PATIENT = {
-  firstName: "",
-  lastName: "",
-  phone: "",
-  email: "",
-  dob: "",
-  gender: "",
-};
-
-const todayIso = (): string => {
-  const now = new Date();
-  const pad = (n: number) => String(n).padStart(2, "0");
-  return `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`;
-};
-
-/** "12 de marzo de 1955", built as a local date (not UTC midnight). */
-const formatBirthDate = (iso: string): string => {
-  const [y, m, d] = iso.split("-").map(Number);
-  return new Date(y, m - 1, d).toLocaleDateString("es-MX", {
-    day: "numeric",
-    month: "long",
-    year: "numeric",
-  });
-};
 
 export const PatientsTab = () => {
   const [patients, setPatients] = useState<DashboardPatient[]>([]);
@@ -89,30 +52,6 @@ export const PatientsTab = () => {
   const [isSubmitting, setIsSubmitting] = useState(false);
 
   const [isNewPatientModalOpen, setIsNewPatientModalOpen] = useState(false);
-  const [isNewDobPickerOpen, setIsNewDobPickerOpen] = useState(false);
-  const [newPatientForm, setNewPatientForm] = useState(EMPTY_NEW_PATIENT);
-  const [newPatientPaperConsent, setNewPatientPaperConsent] = useState(false);
-
-  /**
-   * "Nuevo Paciente" open/close. A ticked "firmó el aviso" box never carries
-   * over: it is cleared on every open and close. The typed fields survive an
-   * accidental close (backdrop or X) and are only cleared when the doctor
-   * discards them (Cancelar) or the patient is created.
-   */
-  const openNewPatientModal = () => {
-    setNewPatientPaperConsent(false);
-    setIsNewDobPickerOpen(false);
-    setIsNewPatientModalOpen(true);
-  };
-  const closeNewPatientModal = () => {
-    setNewPatientPaperConsent(false);
-    setIsNewDobPickerOpen(false);
-    setIsNewPatientModalOpen(false);
-  };
-  const resetNewPatientModal = () => {
-    setNewPatientForm(EMPTY_NEW_PATIENT);
-    closeNewPatientModal();
-  };
 
   const loadData = async () => {
     setIsLoading(true);
@@ -171,47 +110,6 @@ export const PatientsTab = () => {
           ? err.message
           : "Ocurrió un error al cambiar el estatus del paciente.",
       );
-    } finally {
-      setIsSubmitting(false);
-    }
-  };
-
-  const handleCreatePatient = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!newPatientForm.firstName || !newPatientForm.lastName) return;
-    try {
-      setIsSubmitting(true);
-      const patientId = await createPatient(
-        newPatientForm.firstName,
-        newPatientForm.lastName,
-        newPatientForm.phone,
-        newPatientForm.email,
-        newPatientForm.dob,
-        newPatientForm.gender,
-      );
-      if (newPatientPaperConsent) {
-        try {
-          if (!patientId) throw new Error("Missing patient id.");
-          await recordInPersonConsent(patientId);
-        } catch (consentErr: unknown) {
-          console.error(
-            "Error al registrar el aviso firmado:",
-            consentErr instanceof Error ? consentErr.message : consentErr,
-          );
-          // The record exists; the doctor can tick the box again in "Editar datos".
-          toast.error(
-            "El paciente se creó, pero no se registró el aviso de privacidad. Márcalo de nuevo en Editar datos.",
-          );
-        }
-      }
-      await loadData();
-      resetNewPatientModal();
-    } catch (err: unknown) {
-      console.error(
-        "Error al crear paciente:",
-        err instanceof Error ? err.message : err,
-      );
-      toast.error("No se pudo crear el paciente. Intenta nuevamente.");
     } finally {
       setIsSubmitting(false);
     }
@@ -443,7 +341,7 @@ export const PatientsTab = () => {
             />
           </div>
           <Button type="button"
-            onClick={openNewPatientModal}
+            onClick={() => setIsNewPatientModalOpen(true)}
             className="w-full sm:w-auto py-2.5 px-5 rounded-xl bg-brand-primary hover:bg-brand-dark text-white font-bold shadow-md cursor-pointer border-none"
           >
             + Nuevo Paciente
@@ -466,174 +364,11 @@ export const PatientsTab = () => {
         )}
       </div>
 
-      <Modal
+      <NewPatientModal
         isOpen={isNewPatientModalOpen}
-        onClose={closeNewPatientModal}
-        title="Nuevo Paciente"
-        icon={<UserPlus className="w-5 h-5 text-brand-primary" />}
-        hideFooter={true}
-      >
-        <form onSubmit={handleCreatePatient} className="space-y-4 pb-2">
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-            <div className="space-y-1.5">
-              <label className="text-sm font-bold text-brand-dark">
-                Nombre(s) <span className="text-rose-500">*</span>
-              </label>
-              <input
-                required
-                type="text"
-                value={newPatientForm.firstName}
-                onChange={(e) =>
-                  setNewPatientForm({
-                    ...newPatientForm,
-                    firstName: e.target.value,
-                  })
-                }
-                className="w-full p-3 border border-slate-200 rounded-xl focus:outline-none focus:border-brand-primary text-sm"
-                placeholder="Ej. María"
-              />
-            </div>
-            <div className="space-y-1.5">
-              <label className="text-sm font-bold text-brand-dark">
-                Apellidos <span className="text-rose-500">*</span>
-              </label>
-              <input
-                required
-                type="text"
-                value={newPatientForm.lastName}
-                onChange={(e) =>
-                  setNewPatientForm({
-                    ...newPatientForm,
-                    lastName: e.target.value,
-                  })
-                }
-                className="w-full p-3 border border-slate-200 rounded-xl focus:outline-none focus:border-brand-primary text-sm"
-                placeholder="Ej. González"
-              />
-            </div>
-          </div>
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-            <div className="space-y-1.5">
-              <label className="text-sm font-bold text-brand-dark">
-                Teléfono
-              </label>
-              <input
-                type="tel"
-                value={newPatientForm.phone}
-                onChange={(e) =>
-                  setNewPatientForm({
-                    ...newPatientForm,
-                    phone: e.target.value,
-                  })
-                }
-                className="w-full p-3 border border-slate-200 rounded-xl focus:outline-none focus:border-brand-primary text-sm"
-                placeholder="10 dígitos"
-              />
-            </div>
-            <div className="space-y-1.5">
-              <label className="text-sm font-bold text-brand-dark">
-                Email{" "}
-                <span className="text-brand-gray font-normal text-xs">
-                  (Opcional)
-                </span>
-              </label>
-              <input
-                type="email"
-                value={newPatientForm.email}
-                onChange={(e) =>
-                  setNewPatientForm({
-                    ...newPatientForm,
-                    email: e.target.value,
-                  })
-                }
-                className="w-full p-3 border border-slate-200 rounded-xl focus:outline-none focus:border-brand-primary text-sm"
-                placeholder="correo@ejemplo.com"
-              />
-            </div>
-          </div>
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-            {/* Same DatePicker trigger as the patient edit modal, opened on
-                past years since this is a birth date. */}
-            <div className="w-full relative">
-              <label
-                htmlFor="new-patient-dob"
-                className="text-brand-dark font-bold text-sm mb-2 block"
-              >
-                Fecha de nacimiento
-              </label>
-              <button
-                id="new-patient-dob"
-                type="button"
-                onClick={() => setIsNewDobPickerOpen(true)}
-                className="w-full px-4 py-3 bg-white border border-slate-200 rounded-xl text-sm font-medium text-left transition-all flex items-center justify-between group cursor-pointer"
-              >
-                <span
-                  className={
-                    newPatientForm.dob ? "text-brand-dark" : "text-brand-gray"
-                  }
-                >
-                  {newPatientForm.dob
-                    ? formatBirthDate(newPatientForm.dob)
-                    : "Seleccionar..."}
-                </span>
-                <CalendarIcon className="w-4 h-4 text-brand-gray group-hover:text-brand-primary transition-colors" />
-              </button>
-              <div className="absolute top-full mt-2 z-50">
-                <DatePicker
-                  isOpen={isNewDobPickerOpen}
-                  onClose={() => setIsNewDobPickerOpen(false)}
-                  selectedDate={newPatientForm.dob || null}
-                  maxDate={todayIso()}
-                  allowPast
-                  title="Fecha de nacimiento"
-                  onSelectDate={(d) => {
-                    setNewPatientForm({ ...newPatientForm, dob: d });
-                    setIsNewDobPickerOpen(false);
-                  }}
-                />
-              </div>
-            </div>
-            <div className="w-full">
-              <label
-                id="new-patient-gender-label"
-                className="text-brand-dark font-bold text-sm mb-2 block"
-              >
-                Género
-              </label>
-              <Dropdown
-                options={GENDER_OPTIONS}
-                value={newPatientForm.gender}
-                onChange={(val) =>
-                  setNewPatientForm({ ...newPatientForm, gender: val })
-                }
-                labelledBy="new-patient-gender-label"
-                className="py-0! text-sm!"
-              />
-            </div>
-          </div>
-          <PaperConsentCheckbox
-            checked={newPatientPaperConsent}
-            onChange={setNewPatientPaperConsent}
-          />
-          <div className="pt-4 flex gap-3 border-t border-slate-100 mt-2 max-md:flex-col-reverse max-md:*:w-full max-md:*:flex-none">
-            <Button
-              type="button"
-              variant="outline"
-              onClick={resetNewPatientModal}
-              className="flex-1 py-3.5 rounded-xl cursor-pointer"
-            >
-              Cancelar
-            </Button>
-            <Button
-              type="submit"
-              disabled={isSubmitting}
-              className="flex-1 py-3.5 rounded-xl bg-brand-primary hover:bg-brand-dark text-white border-none shadow-md cursor-pointer disabled:opacity-50 font-bold"
-            >
-              {isSubmitting ? "Guardando..." : "Crear Expediente"}
-            </Button>
-          </div>
-        </form>
-      </Modal>
+        onClose={() => setIsNewPatientModalOpen(false)}
+        onCreated={loadData}
+      />
 
       <EditPatientModal
         isOpen={!!patientToEditId}

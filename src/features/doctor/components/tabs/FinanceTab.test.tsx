@@ -17,23 +17,24 @@ vi.mock("./FinanceChart", () => ({
 const PAYMENTS = [
   {
     id: "p1", status: "paid", amount_charged: "800.00", list_price: "800.00",
-    created_at: "2026-09-10T16:00:00+00:00",
+    received_at: "2026-09-10T16:00:00+00:00",
     services: { name: "Toxina" }, patients: { first_name: "Ana", last_name: "Pérez" },
   },
   {
     id: "p2", status: "courtesy", amount_charged: "0.00", list_price: "900.00",
-    created_at: "2026-09-13T16:00:00+00:00",
+    received_at: "2026-09-13T16:00:00+00:00",
     services: { name: "Valoración" }, patients: { first_name: "Eva", last_name: "Ruiz" },
   },
 ];
 // The same payments as get_finance_payments returns them to an admin
-// (migration 26): no patient, appointment or note.
+// (migration 26): no patient, appointment or note. Its created_at column
+// carries received_at since migration 30.
 const ADMIN_PAYMENTS = PAYMENTS.map((p) => ({
   id: p.id,
   status: p.status,
   amount_charged: p.amount_charged,
   list_price: p.list_price,
-  created_at: p.created_at,
+  created_at: p.received_at,
   method: p.status === "paid" ? "card" : null,
   service_name: p.services.name,
 }));
@@ -190,8 +191,8 @@ describe("FinanceTab", () => {
       .queries("payments")
       .filter((q) => q.args("range")?.[0] === 0);
     expect(firstPages.map((q) => q.args("gte"))).toEqual([
-      ["created_at", "2026-09-01T06:00:00.000Z"],
-      ["created_at", "2026-01-01T06:00:00.000Z"],
+      ["received_at", "2026-09-01T06:00:00.000Z"],
+      ["received_at", "2026-01-01T06:00:00.000Z"],
     ]);
   });
 

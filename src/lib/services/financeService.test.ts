@@ -140,7 +140,8 @@ type TableRow = {
   status: string;
   amount_charged: string;
   list_price: string | null;
-  created_at: string;
+  /** The payment date (migration 30); the RPC returns it as created_at. */
+  received_at: string;
   services?: { name: string } | null;
   /** Present on table rows; never copied to the RPC shape. */
   patients?: unknown;
@@ -151,7 +152,7 @@ const asRpcRows = (rows: TableRow[]) =>
     status: p.status,
     amount_charged: p.amount_charged,
     list_price: p.list_price,
-    created_at: p.created_at,
+    created_at: p.received_at,
     method: p.status === "paid" ? "cash" : null,
     service_name: p.services?.name ?? null,
   }));
@@ -160,22 +161,22 @@ describe("getFinanceSummary", () => {
   const payments = [
     {
       id: "p1", status: "paid", amount_charged: "800.00", list_price: "800.00",
-      created_at: "2026-09-10T16:00:00+00:00",
+      received_at: "2026-09-10T16:00:00+00:00",
       services: { name: "Toxina" }, patients: { first_name: "Ana", last_name: "Pérez" },
     },
     {
       id: "p2", status: "paid", amount_charged: "500.00", list_price: "900.00",
-      created_at: "2026-09-12T16:00:00+00:00",
+      received_at: "2026-09-12T16:00:00+00:00",
       services: { name: "Valoración" }, patients: { first_name: "Luis", last_name: "Gómez" },
     },
     {
       id: "p3", status: "courtesy", amount_charged: "0.00", list_price: "900.00",
-      created_at: "2026-09-13T16:00:00+00:00",
+      received_at: "2026-09-13T16:00:00+00:00",
       services: { name: "Valoración" }, patients: { first_name: "Eva", last_name: "Ruiz" },
     },
     {
       id: "p4", status: "courtesy", amount_charged: "0.00", list_price: null,
-      created_at: "2026-09-14T16:00:00+00:00",
+      received_at: "2026-09-14T16:00:00+00:00",
       services: null, patients: null,
     },
   ];
@@ -216,8 +217,14 @@ describe("getFinanceSummary", () => {
     });
     // Doctor: the table read.
     const paymentsQuery = supabaseMock.queries("payments")[0];
-    expect(paymentsQuery.args("gte")).toEqual(["created_at", "2026-09-01T06:00:00.000Z"]);
-    expect(paymentsQuery.args("lt")).toEqual(["created_at", "2026-10-01T06:00:00.000Z"]);
+    expect(paymentsQuery.args("gte")).toEqual(["received_at", "2026-09-01T06:00:00.000Z"]);
+    expect(paymentsQuery.args("lt")).toEqual(["received_at", "2026-10-01T06:00:00.000Z"]);
+    expect(paymentsQuery.allArgs("order")).toEqual([
+      ["received_at", { ascending: true }],
+      ["id", { ascending: true }],
+    ]);
+    expect(String(paymentsQuery.args("select")?.[0])).toMatch(/\breceived_at\b/);
+    expect(String(paymentsQuery.args("select")?.[0])).not.toMatch(/\bcreated_at\b/);
 
     const purchasesQuery = supabaseMock.queries("inventory_movements")[0];
     expect(purchasesQuery.args("eq")).toEqual(["type", "purchase"]);
@@ -231,7 +238,7 @@ describe("getFinanceSummary", () => {
         {
           // 30 Sep 21:00 in Monterrey, already 1 Oct in UTC.
           id: "late", status: "paid", amount_charged: "300.00", list_price: null,
-          created_at: "2026-10-01T03:00:00+00:00", services: { name: "Toxina" }, patients: null,
+          received_at: "2026-10-01T03:00:00+00:00", services: { name: "Toxina" }, patients: null,
         },
       ]),
     });
@@ -258,15 +265,15 @@ describe("getFinanceSummary", () => {
         {
           id: "c-sep", status: "courtesy", amount_charged: "0.00", list_price: "900.00",
           // 30 Sep 22:00 in Monterrey, already 1 Oct in UTC.
-          created_at: "2026-10-01T04:00:00+00:00", services: { name: "Valoración" }, patients: null,
+          received_at: "2026-10-01T04:00:00+00:00", services: { name: "Valoración" }, patients: null,
         },
         {
           id: "c-oct", status: "courtesy", amount_charged: "0.00", list_price: "450.50",
-          created_at: "2026-10-10T16:00:00+00:00", services: { name: "Plasma" }, patients: null,
+          received_at: "2026-10-10T16:00:00+00:00", services: { name: "Plasma" }, patients: null,
         },
         {
           id: "paid-oct", status: "paid", amount_charged: "1000.00", list_price: "1000.00",
-          created_at: "2026-10-11T16:00:00+00:00", services: { name: "Toxina" }, patients: null,
+          received_at: "2026-10-11T16:00:00+00:00", services: { name: "Toxina" }, patients: null,
         },
       ]),
     });
@@ -286,6 +293,27 @@ describe("getFinanceSummary", () => {
     expect(summary.expenses).toBe(200);
     // Profit is income minus supply spending only: 1000 - 200.
     expect(summary.profit).toBe(800);
+  });
+
+  it("counts a past visit on the day it happened (received_at), not the day it was typed", async () => {
+    supabaseMock.onFrom("payments", {
+      data: [
+        {
+          // Transcribed on 12 Oct from the paper agenda; the visit was 15 Jul.
+          id: "past", status: "paid", amount_charged: "1200.00", list_price: "1200.00",
+          received_at: "2026-07-15T16:00:00+00:00",
+          services: { name: "Toxina" }, patients: { first_name: "Ana", last_name: "Pérez" },
+        },
+      ],
+    });
+
+    const summary = await getFinanceSummary("2026-07-01", "2026-11-01", {
+      includePatientNames: true,
+    });
+
+    expect(summary.monthly.find((m) => m.month === "2026-07")?.income).toBe(1200);
+    expect(summary.monthly.find((m) => m.month === "2026-10")?.income).toBe(0);
+    expect(summary.movements[0].date).toBe("2026-07-15T16:00:00+00:00");
   });
 
   it("lists movements newest first with signed amounts", async () => {
@@ -355,7 +383,7 @@ describe("getFinanceSummary", () => {
       data: [
         {
           id: "p9", status: "paid", amount_charged: "5500.00", list_price: "5500.00",
-          created_at: "2026-09-10T16:00:00+00:00",
+          received_at: "2026-09-10T16:00:00+00:00",
           services: { name: "Hilos Tensores" }, patients: null,
         },
       ],
@@ -373,7 +401,7 @@ describe("getFinanceSummary", () => {
     const paidRows = (start: number, count: number) =>
       Array.from({ length: count }, (_, i) => ({
         id: `p${start + i}`, status: "paid", amount_charged: "10.00", list_price: "10.00",
-        created_at: "2026-09-10T16:00:00+00:00", services: { name: "Toxina" },
+        received_at: "2026-09-10T16:00:00+00:00", services: { name: "Toxina" },
       }));
     const purchaseRows = (start: number, count: number) =>
       Array.from({ length: count }, (_, i) => ({

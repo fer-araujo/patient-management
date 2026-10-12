@@ -241,14 +241,17 @@ interface PaymentSummaryRow {
   status: PaymentStatus;
   amount_charged: number | string;
   list_price: number | string | null;
-  created_at: string;
+  /** When the money counts (migration 30): the visit's date for a past visit. */
+  received_at: string;
   services: { name: string | null } | null;
   patients?: { first_name: string | null; last_name: string | null } | null;
 }
 
 /**
  * A payment as get_finance_payments returns it (migration 26): no patient,
- * appointment or note, only what the cash view needs.
+ * appointment or note, only what the cash view needs. Since migration 30 its
+ * created_at column carries payments.received_at (the name was kept so the
+ * function's return type did not change).
  */
 interface FinancePaymentRow {
   id: string;
@@ -266,7 +269,8 @@ interface SummaryPayment {
   status: PaymentStatus;
   amountCharged: number | string;
   listPrice: number | string | null;
-  createdAt: string;
+  /** The payment date (received_at). */
+  receivedAt: string;
   service: string | null;
   /** Empty unless the doctor asked for names. */
   patient: string;
@@ -285,7 +289,7 @@ export interface FinanceSummaryOptions {
 }
 
 const PAYMENT_COLUMNS =
-  "id, status, amount_charged, list_price, created_at, services ( name ), patients ( first_name, last_name )";
+  "id, status, amount_charged, list_price, received_at, services ( name ), patients ( first_name, last_name )";
 
 interface PurchaseRow {
   id: string;
@@ -302,8 +306,10 @@ const TOO_MANY_FINANCE_ROWS =
 
 /**
  * Income, supply spending and courtesies between two clinic-time dates
- * (`from` inclusive, `to` exclusive). Payments count on the day they were
- * recorded; expenses are the inventory purchases of the same range.
+ * (`from` inclusive, `to` exclusive). Payments count on the day the money
+ * was received (payments.received_at: the visit's day for a past visit
+ * transcribed from paper, otherwise the day it was recorded); expenses are
+ * the inventory purchases of the same range.
  */
 export const getFinanceSummary = async (
   from: string,
@@ -314,7 +320,7 @@ export const getFinanceSummary = async (
   const toUtc = dayStartUtc(to);
 
   // Paged: a single request stops at PostgREST's max_rows (1000) and the
-  // totals would be silently short. Ascending by creation, id as tiebreaker,
+  // totals would be silently short. Ascending by payment date, id as tiebreaker,
   // so the pages are stable; the movements are sorted below anyway. The
   // doctor reads the table; the admin (no names) reads the RPC, paged the
   // same way.
@@ -325,9 +331,9 @@ export const getFinanceSummary = async (
             supabase
               .from("payments")
               .select(PAYMENT_COLUMNS)
-              .gte("created_at", fromUtc)
-              .lt("created_at", toUtc)
-              .order("created_at", { ascending: true })
+              .gte("received_at", fromUtc)
+              .lt("received_at", toUtc)
+              .order("received_at", { ascending: true })
               .order("id", { ascending: true })
               .range(first, last)
               .returns<PaymentSummaryRow[]>(),
@@ -339,7 +345,7 @@ export const getFinanceSummary = async (
             status: p.status,
             amountCharged: p.amount_charged,
             listPrice: p.list_price,
-            createdAt: p.created_at,
+            receivedAt: p.received_at,
             service: p.services?.name ?? null,
             patient: [p.patients?.first_name, p.patients?.last_name]
               .filter(Boolean)
@@ -361,7 +367,7 @@ export const getFinanceSummary = async (
             status: p.status,
             amountCharged: p.amount_charged,
             listPrice: p.list_price,
-            createdAt: p.created_at,
+            receivedAt: p.created_at,
             service: p.service_name,
             patient: "",
           })),
@@ -420,12 +426,12 @@ export const getFinanceSummary = async (
       const listPrice = toNumber(p.listPrice);
       courtesyCount += 1;
       forgoneValue += listPrice;
-      const courtesyBucket = monthly.get(monthKeyOf(p.createdAt));
+      const courtesyBucket = monthly.get(monthKeyOf(p.receivedAt));
       if (courtesyBucket) courtesyBucket.courtesy += listPrice;
       movements.push({
         id: p.id,
         kind: "courtesy",
-        date: p.createdAt,
+        date: p.receivedAt,
         concept,
         amount: 0,
       });
@@ -434,7 +440,7 @@ export const getFinanceSummary = async (
 
     const amount = toNumber(p.amountCharged);
     income += amount;
-    const bucket = monthly.get(monthKeyOf(p.createdAt));
+    const bucket = monthly.get(monthKeyOf(p.receivedAt));
     if (bucket) bucket.income += amount;
 
     const entry = byService.get(service) ?? { service, total: 0, count: 0 };
@@ -442,7 +448,7 @@ export const getFinanceSummary = async (
     entry.count += 1;
     byService.set(service, entry);
 
-    movements.push({ id: p.id, kind: "payment", date: p.createdAt, concept, amount });
+    movements.push({ id: p.id, kind: "payment", date: p.receivedAt, concept, amount });
   }
 
   for (const m of purchases) {
@@ -528,7 +534,7 @@ interface ProcedureProfitRow {
 }
 
 /**
- * Charged vs. supply cost per service for the payments recorded between two
+ * Charged vs. supply cost per service for the payments received between two
  * clinic-time dates (`from` inclusive, `to` exclusive), the same rule as the
  * cash view. The server does the join (get_procedure_profit, migration 22);
  * it returns no patient data, so the admin can see it too.

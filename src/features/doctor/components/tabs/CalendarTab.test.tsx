@@ -836,3 +836,45 @@ describe("CalendarTab on a phone (440 px)", () => {
     expect(screen.getByRole("button", { name: "Día" })).toHaveAttribute("aria-pressed", "false");
   });
 });
+
+describe("CalendarTab past visits from the paper agenda", () => {
+  beforeEach(() => stubBookingCatalog());
+
+  it('"Registrar cita pasada" opens the form and a saved visit reloads the calendar', async () => {
+    setNow(new Date(2026, 9, 15, 11, 10));
+    supabaseMock.onRpc("staff_record_past_visit", { data: "a-past" });
+    const { user, onDataChange } = renderTab([]);
+
+    await user.click(screen.getByRole("button", { name: "Registrar cita pasada" }));
+    expect(await screen.findByRole("heading", { name: "Registrar cita pasada" })).toBeInTheDocument();
+    await screen.findByRole("combobox", { name: "Paciente" });
+
+    await pickDropdownOption(user, "Paciente", "Marta López");
+    await pickDropdownOption(user, "Servicio", "Toxina · $1,000.00");
+    await pickDropdownOption(user, "Hora", "09:00 AM");
+    await user.click(screen.getByRole("radio", { name: "Efectivo" }));
+    await user.click(screen.getByRole("button", { name: "Guardar cita pasada" }));
+
+    await waitFor(() => expect(onDataChange).toHaveBeenCalledTimes(1));
+    expect(supabaseMock.lastRpc("staff_record_past_visit")?.args).toMatchObject({
+      p_patient_id: "p-marta",
+      p_service_id: "srv-toxina",
+      p_start_time: "2026-10-15T15:00:00.000Z",
+      p_amount: 1000,
+    });
+    // "Agendar Cita" (future bookings only) was never used.
+    expect(supabaseMock.rpcCalls("staff_create_appointment")).toHaveLength(0);
+    await waitFor(() =>
+      expect(screen.queryByRole("heading", { name: "Registrar cita pasada" })).toBeNull(),
+    );
+  });
+
+  it("shows a past visit (completed, no note) in the calendar without the red supplies flag", () => {
+    setNow(new Date(2026, 9, 16, 12, 0));
+    renderTab([appt({ status: "completed", suppliesPending: false })]);
+
+    const card = screen.getByText("Ana Pérez").closest("div.cursor-pointer")!;
+    expect(card).not.toHaveClass("bg-rose-50");
+    expect(screen.queryByText("Sin insumos")).toBeNull();
+  });
+});

@@ -32,6 +32,19 @@ describe("decideNotification", () => {
       ).toBe("request_received");
     });
 
+    it("never notifies a past visit transcribed from paper (inserted as completed)", () => {
+      expect(
+        decideNotification({
+          type: "INSERT",
+          record: { status: "completed", start_time: "2026-07-01T16:00:00+00:00" },
+        }),
+      ).toBeNull();
+      // Even an earlier-today visit recorded minutes after it happened.
+      expect(
+        decideNotification({ type: "INSERT", record: { status: "completed", start_time: START } }),
+      ).toBeNull();
+    });
+
     it.each(["completed", "cancelled", "rejected"])(
       "sends nothing for a row inserted as %s",
       (status) => {

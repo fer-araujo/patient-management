@@ -18,6 +18,8 @@ export interface BookableService {
   id: string;
   name: string;
   durationMins: number;
+  /** Catalog list price (MXN), or null when the service has none. */
+  price: number | null;
 }
 
 export type BookingCatalogStatus = "idle" | "loading" | "ready" | "error";
@@ -71,7 +73,12 @@ export const toBookablePatientOptions = (
 export const toBookableServices = (services: ClinicService[]): BookableService[] =>
   services
     .filter((s) => s.isActive)
-    .map((s) => ({ id: s.id, name: s.name, durationMins: s.durationMins }))
+    .map((s) => ({
+      id: s.id,
+      name: s.name,
+      durationMins: s.durationMins,
+      price: s.price,
+    }))
     .sort((a, b) => a.name.localeCompare(b.name, "es", { sensitivity: "base" }));
 
 /**
