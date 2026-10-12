@@ -175,3 +175,20 @@ Sobre HSTS: la cabecera incluye `includeSubDomains; preload`. Mientras no se
 inscriba el dominio en <https://hstspreload.org>, `preload` no tiene efecto.
 Inscribirlo es opcional y **difícil de deshacer**: obliga a que todos los
 subdominios funcionen por HTTPS durante meses. Hacerlo solo si se está seguro.
+
+## Resultado de OWASP ZAP (2026-10-12)
+
+Escaneo automático (spider tradicional + ajax) contra
+`https://patient-management-amber.vercel.app`, sin atacar el dominio de Supabase.
+**0 altos, 2 medios, 0 bajos, 3 informativos.**
+
+| Alerta | Riesgo | Decisión |
+|---|---|---|
+| CSP: `style-src 'unsafe-inline'` | Medio | **Aceptado.** react-hot-toast inserta una etiqueta `<style>` en tiempo de ejecución y la ventana de impresión de "Mis datos" usa estilos en línea; un hosting estático no puede dar un *nonce*. Los scripts siguen sin `unsafe-inline` ni `unsafe-eval`, que es lo que protege contra XSS. |
+| Cross-Domain Misconfiguration (`Access-Control-Allow-Origin: *`) | Medio | **Corregido.** Era el valor por defecto de Vercel en archivos estáticos (sin datos). Ahora `vercel.json` lo fija al dominio de la app. Si se agrega un dominio propio, cambiar ese valor. |
+| Re-examine Cache-control | Info | Intencional: `index.html` con `no-cache` (siempre la versión nueva) y `/assets/*` inmutable. |
+| Retrieved from Cache / Modern Web Application | Info | Informativos, sin acción. |
+
+Alcance: la app es una SPA con login, así que ZAP solo ve la página pública
+(6 rutas). La seguridad de los datos (API de Supabase, RLS, funciones) se cubrió
+con las dos auditorías de código y los scripts de verificación de las migraciones.
