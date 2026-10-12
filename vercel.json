@@ -50,6 +50,10 @@
         {
           "key": "Content-Security-Policy",
           "value": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data: blob: https://kgropfyhbdetxdzauviq.supabase.co; connect-src 'self' https://kgropfyhbdetxdzauviq.supabase.co wss://kgropfyhbdetxdzauviq.supabase.co; frame-src 'self' https://kgropfyhbdetxdzauviq.supabase.co; worker-src 'self'; object-src blob:; base-uri 'self'; form-action 'self'; frame-ancestors 'none'; upgrade-insecure-requests"
+        },
+        {
+          "key": "Access-Control-Allow-Origin",
+          "value": "https://patient-management-amber.vercel.app"
         }
       ]
     },
