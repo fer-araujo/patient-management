@@ -23,6 +23,21 @@
 --   profiles row (doctor, admin and the test patients' profiles, which go away
 --   with their auth users; see the manual checklist).
 --
+-- Scope (app.reset_scope):
+--   'test_data'  (default) exactly what is described above.
+--   'everything' the clinic starts completely empty. ALSO DELETES every row
+--                of service_supplies, services (the catalog) and inventory
+--                (every item). ALSO RESETS clinic_settings.schedule to NULL
+--                (the app and the booking RPCs fall back to the default
+--                hours until the doctor saves hers) and
+--                prescriber_profile.signature_path to NULL (the doctor draws
+--                a new signature; the old PNGs in Storage prescriber_private
+--                must be deleted by hand, see the checklist). KEEPS the
+--                profiles, the single clinic_settings row (doctor-only mode
+--                ON) and every other prescriber_profile field. The
+--                confirmation phrase becomes 'BORRAR TODO <N> FILAS', so a
+--                phrase from a 'test_data' dry run can never run 'everything'.
+--
 -- Protection it bypasses, and only inside this transaction:
 --   append-only and integrity triggers that refuse DELETE (audit_log,
 --   consents, clinical_note_addenda, inventory_movements, clinical_notes,
@@ -31,19 +46,24 @@
 --   before the end, and the script verifies that every trigger that was
 --   enabled at the start is enabled again. ALTER TABLE is transactional: if
 --   anything fails, Postgres rolls back the deletes AND the trigger changes.
+--   Scope 'everything' needs no extra one: nothing refuses deleting the
+--   catalog, and prescriber_profile_guard only stamps updated_at.
 --
 -- How to run:
---   1. DRY RUN (default, changes nothing): paste the file as it is. It checks
---      every precondition the real run needs (so a clean dry run predicts a
---      clean run), and prints the rows it would delete, the exact
---      confirmation phrase, the Storage files and the test auth users.
---   2. EXECUTE, right after a fresh dry run:
---        set local app.reset_mode     = 'execute';
---        set local app.confirm_reset  = 'BORRAR <N> FILAS';  -- N from the dry run
+--   1. DRY RUN (default, changes nothing): paste the file as it is (set
+--      app.reset_scope first if you want 'everything'). It checks every
+--      precondition the real run needs (so a clean dry run predicts a clean
+--      run), and prints the scope it evaluated, the rows it would delete, the
+--      exact confirmation phrase, the Storage files and the test auth users.
+--   2. EXECUTE, right after a fresh dry run of the SAME scope:
+--        set local app.confirm_reset  = 'BORRAR <N> FILAS';  -- exactly as the dry run printed it
 --        set local app.reset_deadline = 'YYYY-MM-DD';        -- today .. today + 7
---      The script counts again after locking the tables: if the count is not
---      exactly N (new data appeared), or the deadline is missing, invalid or
---      past, it aborts before touching a row.
+--        set local app.reset_scope    = 'test_data';         -- or 'everything', as in the dry run
+--        set local app.reset_mode     = 'execute';
+--      The script counts again after locking the tables: if the phrase is not
+--      exactly the one for this scope and count (new data appeared, or the
+--      scope differs from the dry run), or the deadline is missing, invalid
+--      or past, it aborts before touching a row.
 --   3. Expected output: a notice starting with "RESET DRY RUN" or
 --      "RESET DONE". Any "RESET ABORTED/FAILED: ..." error means nothing
 --      was changed (the transaction rolls back).
@@ -58,18 +78,24 @@ begin;
 -- Fail fast instead of waiting behind the app's open transactions.
 set local lock_timeout = '5s';
 
--- STEP 1: the confirmation phrase, 'BORRAR <N> FILAS' with N from the dry run
+-- STEP 1: the confirmation phrase exactly as the dry run printed it,
+--         'BORRAR <N> FILAS' ('BORRAR TODO <N> FILAS' for scope everything)
 --         (ignored by a dry run).
 set local app.confirm_reset = '';
 -- STEP 2: the last day this edited copy may run, 'YYYY-MM-DD' (execute only).
 set local app.reset_deadline = '';
--- STEP 3: 'dry_run' (only reports) or 'execute' (deletes).
+-- STEP 3: 'test_data' (patients and test records only) or 'everything' (also
+--         the catalog, the inventory items, the opening hours and the
+--         doctor's signature). Use the same scope in the dry run and the run.
+set local app.reset_scope = 'test_data';
+-- STEP 4: 'dry_run' (only reports) or 'execute' (deletes).
 set local app.reset_mode = 'dry_run';
 
 do $$
 declare
   v_tz       constant text := 'America/Monterrey';
   v_mode     text := coalesce(current_setting('app.reset_mode', true), '');
+  v_scope    text := coalesce(current_setting('app.reset_scope', true), '');
   v_confirm  text := btrim(coalesce(current_setting('app.confirm_reset', true), ''));
   v_deadline_text text := btrim(coalesce(current_setting('app.reset_deadline', true), ''));
   v_deadline date;
@@ -86,6 +112,13 @@ declare
     'services', 'inventory', 'service_supplies', 'clinic_settings',
     'prescriber_profile', 'profiles'
   ];
+  -- Scope 'everything' also empties these (filled below; children first:
+  -- service_supplies references both services and inventory).
+  v_extra    text[] := '{}';
+  -- Tables whose content must not change at all (fingerprinted). Scope
+  -- 'everything' narrows it to profiles; prescriber_profile and
+  -- clinic_settings are then checked column by column.
+  v_untouched text[] := array['services', 'service_supplies', 'prescriber_profile', 'profiles'];
   -- table.trigger: the protections that refuse the deletes (and the stock reset).
   v_guards   text[] := array[
     'audit_log.audit_log_block_update_delete',
@@ -115,12 +148,27 @@ declare
   v_seq      record;
   v_audit_seq text;
   v_checklist text;
+  v_n_sigs   bigint;
+  v_n_prescriber bigint;
+  v_n_stock  bigint;
+  v_has_sig  boolean;
+  v_has_sched boolean;
+  v_scope_notes text;
 begin
   -- -------------------------------------------------------------------------
   -- 0. Preconditions (BOTH modes: a clean dry run predicts a clean run)
   -- -------------------------------------------------------------------------
   if v_mode not in ('dry_run', 'execute') then
     raise exception 'RESET ABORTED: app.reset_mode must be dry_run or execute (got "%"). Nothing was changed.', v_mode;
+  end if;
+
+  if v_scope not in ('test_data', 'everything') then
+    raise exception 'RESET ABORTED: app.reset_scope must be test_data or everything (got "%"). Nothing was changed.', v_scope;
+  end if;
+
+  if v_scope = 'everything' then
+    v_extra := array['service_supplies', 'services', 'inventory'];
+    v_untouched := array['profiles'];
   end if;
 
   -- Every public table must be known: a new table added after this script
@@ -158,7 +206,9 @@ begin
     into v_bad
   from pg_class c
   where c.oid in (
-          select to_regclass('public.' || t) from unnest(v_wipe || array['inventory', 'clinic_settings']) as t
+          select to_regclass('public.' || t)
+          from unnest(v_wipe || v_extra || array['inventory', 'clinic_settings']
+                      || case when v_scope = 'everything' then array['prescriber_profile'] else '{}'::text[] end) as t
           union all select to_regclass('public.prescription_folio_seq')
           union all select to_regclass(v_audit_seq)
         )
@@ -221,20 +271,29 @@ begin
          || ' public.patient_files, public.consents, public.arco_requests, public.appointments,'
          || ' public.patients, public.blocked_slots, public.audit_log,'
          || ' public.inventory, public.clinic_settings in access exclusive mode';
+    if v_scope = 'everything' then
+      execute 'lock table public.service_supplies, public.services, public.prescriber_profile'
+           || ' in access exclusive mode';
+    end if;
   end if;
 
   -- -------------------------------------------------------------------------
   -- 2. Report (both modes; in execute mode, counted under the locks)
   -- -------------------------------------------------------------------------
-  foreach v_tbl in array v_wipe loop
+  foreach v_tbl in array v_wipe || v_extra loop
     execute format('select count(*) from public.%I', v_tbl) into v_count;
     v_total := v_total + v_count;
     v_report := v_report || format(E'\n  %-24s %s', v_tbl, v_count);
   end loop;
-  v_phrase := format('BORRAR %s FILAS', v_total);
+  -- The scope is part of the phrase: a phrase from a 'test_data' dry run
+  -- never matches an 'everything' run, even when the extra tables are empty.
+  v_phrase := case v_scope
+                when 'everything' then format('BORRAR TODO %s FILAS', v_total)
+                else format('BORRAR %s FILAS', v_total)
+              end;
 
   if v_mode = 'execute' and v_confirm <> v_phrase then
-    raise exception 'RESET ABORTED: app.confirm_reset must be exactly "%" (the count right now). Got "%". If the number changed, data was added since the dry run: run the dry run again and check why. Nothing was changed.',
+    raise exception 'RESET ABORTED: app.confirm_reset must be exactly "%" (the count right now). Got "%". If the number changed, data was added since the dry run; if the words differ, the scope differs from the dry run. Run the dry run again and check why. Nothing was changed.',
       v_phrase, v_confirm;
   end if;
 
@@ -252,25 +311,49 @@ begin
   left join public.profiles p on p.id = u.id
   where coalesce(p.role, 'patient') not in ('doctor', 'admin');
 
+  select count(*) into v_n_sigs from storage.objects where bucket_id = 'prescriber_private';
+  select count(*), coalesce(bool_or(signature_path is not null), false)
+    into v_n_prescriber, v_has_sig
+  from public.prescriber_profile;
+  select coalesce(bool_or(schedule is not null), false) into v_has_sched from public.clinic_settings;
+  select count(*) into v_n_stock from public.inventory where stock_quantity is distinct from 0;
+
   -- -------------------------------------------------------------------------
   -- 3. Delete (execute only)
   -- -------------------------------------------------------------------------
   if v_mode = 'execute' then
     -- Fingerprints of what must stay untouched.
-    foreach v_tbl in array array['services', 'service_supplies', 'prescriber_profile', 'profiles'] loop
+    foreach v_tbl in array v_untouched loop
       execute format(
         'select md5(coalesce(string_agg(to_jsonb(t)::text, '','' order by to_jsonb(t)::text), '''')) from public.%I t',
         v_tbl) into v_bad;
       v_before := v_before || jsonb_build_object(v_tbl, v_bad);
     end loop;
-    select md5(coalesce(string_agg((to_jsonb(t) - 'stock_quantity' - 'last_restock_date')::text, ','
-                                   order by (to_jsonb(t) - 'stock_quantity' - 'last_restock_date')::text), ''))
-      into v_bad from public.inventory t;
-    v_before := v_before || jsonb_build_object('inventory', v_bad);
-    select md5(coalesce(string_agg((to_jsonb(t) - 'doctor_only_mode')::text, ','
-                                   order by (to_jsonb(t) - 'doctor_only_mode')::text), ''))
-      into v_bad from public.clinic_settings t;
-    v_before := v_before || jsonb_build_object('clinic_settings', v_bad);
+    if v_scope = 'test_data' then
+      select md5(coalesce(string_agg((to_jsonb(t) - 'stock_quantity' - 'last_restock_date')::text, ','
+                                     order by (to_jsonb(t) - 'stock_quantity' - 'last_restock_date')::text), ''))
+        into v_bad from public.inventory t;
+      v_before := v_before || jsonb_build_object('inventory', v_bad);
+      select md5(coalesce(string_agg((to_jsonb(t) - 'doctor_only_mode')::text, ','
+                                     order by (to_jsonb(t) - 'doctor_only_mode')::text), ''))
+        into v_bad from public.clinic_settings t;
+      v_before := v_before || jsonb_build_object('clinic_settings', v_bad);
+    else
+      -- Everything but the mode and the schedule.
+      select md5(coalesce(string_agg((to_jsonb(t) - 'doctor_only_mode' - 'schedule')::text, ','
+                                     order by (to_jsonb(t) - 'doctor_only_mode' - 'schedule')::text), ''))
+        into v_bad from public.clinic_settings t;
+      v_before := v_before || jsonb_build_object('clinic_settings', v_bad);
+      -- Everything but the signature and updated_at (prescriber_profile_guard
+      -- sets updated_at = now() on every update; it keeps updated_by when
+      -- there is no JWT, as in the SQL editor).
+      select md5(coalesce(string_agg((to_jsonb(t) - 'signature_path' - 'updated_at')::text, ','
+                                     order by (to_jsonb(t) - 'signature_path' - 'updated_at')::text), ''))
+        into v_bad from public.prescriber_profile t;
+      v_before := v_before || jsonb_build_object('prescriber_profile', v_bad);
+      select count(*) into v_count from public.prescriber_profile;
+      v_before := v_before || jsonb_build_object('prescriber_profile_rows', v_count);
+    end if;
     select count(*) into v_count from storage.objects where bucket_id = 'prescriber_private';
     v_before := v_before || jsonb_build_object('prescriber_private_objects', v_count);
 
@@ -289,11 +372,14 @@ begin
       v_disabled := v_disabled || v_guard;
     end loop;
 
-    foreach v_tbl in array v_wipe loop
+    -- v_extra (scope 'everything') goes after v_wipe: the stock movements,
+    -- appointments and payments that reference the catalog are gone by then.
+    foreach v_tbl in array v_wipe || v_extra loop
       -- "where true": pg-safeupdate (if loaded) refuses a DELETE without WHERE.
       execute format('delete from public.%I where true', v_tbl);
     end loop;
 
+    -- Scope 'everything' emptied inventory, so this touches no row there.
     update public.inventory
        set stock_quantity = 0,
            last_restock_date = null
@@ -302,10 +388,21 @@ begin
     -- The portal stays closed until the manual checklist is done.
     update public.clinic_settings set doctor_only_mode = true where not doctor_only_mode;
 
+    if v_scope = 'everything' then
+      -- NULL = no saved hours: settingsService and get_clinic_schedule() /
+      -- assert_patient_booking_window() fall back to DEFAULT_SCHEDULE.
+      update public.clinic_settings set schedule = null where schedule is not null;
+      -- The check constraint allows NULL; prescriber_profile_guard only
+      -- stamps updated_at (it refuses nothing). The PNGs stay in Storage
+      -- until they are deleted by hand (checklist).
+      update public.prescriber_profile set signature_path = null where signature_path is not null;
+    end if;
+
     -- ALTER SEQUENCE / ALTER TABLE are transactional (a failure below undoes them).
     execute 'alter sequence public.prescription_folio_seq restart';
 
-    -- The audit rows written by the deletes above, then its numbering.
+    -- The audit rows written by the deletes and updates above (including the
+    -- catalog, clinic_settings and prescriber_profile ones), then its numbering.
     delete from public.audit_log where true;
     execute 'alter table public.audit_log alter column id restart';
 
@@ -317,33 +414,57 @@ begin
     -- -----------------------------------------------------------------------
     -- 4. Verify; any mismatch raises and rolls EVERYTHING back
     -- -----------------------------------------------------------------------
-    foreach v_tbl in array v_wipe loop
+    foreach v_tbl in array v_wipe || v_extra loop
       execute format('select count(*) from public.%I', v_tbl) into v_count;
       if v_count <> 0 then
         raise exception 'RESET FAILED: public.% still has % row(s). Everything was rolled back.', v_tbl, v_count;
       end if;
     end loop;
 
-    foreach v_tbl in array array['services', 'service_supplies', 'prescriber_profile', 'profiles'] loop
+    foreach v_tbl in array v_untouched loop
       execute format(
         'select md5(coalesce(string_agg(to_jsonb(t)::text, '','' order by to_jsonb(t)::text), '''')) from public.%I t',
         v_tbl) into v_bad;
       v_after := v_after || jsonb_build_object(v_tbl, v_bad);
     end loop;
-    select md5(coalesce(string_agg((to_jsonb(t) - 'stock_quantity' - 'last_restock_date')::text, ','
-                                   order by (to_jsonb(t) - 'stock_quantity' - 'last_restock_date')::text), ''))
-      into v_bad from public.inventory t;
-    v_after := v_after || jsonb_build_object('inventory', v_bad);
-    select md5(coalesce(string_agg((to_jsonb(t) - 'doctor_only_mode')::text, ','
-                                   order by (to_jsonb(t) - 'doctor_only_mode')::text), ''))
-      into v_bad from public.clinic_settings t;
-    v_after := v_after || jsonb_build_object('clinic_settings', v_bad);
+    if v_scope = 'test_data' then
+      select md5(coalesce(string_agg((to_jsonb(t) - 'stock_quantity' - 'last_restock_date')::text, ','
+                                     order by (to_jsonb(t) - 'stock_quantity' - 'last_restock_date')::text), ''))
+        into v_bad from public.inventory t;
+      v_after := v_after || jsonb_build_object('inventory', v_bad);
+      select md5(coalesce(string_agg((to_jsonb(t) - 'doctor_only_mode')::text, ','
+                                     order by (to_jsonb(t) - 'doctor_only_mode')::text), ''))
+        into v_bad from public.clinic_settings t;
+      v_after := v_after || jsonb_build_object('clinic_settings', v_bad);
+    else
+      select md5(coalesce(string_agg((to_jsonb(t) - 'doctor_only_mode' - 'schedule')::text, ','
+                                     order by (to_jsonb(t) - 'doctor_only_mode' - 'schedule')::text), ''))
+        into v_bad from public.clinic_settings t;
+      v_after := v_after || jsonb_build_object('clinic_settings', v_bad);
+      select md5(coalesce(string_agg((to_jsonb(t) - 'signature_path' - 'updated_at')::text, ','
+                                     order by (to_jsonb(t) - 'signature_path' - 'updated_at')::text), ''))
+        into v_bad from public.prescriber_profile t;
+      v_after := v_after || jsonb_build_object('prescriber_profile', v_bad);
+      select count(*) into v_count from public.prescriber_profile;
+      v_after := v_after || jsonb_build_object('prescriber_profile_rows', v_count);
+    end if;
     select count(*) into v_count from storage.objects where bucket_id = 'prescriber_private';
     v_after := v_after || jsonb_build_object('prescriber_private_objects', v_count);
 
     if v_after is distinct from v_before then
       raise exception 'RESET FAILED: a table that must stay untouched changed (before %, after %). Everything was rolled back.',
         v_before, v_after;
+    end if;
+
+    if v_scope = 'everything' then
+      if (select count(*) from public.clinic_settings) <> 1
+         or exists (select 1 from public.clinic_settings where schedule is not null)
+         or public.get_clinic_schedule() <> '{}'::jsonb then
+        raise exception 'RESET FAILED: clinic_settings must keep exactly one row with schedule NULL. Everything was rolled back.';
+      end if;
+      if exists (select 1 from public.prescriber_profile where signature_path is not null) then
+        raise exception 'RESET FAILED: prescriber_profile.signature_path is not NULL. Everything was rolled back.';
+      end if;
     end if;
 
     if exists (select 1 from public.inventory where stock_quantity <> 0 or last_restock_date is not null) then
@@ -401,7 +522,15 @@ begin
     || E'\n      the deleted patients'' studies and consents. Deleting storage.objects rows by SQL'
     || E'\n      is blocked by Supabase and would leave the files orphaned in the object store,'
     || E'\n      so use the dashboard (select all > Delete) or the Storage API.'
-    || E'\n      Do NOT touch prescriber_private (the doctor''s signatures).'
+    || case v_scope
+         when 'everything' then
+              E'\n  [ ] Storage > prescriber_private: delete EVERY file (' || v_n_sigs || ' file(s) now). They are'
+           || E'\n      the old signatures; signature_path is now NULL and nothing references them.'
+           || E'\n      There is no delete policy on that bucket, so use the dashboard. Then the'
+           || E'\n      doctor draws a new signature in the app: prescriptions cannot be issued'
+           || E'\n      until she does.'
+         else E'\n      Do NOT touch prescriber_private (the doctor''s signatures).'
+       end
     || E'\n  [ ] Authentication > Users: delete the ' || v_n_users || ' test user(s) listed above (every'
     || E'\n      user that is not the doctor or the admin). Their profiles go with them.'
     || E'\n  [ ] Authentication > Sign In / Providers > Phone: remove every test phone number'
@@ -415,24 +544,44 @@ begin
     || E'\n      message logs; purge them if they hold patient phones or names.'
     || E'\n  [ ] Rotate WEBHOOK_SECRET (Edge Functions > Secrets) AND recreate the'
     || E'\n      whatsapp_notifications trigger with the new value (runbook step 8).'
-    || E'\n  [ ] Inventory: stock is 0. Register the real count of each item: "Compra" with'
-    || E'\n      its real cost (it counts as an expense this month) or "Ajuste" (no cost;'
-    || E'\n      the supplies show "sin costo" in Ganancia por procedimiento until the'
-    || E'\n      first purchase).'
+    || case v_scope
+         when 'everything' then
+              E'\n  [ ] The clinic is empty: the doctor saves her opening hours (until then the'
+           || E'\n      app and the booking RPCs use the default hours), creates the services, the'
+           || E'\n      inventory items with a "Compra" (real cost) or "Ajuste" for the real stock,'
+           || E'\n      and the supplies per service. Her prescriber data was kept.'
+         else
+              E'\n  [ ] Inventory: stock is 0. Register the real count of each item: "Compra" with'
+           || E'\n      its real cost (it counts as an expense this month) or "Ajuste" (no cost;'
+           || E'\n      the supplies show "sin costo" in Ganancia por procedimiento until the'
+           || E'\n      first purchase).'
+       end
     || E'\n  [ ] Doctor-only mode is ON. Turn it OFF in the app ONLY after every item above'
     || E'\n      is done, and only if the clinic will take online bookings.';
 
+  v_scope_notes := case v_scope
+    when 'everything' then format(
+      'clinic_settings.schedule to NULL (before: %s; the app falls back to its default hours), prescriber_profile.signature_path to NULL (%s; %s row(s), every other field kept), doctor-only mode to ON, prescription folio and audit_log id to 1. Storage prescriber_private: %s file(s) to delete by hand',
+      case when v_has_sched then 'saved hours' else 'already NULL' end,
+      case when v_has_sig then 'before: set' else 'already NULL' end,
+      v_n_prescriber, v_n_sigs)
+    else format(
+      'inventory stock of %s item(s) to 0, doctor-only mode to ON, prescription folio and audit_log id to 1',
+      v_n_stock)
+  end;
+
   if v_mode = 'dry_run' then
-    raise notice E'RESET DRY RUN: nothing was changed. All preconditions hold. Rows that WOULD be deleted (% in total):%\n\nTo execute, run a copy with:\n  set local app.reset_mode = ''execute'';\n  set local app.confirm_reset = ''%'';\n  set local app.reset_deadline = ''%'';   -- or a later date, at most 7 days ahead\n\nWould reset: inventory stock of % item(s) to 0, doctor-only mode to ON, prescription folio and audit_log id to 1.\n\nStorage clinical_records: % file(s) (first 200):\n    %\n\nTest auth users (not doctor/admin): %\n    %\n%',
-      v_total, v_report,
-      v_phrase, to_char(v_today, 'YYYY-MM-DD'),
-      (select count(*) from public.inventory where stock_quantity is distinct from 0),
+    raise notice E'RESET DRY RUN (scope %): nothing was changed. All preconditions hold. Rows that WOULD be deleted (% in total):%\n\nTo execute, run a copy with:\n  set local app.confirm_reset = ''%'';\n  set local app.reset_deadline = ''%'';   -- or a later date, at most 7 days ahead\n  set local app.reset_scope = ''%'';\n  set local app.reset_mode = ''execute'';\n\nWould reset: %.\n\nStorage clinical_records: % file(s) (first 200):\n    %\n\nTest auth users (not doctor/admin): %\n    %\n%',
+      v_scope, v_total, v_report,
+      v_phrase, to_char(v_today, 'YYYY-MM-DD'), v_scope,
+      v_scope_notes,
       v_n_files, coalesce(v_files, '(none)'),
       v_n_users, coalesce(v_users, '(none)'),
       v_checklist;
   else
-    raise notice E'RESET DONE: deleted % row(s):%\n\nInventory stock set to 0 on every item (the ledger is empty); doctor-only mode ON (the portal is closed); prescription folio and audit_log id restart at 1. Triggers disabled and re-enabled: %. Kept tables verified unchanged.\n\nStorage clinical_records still holds % file(s) (first 200):\n    %\n\nTest auth users still to delete: %\n    %\n%',
-      v_total, v_report,
+    raise notice E'RESET DONE (scope %): deleted % row(s):%\n\nReset: %. Triggers disabled and re-enabled: %. Kept data verified unchanged.\n\nStorage clinical_records still holds % file(s) (first 200):\n    %\n\nTest auth users still to delete: %\n    %\n%',
+      v_scope, v_total, v_report,
+      v_scope_notes,
       array_to_string(v_disabled, ', '),
       v_n_files, coalesce(v_files, '(none)'),
       v_n_users, coalesce(v_users, '(none)'),
