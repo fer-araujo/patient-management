@@ -36,3 +36,6 @@ graphify-out/
 /blob-report/
 /playwright/.cache/
 /e2e/.auth/
+
+# Vercel CLI project link (vercel link)
+.vercel
