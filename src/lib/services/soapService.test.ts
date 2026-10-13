@@ -3,7 +3,10 @@ import { supabaseMock } from "../../test/supabaseMock";
 import {
   addNoteAddendum,
   fetchPatientHistory,
+  closeClinicalNote,
+  fetchAppointmentNote,
   finalizeConsultationWithPayment,
+  isNoteAwaitingClose,
   recordConsultationSupplies,
   findConsultationDraft,
   savePrescription,
@@ -294,6 +297,9 @@ describe("fetchPatientHistory", () => {
       vitalSigns: { bp_sys: 120, bp_dia: 80 },
       authorName: "Laura Garza",
       finalizedAt: "2026-09-20T17:00:00Z",
+      // Rows read before migration 31 have neither marker.
+      consultationFinalizedAt: null,
+      recordedLate: false,
       addenda: [
         { id: "ad-1", noteId: "note-1", body: "Corrección", authorName: "Laura Garza" },
       ],
@@ -364,6 +370,8 @@ describe("findConsultationDraft", () => {
     createdAt: "2026-09-20T16:00:00Z",
     authorName: null,
     finalizedAt: null,
+    consultationFinalizedAt: null,
+    recordedLate: false,
     addenda: [],
     ...over,
   });
@@ -457,5 +465,99 @@ describe("recordConsultationSupplies", () => {
     await expect(recordConsultationSupplies("appt-9", [])).rejects.toThrow(
       "No se pudieron registrar los insumos. Intenta de nuevo.",
     );
+  });
+});
+
+describe("open clinical notes (migration 31)", () => {
+  const raw = (over: Record<string, unknown> = {}) => ({
+    id: "note-1",
+    appointment_id: "appt-1",
+    patient_id: "patient-1",
+    subjective: "S",
+    objective: null,
+    analysis: null,
+    plan: null,
+    prognosis: null,
+    vital_signs: null,
+    author_id: "doc-1",
+    created_at: "2026-10-12T16:00:00Z",
+    finalized_at: null,
+    consultation_finalized_at: "2026-10-12T17:00:00Z",
+    recorded_late: true,
+    ...over,
+  });
+
+  it("maps the consultation marker and the late-entry flag of each note", async () => {
+    supabaseMock.onFrom("clinical_notes", { data: [raw()] });
+    supabaseMock.onFrom("prescriptions", { data: [] });
+
+    const history = await fetchPatientHistory("patient-1");
+
+    expect(history.notes[0]).toMatchObject({
+      finalizedAt: null,
+      consultationFinalizedAt: "2026-10-12T17:00:00Z",
+      recordedLate: true,
+    });
+  });
+
+  it("an open note waits to be closed only after Finalizar Consulta or a past visit", () => {
+    const base = { finalizedAt: null, consultationFinalizedAt: null, recordedLate: false };
+    expect(isNoteAwaitingClose({ ...base, consultationFinalizedAt: "2026-10-12T17:00:00Z" })).toBe(true);
+    expect(isNoteAwaitingClose({ ...base, recordedLate: true })).toBe(true);
+    // A draft of a consultation still in progress.
+    expect(isNoteAwaitingClose(base)).toBe(false);
+    // A closed note.
+    expect(
+      isNoteAwaitingClose({
+        finalizedAt: "2026-10-13T10:00:00Z",
+        consultationFinalizedAt: "2026-10-12T17:00:00Z",
+        recordedLate: true,
+      }),
+    ).toBe(false);
+  });
+
+  it("closeClinicalNote closes through its own rpc and returns the server stamps", async () => {
+    supabaseMock.onRpc("close_clinical_note", {
+      data: { ...raw(), finalized_at: "2026-10-14T18:00:00Z", recorded_late: true },
+    });
+
+    await expect(closeClinicalNote("note-1")).resolves.toEqual({
+      finalizedAt: "2026-10-14T18:00:00Z",
+      recordedLate: true,
+    });
+    expect(supabaseMock.lastRpc("close_clinical_note")?.args).toEqual({ p_note_id: "note-1" });
+    // Never a direct write of finalized_at from the browser.
+    expect(supabaseMock.queries("clinical_notes")).toHaveLength(0);
+  });
+
+  it("closeClinicalNote shows the server's Spanish reason, and a clear message otherwise", async () => {
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    supabaseMock.onRpc("close_clinical_note", {
+      error: { message: "Para cerrar la nota, escribe el diagnóstico y el plan.", code: "P0001" },
+    });
+    await expect(closeClinicalNote("note-1")).rejects.toThrow(
+      "Para cerrar la nota, escribe el diagnóstico y el plan.",
+    );
+
+    supabaseMock.onRpc("close_clinical_note", {
+      error: { message: "permission denied", code: "42501" },
+    });
+    await expect(closeClinicalNote("note-1")).rejects.toThrow(
+      "No se pudo cerrar la nota. Intenta de nuevo.",
+    );
+  });
+
+  it("fetchAppointmentNote reads the oldest note of that appointment, or null", async () => {
+    supabaseMock.onFrom("clinical_notes", { data: raw() });
+
+    const loaded = await fetchAppointmentNote("appt-1");
+
+    expect(loaded).toMatchObject({ id: "note-1", recordedLate: true, addenda: [] });
+    const query = supabaseMock.queries("clinical_notes")[0];
+    expect(query.args("eq")).toEqual(["appointment_id", "appt-1"]);
+    expect(query.args("order")).toEqual(["created_at", { ascending: true }]);
+
+    supabaseMock.onFrom("clinical_notes", { data: null });
+    await expect(fetchAppointmentNote("appt-2")).resolves.toBeNull();
   });
 });

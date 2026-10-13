@@ -1,5 +1,12 @@
 import { useEffect, useMemo, useState } from "react";
-import { Calendar as CalendarIcon, History, Loader2, Save } from "lucide-react";
+import {
+  Calendar as CalendarIcon,
+  ChevronDown,
+  ChevronUp,
+  History,
+  Loader2,
+  Save,
+} from "lucide-react";
 import toast from "react-hot-toast";
 import { Modal } from "../../../../components/ui/Modal";
 import { Dropdown } from "../../../../components/ui/Dropdown";
@@ -25,6 +32,14 @@ import {
   useBookingCatalog,
 } from "../../hooks/useBookingCatalog";
 import { NewPatientModal } from "./NewPatientModal";
+import { AutoGrowTextarea } from "../AutoGrowTextarea";
+import { VitalSignsFields } from "../VitalSignsFields";
+import { EMPTY_NOTE_FORM, NOTE_FIELDS, type NoteForm } from "../../utils/noteFields";
+import {
+  EMPTY_VITAL_SIGNS,
+  parseVitalSigns,
+  type VitalSignsForm,
+} from "../../utils/vitalSigns";
 
 const METHODS: PaymentMethod[] = ["cash", "card", "transfer"];
 
@@ -82,6 +97,10 @@ export const PastVisitModal = ({
   const [isNewPatientOpen, setIsNewPatientOpen] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
   const [savedCount, setSavedCount] = useState(0);
+  // Optional "Nota clínica": saved open, to complete and close later.
+  const [isNoteOpen, setIsNoteOpen] = useState(false);
+  const [noteForm, setNoteForm] = useState<NoteForm>(EMPTY_NOTE_FORM);
+  const [noteVitals, setNoteVitals] = useState<VitalSignsForm>(EMPTY_VITAL_SIGNS);
 
   useEffect(() => {
     if (isOpen) loadCatalog();
@@ -154,10 +173,19 @@ export const PastVisitModal = ({
     setAmount("");
     setMethod(null);
     setNote("");
+    setNoteForm(EMPTY_NOTE_FORM);
+    setNoteVitals(EMPTY_VITAL_SIGNS);
+    setIsNoteOpen(false);
   };
 
   const save = async (andAnother: boolean) => {
     if (!isValid || isSaving) return;
+    const vitals = parseVitalSigns(noteVitals);
+    if (!vitals.ok) {
+      setIsNoteOpen(true);
+      toast.error(vitals.message);
+      return;
+    }
     setIsSaving(true);
     try {
       await recordPastVisit({
@@ -169,6 +197,7 @@ export const PastVisitModal = ({
         amount: isPaid ? parsedAmount : undefined,
         method: isPaid ? method : null,
         note,
+        clinicalNote: { ...noteForm, vitalSigns: vitals.value },
       });
       toast.success("Cita pasada guardada");
       setSavedCount((n) => n + 1);
@@ -428,6 +457,56 @@ export const PastVisitModal = ({
             containerClassName={`w-full ${compactLabelClasses}`}
             className={`min-h-11 ${compactInputClasses}`}
           />
+
+          <div className="rounded-xl border border-slate-200">
+            <button
+              type="button"
+              onClick={() => setIsNoteOpen((open) => !open)}
+              aria-expanded={isNoteOpen}
+              aria-controls="past-visit-clinical-note"
+              className="w-full min-h-11 px-4 py-2.5 flex items-center justify-between gap-2 text-sm font-bold text-brand-dark cursor-pointer"
+            >
+              <span>Nota clínica (opcional)</span>
+              {isNoteOpen ? (
+                <ChevronUp className="w-4 h-4 shrink-0" aria-hidden="true" />
+              ) : (
+                <ChevronDown className="w-4 h-4 shrink-0" aria-hidden="true" />
+              )}
+            </button>
+            {isNoteOpen && (
+              <div id="past-visit-clinical-note" className="px-4 pb-4 space-y-4">
+                <p className="text-sm text-brand-gray">
+                  Queda abierta y marcada como registrada posteriormente. Podrás
+                  completarla y cerrarla desde el expediente.
+                </p>
+                <div>
+                  <p className="text-brand-dark font-bold text-sm mb-2">Signos vitales</p>
+                  <VitalSignsFields value={noteVitals} onChange={setNoteVitals} disabled={isSaving} />
+                </div>
+                {NOTE_FIELDS.map(({ key, label, placeholder }) => (
+                  <div key={key} className="flex flex-col">
+                    <label
+                      htmlFor={`past-visit-note-${key}`}
+                      className="text-brand-dark font-bold text-sm block"
+                    >
+                      {label}
+                    </label>
+                    <AutoGrowTextarea
+                      id={`past-visit-note-${key}`}
+                      rows={2}
+                      disabled={isSaving}
+                      value={noteForm[key]}
+                      onChange={(e) =>
+                        setNoteForm((prev) => ({ ...prev, [key]: e.target.value }))
+                      }
+                      placeholder={placeholder}
+                      className="mt-2 grow min-h-19.5 w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl text-base focus:bg-white focus:border-brand-primary outline-none resize-none transition-all leading-relaxed"
+                    />
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
 
           {savedCount > 0 && (
             <p role="status" className="text-sm font-medium text-teal-700">

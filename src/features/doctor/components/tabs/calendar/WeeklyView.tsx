@@ -14,6 +14,7 @@ import {
 } from "../../../utils/calendarUtils";
 import { PendingBadge } from "./PendingBadge";
 import { SuppliesPendingBadge } from "./SuppliesPendingBadge";
+import { NotePendingBadge } from "../../NotePendingBadge";
 
 interface WeeklyViewProps {
   appointments: DashboardAppointment[];
@@ -239,6 +240,7 @@ export const WeeklyView = ({
                               <PendingBadge overdue={isPast} />
                             )}
                             {app.suppliesPending && <SuppliesPendingBadge />}
+                            {app.notePending && <NotePendingBadge compact />}
                             {!isSmall && (
                               <div className="flex items-center gap-1 text-[10px] font-bold opacity-90 bg-white/60 px-1.5 py-0.5 rounded-md shrink-0">
                                 <Clock className="w-3 h-3" /> {app.time}

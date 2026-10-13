@@ -848,6 +848,59 @@ describe("CalendarTab prescription of a finalized consultation", () => {
   });
 });
 
+describe("CalendarTab open note of a finalized consultation", () => {
+  const pending = appt({
+    id: "a-luis",
+    patientId: "p-luis",
+    patientName: "Luis Gómez",
+    status: "completed",
+    notePending: true,
+  });
+
+  it("closing the note from the detail reloads the agenda and the chip loses its badge", async () => {
+    setNow(new Date(2026, 9, 16, 12, 0));
+    supabaseMock.onFrom("clinical_notes", {
+      data: {
+        id: "note-luis",
+        appointment_id: "a-luis",
+        patient_id: "p-luis",
+        subjective: "Dolor",
+        objective: null,
+        analysis: "Lumbalgia",
+        plan: "Reposo",
+        prognosis: null,
+        vital_signs: null,
+        created_at: "2026-10-15T16:00:00Z",
+        author_id: "doc-1",
+        finalized_at: null,
+        consultation_finalized_at: "2026-10-15T17:00:00Z",
+        recorded_late: false,
+      },
+    });
+    supabaseMock.onRpc("close_clinical_note", {
+      data: { finalized_at: "2026-10-16T18:00:00Z", recorded_late: false },
+    });
+    const { user, onDataChange, rerenderWith } = renderTab([pending]);
+
+    expect(screen.getByText("Nota pendiente")).toBeInTheDocument();
+    await user.click(screen.getByText("Luis Gómez"));
+    await screen.findByText("Detalles de la Cita");
+    await user.click(await screen.findByRole("button", { name: /Completar nota/ }));
+    await user.click(screen.getByRole("button", { name: "Cerrar nota" }));
+    const buttons = await screen.findAllByRole("button", { name: "Cerrar nota" });
+    await user.click(buttons[buttons.length - 1]);
+
+    await waitFor(() => expect(onDataChange).toHaveBeenCalled());
+    // The detail stays open, now on the closed (read-only) note.
+    expect(await screen.findByText(/^Nota cerrada el /)).toBeInTheDocument();
+    expect(screen.getByText("Detalles de la Cita")).toBeInTheDocument();
+
+    // The reload brings the appointment back without the pending note.
+    rerenderWith([{ ...pending, notePending: false }]);
+    expect(screen.queryByText("Nota pendiente")).toBeNull();
+  });
+});
+
 describe("CalendarTab on a touch screen", () => {
   it("tapping an appointment in the month view opens it, not the day's booking flow", async () => {
     setNow(new Date(2026, 9, 14, 7, 0));

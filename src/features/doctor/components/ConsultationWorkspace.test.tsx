@@ -8,6 +8,7 @@ import type {
   PatientDetails,
 } from "../../../lib/services/patientService";
 import {
+  closeClinicalNote,
   fetchFinalizedPrescription,
   fetchPatientHistory,
   finalizeConsultationWithPayment,
@@ -40,18 +41,22 @@ import { TEST_SIGNATURE_PNG } from "../../../test/signaturePng";
 import { buildPrescriptionPdf } from "../prescription/buildPrescriptionPdf";
 import { ConsultationWorkspace } from "./ConsultationWorkspace";
 
-vi.mock("../../../lib/services/soapService", async (importOriginal) => ({
-  // The pure draft finder stays real; only the database calls are mocked.
-  findConsultationDraft: (
-    await importOriginal<typeof import("../../../lib/services/soapService")>()
-  ).findConsultationDraft,
-  fetchPatientHistory: vi.fn(),
-  fetchFinalizedPrescription: vi.fn(),
-  saveSoapNote: vi.fn(),
-  savePrescription: vi.fn(),
-  finalizeConsultationWithPayment: vi.fn(),
-  addNoteAddendum: vi.fn(),
-}));
+vi.mock("../../../lib/services/soapService", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../../../lib/services/soapService")>();
+  return {
+    // The pure helpers stay real; only the database calls are mocked.
+    findConsultationDraft: actual.findConsultationDraft,
+    isNoteAwaitingClose: actual.isNoteAwaitingClose,
+    CLOSE_NOTE_REQUIRES_MESSAGE: actual.CLOSE_NOTE_REQUIRES_MESSAGE,
+    closeClinicalNote: vi.fn(),
+    fetchPatientHistory: vi.fn(),
+    fetchFinalizedPrescription: vi.fn(),
+    saveSoapNote: vi.fn(),
+    savePrescription: vi.fn(),
+    finalizeConsultationWithPayment: vi.fn(),
+    addNoteAddendum: vi.fn(),
+  };
+});
 vi.mock("../../../lib/services/storageService", () => ({
   getPatientFiles: vi.fn(),
   uploadPatientFile: vi.fn(),
@@ -150,6 +155,8 @@ const note = (over: Partial<SoapNote> = {}): SoapNote => ({
   createdAt: "2026-09-10T16:05:00Z",
   authorName: "Laura Garza",
   finalizedAt: "2026-09-10T17:00:00Z",
+  consultationFinalizedAt: "2026-09-10T17:00:00Z",
+  recordedLate: false,
   addenda: [],
   ...over,
 });
@@ -549,28 +556,25 @@ describe("ConsultationWorkspace loading and state", () => {
 });
 
 describe("ConsultationWorkspace NOM-004 record", () => {
-  it("does not finalize or charge without a diagnosis and a plan, and says why", async () => {
+  it("finalizes without a diagnosis or a plan: the note stays open to finish later", async () => {
     const toastError = vi.spyOn(toast, "error");
     const { onFinishConsultation, user } = renderWorkspace();
     await waitForHistory();
 
     await user.click(screen.getByRole("button", { name: /Finalizar Consulta/ }));
-    expect(toastError).toHaveBeenCalledWith(
-      "Para finalizar la consulta, escribe el diagnóstico y el plan.",
+    expect(await screen.findByText("Cobro de la consulta")).toBeInTheDocument();
+    expect(toastError).not.toHaveBeenCalled();
+
+    await user.click(screen.getByRole("radio", { name: "Efectivo" }));
+    await user.click(screen.getByRole("button", { name: /Guardar y finalizar/ }));
+
+    await waitFor(() => expect(onFinishConsultation).toHaveBeenCalledWith("appt-1"));
+    expect(saveSoapNote).toHaveBeenCalledWith(
+      "appt-1",
+      "patient-1",
+      expect.objectContaining({ analysis: "", plan: "" }),
     );
-    expect(chargeDialogTitle()).toBeNull();
-
-    // A diagnosis alone is not enough; whitespace does not count as a plan.
-    await user.type(screen.getByLabelText("A - Diagnóstico (Análisis)"), "Paciente sano");
-    await user.type(screen.getByLabelText("P - Tratamiento (Plan)"), "   ");
-    await user.click(screen.getByRole("button", { name: /Finalizar Consulta/ }));
-
-    expect(toastError).toHaveBeenCalledTimes(2);
-    expect(chargeDialogTitle()).toBeNull();
-    expect(recordPayment).not.toHaveBeenCalled();
-    expect(saveSoapNote).not.toHaveBeenCalled();
-    expect(finalizeConsultationWithPayment).not.toHaveBeenCalled();
-    expect(onFinishConsultation).not.toHaveBeenCalled();
+    expect(finalizeConsultationWithPayment).toHaveBeenCalledTimes(1);
   });
 
   it("starts with empty fields and example placeholders instead of frozen text", async () => {
@@ -1595,5 +1599,171 @@ describe("ConsultationWorkspace after finalizing", () => {
       "No se pudo cargar la receta. Puedes enviarla desde el Calendario.",
     );
     expect(screen.queryByText("Consulta finalizada")).toBeNull();
+  });
+});
+
+describe("ConsultationWorkspace open notes in the record", () => {
+  /** A finalized consultation whose note is still open (migration 31). */
+  const openNote = (over: Partial<SoapNote> = {}) =>
+    note({
+      id: "note-open",
+      appointmentId: "appt-0",
+      analysis: "",
+      plan: "",
+      prognosis: null,
+      finalizedAt: null,
+      consultationFinalizedAt: "2026-09-10T17:00:00Z",
+      ...over,
+    });
+
+  const renderRecord = (notes: SoapNote[], focusAppointmentId?: string) => {
+    vi.mocked(fetchPatientHistory).mockResolvedValue({ notes, prescriptions: [] });
+    return renderWorkspace({ appointment: undefined, patient: reviewPatient, focusAppointmentId });
+  };
+
+  it("shows an open note editable with Guardar and Cerrar nota, and marks it pending in the history", async () => {
+    renderRecord([openNote()]);
+
+    const subjective = await screen.findByLabelText("S - Motivo y Síntomas");
+    expect(subjective).not.toHaveAttribute("readonly");
+    expect(subjective).toHaveValue("Revisión");
+    // Header badge and history badge.
+    expect(screen.getAllByText("Nota pendiente de cerrar")).toHaveLength(2);
+    expect(screen.queryByText("Solo Lectura")).toBeNull();
+    expect(screen.getByRole("button", { name: "Guardar" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Cerrar nota" })).toBeInTheDocument();
+    // No addendum on an open note: it is edited directly.
+    expect(screen.queryByLabelText("Agregar una corrección")).toBeNull();
+  });
+
+  it("Guardar saves the open note through the draft path, vital signs included", async () => {
+    const { user } = renderRecord([openNote()]);
+
+    await user.type(await screen.findByLabelText("A - Diagnóstico (Análisis)"), "Melasma");
+    await user.type(screen.getByLabelText("Oxigenación"), "98");
+    await user.click(screen.getByRole("button", { name: "Guardar" }));
+
+    await waitFor(() =>
+      expect(saveSoapNote).toHaveBeenCalledWith("appt-0", "patient-1", {
+        subjective: "Revisión",
+        objective: "Piel sin lesiones",
+        analysis: "Melasma",
+        prognosis: "",
+        plan: "",
+        vitalSigns: { spo2: 98 },
+      }),
+    );
+    expect(closeClinicalNote).not.toHaveBeenCalled();
+    expect(finalizeConsultationWithPayment).not.toHaveBeenCalled();
+  });
+
+  it("Cerrar nota needs a diagnosis and a plan, and says so", async () => {
+    const toastError = vi.spyOn(toast, "error");
+    const { user } = renderRecord([openNote()]);
+
+    await user.click(await screen.findByRole("button", { name: "Cerrar nota" }));
+
+    expect(toastError).toHaveBeenCalledWith("Para cerrar la nota, escribe el diagnóstico y el plan.");
+    expect(screen.queryByText("¿Cerrar la nota clínica?")).toBeNull();
+    expect(closeClinicalNote).not.toHaveBeenCalled();
+  });
+
+  it("Cerrar nota confirms, saves, closes and then shows the note read-only with corrections", async () => {
+    vi.mocked(closeClinicalNote).mockResolvedValue({
+      finalizedAt: "2026-09-12T18:00:00Z",
+      recordedLate: true,
+    });
+    const { user } = renderRecord([openNote()]);
+
+    await user.type(await screen.findByLabelText("A - Diagnóstico (Análisis)"), "Melasma");
+    await user.type(screen.getByLabelText("P - Tratamiento (Plan)"), "Protector solar");
+    await user.click(screen.getByRole("button", { name: "Cerrar nota" }));
+
+    expect(await screen.findByText("¿Cerrar la nota clínica?")).toBeInTheDocument();
+    expect(
+      screen.getByText(
+        "Al cerrar la nota ya no se podrá modificar; las correcciones se harán con una adenda.",
+      ),
+    ).toBeInTheDocument();
+    expect(closeClinicalNote).not.toHaveBeenCalled();
+
+    const buttons = screen.getAllByRole("button", { name: "Cerrar nota" });
+    await user.click(buttons[buttons.length - 1]);
+
+    await waitFor(() => expect(closeClinicalNote).toHaveBeenCalledWith("note-open"));
+    const saved = vi.mocked(saveSoapNote).mock.invocationCallOrder[0];
+    const closed = vi.mocked(closeClinicalNote).mock.invocationCallOrder[0];
+    expect(saved).toBeLessThan(closed);
+
+    expect(await screen.findByText("Solo Lectura")).toBeInTheDocument();
+    expect(screen.getByLabelText("A - Diagnóstico (Análisis)")).toHaveAttribute("readonly");
+    expect(screen.getByLabelText("A - Diagnóstico (Análisis)")).toHaveValue("Melasma");
+    expect(screen.queryByText("Nota pendiente de cerrar")).toBeNull();
+    expect(screen.getByText(/^Registrada posteriormente · cerrada el /)).toBeInTheDocument();
+    expect(screen.getByLabelText("Agregar una corrección")).toBeInTheDocument();
+  });
+
+  it("shows a closed late note read-only with the late-entry line in its header", async () => {
+    renderRecord([note({ recordedLate: true, finalizedAt: "2026-09-12T18:00:00Z" })]);
+
+    const header = (await screen.findByText(/Mostrando expediente del:/)).parentElement!;
+    const closedAt = new Date("2026-09-12T18:00:00Z").toLocaleString("es-MX", {
+      day: "numeric",
+      month: "short",
+      year: "numeric",
+      hour: "2-digit",
+      minute: "2-digit",
+    });
+    expect(
+      within(header).getByText(`Registrada posteriormente · cerrada el ${closedAt}`),
+    ).toBeInTheDocument();
+    expect(screen.getByText("Solo Lectura")).toBeInTheDocument();
+    expect(screen.getByLabelText("Agregar una corrección")).toBeInTheDocument();
+  });
+
+  it("a note written on time has no late-entry line", async () => {
+    renderRecord([note()]);
+
+    await screen.findByText(/Mostrando expediente del:/);
+    expect(screen.queryByText(/Registrada posteriormente/)).toBeNull();
+  });
+
+  it("an open past-visit note is editable too, and says it was recorded later", async () => {
+    renderRecord([openNote({ consultationFinalizedAt: null, recordedLate: true })]);
+
+    expect(await screen.findByText("Registrada posteriormente")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Cerrar nota" })).toBeInTheDocument();
+  });
+
+  it("a draft of a consultation still in progress stays read-only (no Cerrar nota)", async () => {
+    renderRecord([openNote({ consultationFinalizedAt: null })]);
+
+    expect(await screen.findByText("Solo Lectura")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Cerrar nota" })).toBeNull();
+    expect(screen.queryByText("Nota pendiente de cerrar")).toBeNull();
+  });
+
+  it("opens on the note of the visit it was asked for", async () => {
+    renderRecord(
+      [
+        note({ id: "note-new", appointmentId: "appt-9", createdAt: "2026-10-01T16:00:00Z" }),
+        openNote({ appointmentId: "appt-5" }),
+      ],
+      "appt-5",
+    );
+
+    expect(await screen.findByRole("button", { name: "Cerrar nota" })).toBeInTheDocument();
+  });
+
+  it("reads the reminders when the record is opened without them", async () => {
+    vi.mocked(fetchPatientNotes).mockResolvedValue("Llamar antes");
+    vi.mocked(fetchPatientHistory).mockResolvedValue({ notes: [], prescriptions: [] });
+    renderWorkspace({
+      appointment: undefined,
+      patient: { ...reviewPatient, notes: undefined },
+    });
+
+    expect(await screen.findByDisplayValue("Llamar antes")).toBeInTheDocument();
+    expect(fetchPatientNotes).toHaveBeenCalledWith("patient-1");
   });
 });

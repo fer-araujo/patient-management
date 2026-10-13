@@ -89,14 +89,20 @@ después de aplicar las migraciones 26 y 27 y de desplegar el frontend.
 
 - [ ] **6.1** 📱 "Finalizar Consulta": cobro en efectivo con monto, y los
   insumos sugeridos del servicio.
-  **Esperado:** aparece "Consulta finalizada"; la nota, el pronóstico y la
-  receta ya no se pueden editar.
+  **Esperado:** aparece "Consulta finalizada"; la receta ya no se puede
+  editar. La nota queda abierta ("Nota pendiente de cerrar" en el calendario,
+  en el expediente y en el contador del Centro de Comando).
+- [ ] **6.1b** Abre el expediente desde "N notas pendientes de cerrar",
+  completa diagnóstico y plan, "Guardar" y luego "Cerrar nota".
+  **Esperado:** pide confirmación; después la nota queda de solo lectura y
+  desaparece de pendientes. Si se cierra más de 24 h después de la cita,
+  dice "Registrada posteriormente · cerrada el …".
 - [ ] **6.2** Revisa el inventario de esos insumos.
   **Esperado:** el stock bajó en las cantidades usadas.
 - [ ] **6.3** Finaliza otra consulta como cortesía.
   **Esperado:** se guarda sin monto ni método; en Finanzas cuenta como
   cortesía, no como gasto.
-- [ ] **6.4** Agrega una nota adicional (adenda) a una consulta finalizada.
+- [ ] **6.4** Agrega una nota adicional (adenda) a una nota cerrada.
   **Esperado:** queda debajo de la nota original con fecha; la original no
   cambia.
 

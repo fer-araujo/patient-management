@@ -673,6 +673,9 @@ begin
         ('public.staff_create_appointment(uuid,uuid,timestamptz)', 'staff'),
         -- Migration 30 (staff_record_past_visit): listed here too so a re-run of this file still passes.
         ('public.staff_record_past_visit(uuid,uuid,timestamptz,text,numeric,text,text)', 'staff'),
+        -- Migration 31 (open clinical notes): listed here too so a re-run of this file still passes.
+        ('public.close_clinical_note(uuid)', 'staff'),
+        ('public.staff_record_past_visit_with_note(uuid,uuid,timestamptz,text,numeric,text,text,text,text,text,text,text,jsonb)', 'staff'),
         ('public.staff_register_arco_request(uuid,text,text,text)', 'staff'),
         ('public.staff_reschedule_appointment(uuid,timestamptz)', 'staff'),
         -- Doctor or admin.

@@ -5,6 +5,7 @@ import {
 import { clinicIsoDate, formatClinicShortDate, formatClinicTime12h } from "../clinicTime";
 import { supabase } from "../supabase";
 import { fetchAllRows } from "./fetchAllRows";
+import { isNoteAwaitingClose, type VitalSigns } from "./soapService";
 
 export interface DashboardAppointment {
   id: string;
@@ -30,6 +31,11 @@ export interface DashboardAppointment {
    * configured: the calendar shows it in red with "Registrar insumos".
    */
   suppliesPending?: boolean;
+  /**
+   * Finalized (or recorded as a past visit) with its clinical note still
+   * open: the calendar and the agenda show "Nota pendiente de cerrar".
+   */
+  notePending?: boolean;
   /** patients.status; an "archived" patient cannot be booked by the staff. */
   patientStatus?: "active" | "blocked" | "archived" | null;
 }
@@ -55,23 +61,41 @@ interface RawAppointmentData {
     service_supplies: { item_id: string }[] | null;
   } | null;
   clinical_notes:
-    | { finalized_at: string | null; supplies_recorded_at: string | null }[]
+    | {
+        finalized_at: string | null;
+        supplies_recorded_at: string | null;
+        consultation_finalized_at?: string | null;
+        recorded_late?: boolean | null;
+      }[]
     | null;
 }
 
 /**
- * See DashboardAppointment.suppliesPending. Only a consultation with a
- * FINALIZED note can be flagged: a past visit transcribed from the paper
- * agenda (staff_record_past_visit) is completed with no note and no supplies
- * on purpose, so it never shows in red.
+ * See DashboardAppointment.suppliesPending. Only a FINALIZED CONSULTATION
+ * ("Finalizar Consulta" ran) can be flagged, whether or not its note was
+ * closed yet (migration 31). A past visit transcribed from the paper agenda
+ * (staff_record_past_visit) is never finalized that way, with or without a
+ * note, so it never shows in red.
  */
 const isSuppliesPending = (apt: RawAppointmentData): boolean => {
   if (apt.status === "cancelled" || apt.status === "rejected") return false;
   const notes = apt.clinical_notes ?? [];
   return (
     (apt.services?.service_supplies?.length ?? 0) > 0 &&
-    notes.some((n) => n.finalized_at !== null) &&
+    notes.some((n) => (n.consultation_finalized_at ?? null) !== null) &&
     !notes.some((n) => n.supplies_recorded_at !== null)
+  );
+};
+
+/** See DashboardAppointment.notePending (same rule as isNoteAwaitingClose). */
+const isNotePending = (apt: RawAppointmentData): boolean => {
+  if (apt.status === "cancelled" || apt.status === "rejected") return false;
+  return (apt.clinical_notes ?? []).some((n) =>
+    isNoteAwaitingClose({
+      finalizedAt: n.finalized_at,
+      consultationFinalizedAt: n.consultation_finalized_at ?? null,
+      recordedLate: n.recorded_late === true,
+    }),
   );
 };
 
@@ -103,7 +127,7 @@ export const fetchDoctorAppointments = async (): Promise<
         price,
         service_supplies ( item_id )
       ),
-      clinical_notes ( finalized_at, supplies_recorded_at )
+      clinical_notes ( finalized_at, supplies_recorded_at, consultation_finalized_at, recorded_late )
     `,
       )
       .order("start_time", { ascending: true })
@@ -152,6 +176,7 @@ export const fetchDoctorAppointments = async (): Promise<
       patientStatus: apt.patients?.status ?? null,
       serviceId: apt.service_id ?? null,
       suppliesPending: isSuppliesPending(apt),
+      notePending: isNotePending(apt),
     };
   });
 };
@@ -219,13 +244,37 @@ export interface PastVisitInput {
   /** Required when paid; ignored for a courtesy. */
   method?: "cash" | "card" | "transfer" | null;
   note?: string;
+  /**
+   * Optional "Nota clínica" of the visit. Saved OPEN (to complete and close
+   * later from the record) and marked as recorded after the fact.
+   */
+  clinicalNote?: PastVisitNote;
 }
+
+export interface PastVisitNote {
+  subjective: string;
+  objective: string;
+  analysis: string;
+  prognosis: string;
+  plan: string;
+  /** null when no vital sign was recorded. */
+  vitalSigns: VitalSigns | null;
+}
+
+const hasNoteContent = (note: PastVisitNote | undefined): note is PastVisitNote =>
+  !!note &&
+  ([note.subjective, note.objective, note.analysis, note.prognosis, note.plan].some(
+    (text) => text.trim() !== "",
+  ) ||
+    note.vitalSigns !== null);
 
 /**
  * Records a visit that already happened (transcribed from the paper agenda)
  * and its charge in one transaction. The server refuses a future start, an
  * occupied time and an archived patient, and dates the charge to the visit so
- * Finanzas counts it on that day. Returns the new appointment's id.
+ * Finanzas counts it on that day. With a clinical note, the note is saved in
+ * that same transaction (staff_record_past_visit_with_note, migration 31).
+ * Returns the new appointment's id.
  */
 export const recordPastVisit = async (
   input: PastVisitInput,
@@ -252,7 +301,7 @@ export const recordPastVisit = async (
     if (!input.method) throw new Error("Indica cómo te pagaron.");
   }
 
-  const { data, error } = await supabase.rpc("staff_record_past_visit", {
+  const visit = {
     p_patient_id: input.patientId,
     p_service_id: input.serviceId,
     p_start_time: startIso,
@@ -260,7 +309,19 @@ export const recordPastVisit = async (
     p_amount: isPaid ? input.amount : 0,
     p_method: isPaid ? input.method : null,
     p_note: input.note?.trim() || null,
-  });
+  };
+  const clinicalNote = input.clinicalNote;
+  const { data, error } = hasNoteContent(clinicalNote)
+    ? await supabase.rpc("staff_record_past_visit_with_note", {
+        ...visit,
+        p_subjective: clinicalNote.subjective.trim() || null,
+        p_objective: clinicalNote.objective.trim() || null,
+        p_analysis: clinicalNote.analysis.trim() || null,
+        p_prognosis: clinicalNote.prognosis.trim() || null,
+        p_plan: clinicalNote.plan.trim() || null,
+        p_vital_signs: clinicalNote.vitalSigns,
+      })
+    : await supabase.rpc("staff_record_past_visit", visit);
 
   if (error) {
     console.error("Error al registrar la cita pasada:", error.code);

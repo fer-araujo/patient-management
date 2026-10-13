@@ -11,7 +11,8 @@
 --   * a patient and anon get nothing, directly or through the RPC;
 --   * finalize_consultation() can no longer be called directly (doctor and
 --     admin alike), while finalize_consultation_with_payment() still charges
---     and freezes the consultation in one call;
+--     and finalizes the consultation in one call (since migration 31 the note
+--     stays open: consultation_finalized_at is stamped instead);
 --   * no trigger function in public is executable by anon or authenticated.
 --
 -- SAFETY
@@ -206,7 +207,8 @@ begin
     raise exception 'ADMIN PAYMENTS CHECK FAILED: the doctor can still call finalize_consultation() directly.';
   end if;
 
-  -- 2d. finalize_consultation_with_payment() still charges and freezes.
+  -- 2d. finalize_consultation_with_payment() still charges and finalizes
+  --     the consultation (migration 31: the note stays open).
   insert into public.clinical_notes (appointment_id, patient_id, subjective, analysis, plan)
   values (v_appt_3, v_patient, 'ADMIN-PAYMENTS-CHECK note', 'ADMIN-PAYMENTS-CHECK diagnosis', 'ADMIN-PAYMENTS-CHECK plan');
 
@@ -217,9 +219,9 @@ begin
   end if;
   if not exists (
     select 1 from public.clinical_notes
-    where appointment_id = v_appt_3 and finalized_at is not null
+    where appointment_id = v_appt_3 and consultation_finalized_at is not null
   ) then
-    raise exception 'ADMIN PAYMENTS CHECK FAILED: finalize_consultation_with_payment() did not freeze the note.';
+    raise exception 'ADMIN PAYMENTS CHECK FAILED: finalize_consultation_with_payment() did not finalize the consultation.';
   end if;
 end $$;
 
@@ -415,7 +417,7 @@ end $$;
 do $$
 begin
   perform set_config('request.jwt.claims', '', true);
-  raise notice 'ADMIN PAYMENTS CHECK PASSED: the doctor reads payments directly with the patient''s name; the admin reads no payment row directly and gets date, status, method, amount, list price and service name (no patient, appointment or note) through get_finance_payments(); a bad range is refused; patients and anon get nothing; finalize_consultation() is not callable directly while finalize_consultation_with_payment() still charges and freezes the note; no trigger function is executable by anon or authenticated. All test data was rolled back.';
+  raise notice 'ADMIN PAYMENTS CHECK PASSED: the doctor reads payments directly with the patient''s name; the admin reads no payment row directly and gets date, status, method, amount, list price and service name (no patient, appointment or note) through get_finance_payments(); a bad range is refused; patients and anon get nothing; finalize_consultation() is not callable directly while finalize_consultation_with_payment() still charges and finalizes the consultation; no trigger function is executable by anon or authenticated. All test data was rolled back.';
 end $$;
 
 rollback;

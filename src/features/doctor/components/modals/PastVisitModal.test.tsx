@@ -206,6 +206,79 @@ describe("PastVisitModal", () => {
     expect(onSaved).toHaveBeenCalledTimes(1);
   });
 
+  it("keeps the clinical note collapsed and optional: without it no note is sent", async () => {
+    supabaseMock.onRpc("staff_record_past_visit", { data: "appt-new" });
+    const { user } = renderModal();
+    await screen.findByRole("combobox", { name: "Paciente" });
+
+    const toggle = screen.getByRole("button", { name: "Nota clínica (opcional)" });
+    expect(toggle).toHaveAttribute("aria-expanded", "false");
+    expect(screen.queryByLabelText("A - Diagnóstico (Análisis)")).toBeNull();
+
+    await pick(user, "Paciente", "Ana Pérez");
+    await pick(user, "Servicio", "Valoración · $500.00");
+    await pick(user, "Hora", "09:00 AM");
+    await user.click(screen.getByRole("radio", { name: "Cortesía" }));
+    await user.click(screen.getByRole("button", { name: "Guardar cita pasada" }));
+
+    await waitFor(() => expect(supabaseMock.rpcCalls("staff_record_past_visit")).toHaveLength(1));
+    expect(supabaseMock.rpcCalls("staff_record_past_visit_with_note")).toHaveLength(0);
+  });
+
+  it("saves the clinical note (S, O, A, prognosis, P, vital signs) with the visit in one call", async () => {
+    supabaseMock.onRpc("staff_record_past_visit_with_note", { data: "appt-note" });
+    const { user, onClose } = renderModal();
+    await screen.findByRole("combobox", { name: "Paciente" });
+
+    await pick(user, "Paciente", "Ana Pérez");
+    await pick(user, "Servicio", "Valoración · $500.00");
+    await pick(user, "Hora", "09:00 AM");
+    await user.click(screen.getByRole("radio", { name: "Cortesía" }));
+
+    await user.click(screen.getByRole("button", { name: "Nota clínica (opcional)" }));
+    expect(screen.getByRole("button", { name: "Nota clínica (opcional)" })).toHaveAttribute(
+      "aria-expanded",
+      "true",
+    );
+    await user.type(screen.getByLabelText("S - Motivo y Síntomas"), "Dolor lumbar");
+    await user.type(screen.getByLabelText("A - Diagnóstico (Análisis)"), "Lumbalgia");
+    await user.type(screen.getByLabelText("P - Tratamiento (Plan)"), "Reposo");
+    await user.type(screen.getByLabelText("Presión sistólica"), "120");
+    await user.type(screen.getByLabelText("Presión diastólica"), "80");
+    await user.click(screen.getByRole("button", { name: "Guardar cita pasada" }));
+
+    await waitFor(() => expect(onClose).toHaveBeenCalledTimes(1));
+    expect(supabaseMock.rpcCalls("staff_record_past_visit")).toHaveLength(0);
+    expect(supabaseMock.lastRpc("staff_record_past_visit_with_note")?.args).toMatchObject({
+      p_patient_id: "p-ana",
+      p_payment_status: "courtesy",
+      p_subjective: "Dolor lumbar",
+      p_objective: null,
+      p_analysis: "Lumbalgia",
+      p_prognosis: null,
+      p_plan: "Reposo",
+      p_vital_signs: { bp_sys: 120, bp_dia: 80 },
+    });
+  });
+
+  it("does not save an impossible vital sign in the clinical note", async () => {
+    const toastError = vi.spyOn(toast, "error");
+    const { user } = renderModal();
+    await screen.findByRole("combobox", { name: "Paciente" });
+
+    await pick(user, "Paciente", "Ana Pérez");
+    await pick(user, "Servicio", "Valoración · $500.00");
+    await pick(user, "Hora", "09:00 AM");
+    await user.click(screen.getByRole("radio", { name: "Cortesía" }));
+    await user.click(screen.getByRole("button", { name: "Nota clínica (opcional)" }));
+    await user.type(screen.getByLabelText("Presión sistólica"), "120");
+    await user.click(screen.getByRole("button", { name: "Guardar cita pasada" }));
+
+    expect(toastError).toHaveBeenCalledWith("Escribe las dos cifras de la presión arterial.");
+    expect(supabaseMock.rpcCalls("staff_record_past_visit")).toHaveLength(0);
+    expect(supabaseMock.rpcCalls("staff_record_past_visit_with_note")).toHaveLength(0);
+  });
+
   it("records a courtesy without amount or method", async () => {
     supabaseMock.onRpc("staff_record_past_visit", { data: "appt-new" });
     const { user } = renderModal();

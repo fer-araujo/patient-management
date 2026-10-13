@@ -96,3 +96,26 @@ describe("AuditLogTab prescription events", () => {
     expect(screen.getByText("nombre completo")).toBeInTheDocument();
   });
 });
+
+describe("AuditLogTab clinical note events (migration 31)", () => {
+  it('reads "Finalizar Consulta" and "Cerrar nota" as two different events', async () => {
+    await renderWith([
+      entry({
+        action: "FINALIZE",
+        tableName: "appointments",
+        changedColumns: ["clinical_notes", "prescriptions"],
+      }),
+      entry({
+        action: "UPDATE",
+        tableName: "clinical_notes",
+        changedColumns: ["finalized_at", "finalized_by", "recorded_late"],
+      }),
+      entry({ action: "UPDATE", tableName: "clinical_notes", changedColumns: ["analysis"] }),
+    ]);
+
+    expect(screen.getByText("Finalizó la consulta")).toBeInTheDocument();
+    expect(screen.getByText("Cerró la nota clínica")).toBeInTheDocument();
+    expect(screen.getByText("Modificó una nota clínica")).toBeInTheDocument();
+    expect(screen.getByText(/registro posterior/)).toBeInTheDocument();
+  });
+});

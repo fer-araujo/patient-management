@@ -2202,7 +2202,8 @@ frontend that does not call it. The revoked grants need no rollback.
   columns through the RPC (amounts add up, the ids resolve to nothing); a bad
   range is refused; a patient and `anon` get nothing; `finalize_consultation`
   is refused for the doctor and the admin while
-  `finalize_consultation_with_payment` still charges and freezes the note; no
+  `finalize_consultation_with_payment` still charges and finalizes the
+  consultation (since migration 31 the note stays open); no
   trigger function is executable by `anon` or `authenticated`.
 
 ## Security Advisor
@@ -2238,6 +2239,7 @@ id.
 | `accept_privacy_notice` | `current_patient_id()`, portal open | patient |
 | `adjust_stock` | `is_business_staff()` | doctor, admin |
 | `anonymize_patient` | `is_staff()` | doctor |
+| `close_clinical_note` (mig. 31) | `is_staff()` | doctor |
 | `cancel_my_appointment` | `current_patient_id()`, portal open, own appointment, 3 per 24 h (mig. 29) | patient |
 | `export_my_data` | `current_patient_id()`; finalized prescriptions only (mig. 29) | patient |
 | `finalize_consultation_with_payment` | `is_staff()` | doctor |
@@ -2260,6 +2262,8 @@ id.
 | `set_service_supplies` | `is_business_staff()` | doctor, admin |
 | `staff_create_appointment` | `is_staff()` | doctor |
 | `staff_register_arco_request` | `is_staff()` | doctor |
+| `staff_record_past_visit` (mig. 30) | `is_staff()` | doctor |
+| `staff_record_past_visit_with_note` (mig. 31) | `is_staff()` | doctor |
 | `staff_reschedule_appointment` | `is_staff()` | doctor |
 | `submit_arco_request` | `current_patient_id()`, portal open | patient |
 
@@ -2605,6 +2609,184 @@ its gate and changes nothing (19 has nothing left to apply after 21).
   - a correction keeps `received_at`, and a normal charge gets `now()`.
 - It turns doctor-only mode on and disables the WhatsApp trigger inside its
   own transaction. The overlap trigger stays on.
+
+## Migration 31 — Open clinical notes
+
+**File:** `supabase/migrations/20261013100000_open_clinical_notes.sql`. Run
+it after migration 30. Idempotent.
+
+- Expected: one notice starting with `Migration 31 PASSED`.
+- A failure raises `Migration 31 FAILED: …` and nothing is changed.
+
+**Paste order (frontend last):**
+
+1. `supabase/migrations/20261013100000_open_clinical_notes.sql` (migration 31)
+2. `supabase/tests/open_notes_check.sql`
+3. Re-run every older check that touches clinical notes, prescriptions or
+   the finalize path (the trigger and `finalize_consultation()` changed):
+   - updated for migration 31: `nom004_check.sql`, `admin_payments_check.sql`,
+     `roles_check.sql`, `service_supplies_check.sql`;
+   - unchanged, must still pass: `rls_check.sql`,
+     `security_hardening_check.sql`, `reaudit_fixes_check.sql` (they close
+     notes with a direct `UPDATE`, always with a diagnosis and a plan),
+     `digital_prescription_check.sql` and `past_visits_check.sql` (the
+     migration 30 RPC still writes no note).
+4. Deploy the frontend (it reads `clinical_notes.consultation_finalized_at`
+   and `recorded_late` and calls `close_clinical_note` and
+   `staff_record_past_visit_with_note`, which exist only after migration 31).
+   Until then the old frontend keeps working, except that "Finalizar
+   Consulta" no longer freezes the note and the record shows it as a draft.
+
+The doctor often cannot finish the note during the visit. What changes:
+
+- **"Finalizar Consulta"** still records the charge and the supplies and
+  finalizes the **prescription** (it can be issued and shared at once, and the
+  patient sees it as before), but the **note stays open**.
+  - Diagnosis and plan are no longer required to finalize the consultation.
+    They are required to close the note.
+  - `finalize_consultation_with_payment()` is unchanged.
+    `finalize_consultation()` (internal) no longer checks the content, stamps
+    `clinical_notes.consultation_finalized_at` instead of `finalized_at`, and
+    inserts an empty open note when the appointment had none (also when its
+    prescription was finalized first, so a supplies list never fails with
+    "no tiene nota clínica").
+  - After "Finalizar Consulta" no new note or prescription can be added to
+    that appointment, with or without a prescription
+    (`consultation_is_finalized()` also reads the new marker).
+- **`close_clinical_note(note)`** ("Cerrar nota", doctor only):
+  - refuses an empty diagnosis or plan ("Para cerrar la nota, escribe el
+    diagnóstico y el plan.") and a note already closed;
+  - sets `finalized_at` through the integrity trigger, which stamps
+    `finalized_at` / `finalized_by` and freezes the note exactly as before;
+  - corrections afterwards only with addenda (unchanged: an addendum still
+    needs a closed note).
+- **`clinical_notes.recorded_late`** (NOM-004 5.10, honest date and time):
+  - true when the note is closed more than 24 h after "Finalizar Consulta"
+    (`consultation_finalized_at`, a server stamp the doctor cannot move;
+    moving the appointment does not change it), or when it was written
+    through a past visit; a note without that stamp is measured against the
+    appointment's start;
+  - computed by the trigger; any direct change is refused (`42501`), and it
+    is frozen with the note;
+  - the record shows "Registrada posteriormente · cerrada el <fecha hora>"
+    under the note's date, time and author.
+- **`clinical_notes.consultation_finalized_at`**: when "Finalizar Consulta"
+  ran. Written once, only by `finalize_consultation()`; a direct change is
+  refused (`42501`). Existing closed notes were backfilled once from
+  `finalized_at` (each was frozen by "Finalizar Consulta").
+- **Open notes in the app:**
+  - "Ver expediente" (Directorio) and the calendar's detail of a completed
+    appointment show an open note editable, with "Guardar" (draft save,
+    `saveSoapNote`) and "Cerrar nota" (confirmation first).
+  - "Nota pendiente de cerrar" appears in the record's visit list, on the
+    calendar chips (Día, Semana, Mes) and as a count in the Centro de Comando
+    header ("N notas pendientes de cerrar"), which lists them with a link to
+    each record.
+  - A draft of a consultation never finalized stays as before (read-only in
+    the record, continued from the calendar).
+- **Past visits:** "Registrar cita pasada" has an optional "Nota clínica".
+  `staff_record_past_visit_with_note()` calls migration 30's
+  `staff_record_past_visit()` unchanged and then inserts the open note
+  (`recorded_late`), in one transaction. Without note fields the app calls
+  `staff_record_past_visit()` as before.
+- **Deleting:** the open note of a finalized consultation or of a past visit
+  cannot be deleted. A draft of a consultation never finalized still can.
+- **Moving:** a note of a finalized consultation, of a past visit or with
+  recorded supplies cannot be moved to another appointment or patient
+  (`42501`).
+- **No closing without content, whatever the path:** the trigger refuses to
+  close a note with an empty diagnosis or plan, also for a direct
+  `UPDATE … set finalized_at` through RLS.
+- **Supplies:** "Sin insumos" (calendar), `record_consultation_supplies()` and
+  `get_procedure_profit().unrecorded_consultations` follow the finalized
+  **consultation** (`consultation_finalized_at`), not the closed note. Past
+  visits never have it, so they are never flagged.
+- Unchanged: `export_my_data()` (SOAP notes were never exported), patient
+  prescription visibility (finalized only), the audit trail (every note
+  update is logged with column names; the Bitácora reads "Cerró la nota
+  clínica" and labels the two new columns).
+- `close_clinical_note` and `staff_record_past_visit_with_note` are on the
+  reviewed SECURITY DEFINER list of migration 31's gate. They were also added
+  to the lists of migrations 26–30, so re-running any of them still passes.
+
+**Integrity trigger — what changed** (`clinical_notes_enforce_integrity`,
+migration 20 body plus the marked lines):
+
+- INSERT: `consultation_finalized_at` forced to null; `recorded_late` true only
+  while `app.recording_past_visit` holds the note's appointment. A note for a
+  finalized consultation is refused, except the empty one
+  `finalize_consultation()` adds while `app.finalizing_consultation` holds
+  that appointment.
+- UPDATE: `consultation_finalized_at` may go from null to `now()` only while
+  `app.finalizing_consultation` holds the note's appointment (also on a
+  closed note); `recorded_late` cannot be changed by hand; a note with
+  `consultation_finalized_at`, `recorded_late` or `supplies_recorded_at`
+  cannot change `appointment_id` or `patient_id` (`42501`).
+- Closing (open → `finalized_at` set): refused without diagnosis and plan
+  (`P0001`, same message as `close_clinical_note()`); `recorded_late`
+  computed against `consultation_finalized_at`, or the appointment's start
+  when there is none (a past-visit note stays late).
+- Frozen tuple: the migration 20 columns plus `recorded_late`.
+- DELETE of an open note refused when `consultation_finalized_at` is set or
+  `recorded_late` is true.
+- A direct `UPDATE … set finalized_at` still closes a COMPLETE note, as in
+  migrations 10 and 20 (the older checks do that). The app only closes
+  through `close_clinical_note()`. If the optional historical back-fill
+  (Phase 2, step P2-3b) is ever run after migration 31, notes without a
+  diagnosis or plan are refused by it.
+
+**Rollback:**
+
+1. Revoke the RPCs: `revoke execute on function
+   public.close_clinical_note(uuid) from authenticated;` and the same for
+   `public.staff_record_past_visit_with_note(uuid, uuid, timestamptz, text,
+   numeric, text, text, text, text, text, text, text, jsonb)`.
+2. Re-run the `finalize_consultation` and `clinical_notes_enforce_integrity`
+   blocks of migration 20, the `consultation_is_finalized` block of
+   migration 10, the `record_consultation_supplies` block of migration 22 and
+   the `get_procedure_profit` block of migration 30. Then re-run the revoke of
+   `finalize_consultation(uuid)` from migration 26.
+3. Notes left open by migration 31 stay open; close them first (or accept
+   them as drafts). The two columns can stay.
+
+**Maintainers:** re-running migration 10, 20, 22 or 30 restores the older body
+of the function it defines. Run migration 31 again afterwards.
+
+## Open notes check — `supabase/tests/open_notes_check.sql`
+
+- Expected: one notice starting with `OPEN NOTES CHECK PASSED`.
+- `ABORTED` means migration 31 is missing, or the past-visit hour it uses
+  (about 2000 days ago) is busy. Nothing was proven.
+- With a throwaway doctor, admin and patient it proves:
+  - "Finalizar Consulta" charges, finalizes the prescription and stamps the
+    consultation while the note stays open, also with an empty diagnosis; an
+    appointment without a note gets an empty open one; a refused charge
+    stamps nothing;
+  - no new note or prescription after "Finalizar Consulta";
+  - the open note stays editable, and every edit is audited (column names
+    only);
+  - `close_clinical_note()` needs a diagnosis and a plan, closes once, and
+    the closed note is frozen (content, vital signs, delete, `recorded_late`);
+  - a direct `UPDATE` of `finalized_at` with an empty plan is refused;
+  - the note of a finalized consultation cannot be moved to another
+    appointment or patient;
+  - with the prescription finalized first and no note, "Finalizar Consulta"
+    with a supplies list creates the open note and marks the supplies;
+  - `recorded_late` is true 24 h after "Finalizar Consulta" even when the
+    appointment's start is moved to now before closing, true for a past
+    visit, false within 24 h; neither marker is client-settable;
+  - a past visit records its charge and an open late note in one call; none
+    without note fields; nothing left behind when the note is refused;
+  - open notes of the record cannot be deleted, a never-finalized draft can;
+  - addenda need a closed note;
+  - supplies follow the finalized consultation (open note included) and
+    never a past visit;
+  - the admin cannot close notes or record past visits; grants are as
+    reviewed.
+- It disables the WhatsApp and overlap triggers inside its own transaction,
+  and the note integrity trigger for ONE owner `UPDATE` that dates a
+  consultation 3 days back (re-enabled right after; the `ROLLBACK` restores
+  everything).
 
 ## When a WhatsApp is sent (`notify-appointment`)
 

@@ -806,6 +806,9 @@ export const CalendarTab = ({
                     patientId={selectedAppointment.patientId}
                     patientName={selectedAppointment.patientName}
                     phone={selectedAppointment.phone}
+                    // Refetch so the chip's "Nota pendiente" and the
+                    // Centro de Comando count follow the note's state.
+                    onNoteChanged={() => void onDataChange()}
                   />
                 )}
                 {/* A finalized consultation cannot be cancelled, moved or started again. */}

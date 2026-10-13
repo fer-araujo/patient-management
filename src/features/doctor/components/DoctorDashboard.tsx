@@ -27,6 +27,8 @@ import {
 import { CalendarProvider } from "../context/CalendarProvider";
 import { ClinicModeSwitch } from "./ClinicModeSwitch";
 import { PrescriberProfileButton } from "../prescription/PrescriberProfileButton";
+import { PendingNotesModal } from "./modals/PendingNotesModal";
+import type { DashboardPatient } from "../../../lib/services/patientService";
 
 export const DoctorDashboard = () => {
   const [appointments, setAppointments] = useState<DashboardAppointment[]>([]);
@@ -54,6 +56,13 @@ export const DoctorDashboard = () => {
   const [activeConsultation, setActiveConsultation] =
     useState<DashboardAppointment | null>(null);
   const [blockedSlots, setBlockedSlots] = useState<DashboardBlockedSlot[]>([]);
+  const [isPendingNotesOpen, setIsPendingNotesOpen] = useState(false);
+  // The record opened from "Notas pendientes de cerrar", on that visit's note.
+  const [pendingNoteRecord, setPendingNoteRecord] =
+    useState<DashboardAppointment | null>(null);
+
+  // Finalized consultations (and past visits) whose note is still open.
+  const pendingNotes = appointments.filter((a) => a.notePending);
 
   const loadData = async () => {
     try {
@@ -116,6 +125,31 @@ export const DoctorDashboard = () => {
     );
   }
 
+  if (pendingNoteRecord) {
+    // Review mode needs only who the patient is; the record reads the rest
+    // (reminders included).
+    const patient: DashboardPatient = {
+      id: pendingNoteRecord.patientId,
+      name: pendingNoteRecord.patientName,
+      phone: pendingNoteRecord.phone,
+      status: pendingNoteRecord.patientStatus ?? "active",
+      hasPrivacyConsent: false,
+      totalVisits: 1,
+      lastVisit: null,
+    };
+    return (
+      <ConsultationWorkspace
+        key={`record-${pendingNoteRecord.id}`}
+        patient={patient}
+        focusAppointmentId={pendingNoteRecord.id}
+        onClose={() => {
+          setPendingNoteRecord(null);
+          loadData();
+        }}
+      />
+    );
+  }
+
   if (isLoading) {
     return (
       <div className="min-h-[80vh] flex flex-col items-center justify-center">
@@ -135,6 +169,17 @@ export const DoctorDashboard = () => {
             Centro de Comando
           </h1>
           <div className="flex flex-wrap items-center gap-3 max-md:w-full">
+            {pendingNotes.length > 0 && (
+              <button
+                type="button"
+                onClick={() => setIsPendingNotesOpen(true)}
+                className="min-h-11 px-4 rounded-full text-sm font-bold border text-amber-700 bg-amber-50 border-amber-200 hover:bg-amber-100 transition-colors cursor-pointer whitespace-nowrap"
+              >
+                {pendingNotes.length === 1
+                  ? "1 nota pendiente de cerrar"
+                  : `${pendingNotes.length} notas pendientes de cerrar`}
+              </button>
+            )}
             <PrescriberProfileButton />
             <ClinicModeSwitch />
           </div>
@@ -204,6 +249,16 @@ export const DoctorDashboard = () => {
           )}
         </CalendarProvider>
       </div>
+
+      <PendingNotesModal
+        isOpen={isPendingNotesOpen}
+        onClose={() => setIsPendingNotesOpen(false)}
+        appointments={pendingNotes}
+        onOpenRecord={(appointment) => {
+          setIsPendingNotesOpen(false);
+          setPendingNoteRecord(appointment);
+        }}
+      />
     </main>
   );
 };
