@@ -168,7 +168,11 @@ export const updatePatientStatus = async (
 };
 
 // 6. CREAR PACIENTE
-/** Creates the record and returns its id (null if the server did not return it). */
+/**
+ * Creates the record and returns its id (null if the server did not return it).
+ * `background` (optional "Antecedentes") goes through the same allow-list and
+ * validation as updatePatientBackground: any other key is dropped.
+ */
 export const createPatient = async (
   firstName: string,
   lastName: string,
@@ -176,7 +180,9 @@ export const createPatient = async (
   email?: string,
   dob?: string,
   gender?: string,
+  background: Partial<PatientBackgroundFields> = {},
 ): Promise<string | null> => {
+  const backgroundPayload = toBackgroundPayload(background);
   const { data, error } = await supabase
     .from("patients")
     .insert([
@@ -187,6 +193,7 @@ export const createPatient = async (
         email: email || null,
         dob: dob || null,
         gender: gender || null,
+        ...backgroundPayload,
         status: "active",
       },
     ])

@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
 import { Loader2, Save, Package, Edit2 } from "lucide-react";
 import toast from "react-hot-toast";
 import { Modal } from "../../../../components/ui/Modal";
@@ -7,20 +7,19 @@ import { Dropdown } from "../../../../components/ui/Dropdown";
 import { Button } from "../../../../components/ui/Button";
 import {
   adjustStock,
+  buildCategoryOptions,
+  CATEGORY_MAX_LENGTH,
   createInventoryItem,
+  fetchInventoryCategories,
   registerPurchase,
+  resolveNewCategory,
   updateInventoryItem,
   type InventoryItem,
   type InventoryFormData,
 } from "../../../../lib/services/inventoryService";
 
-const CATEGORY_OPTIONS = [
-  { label: "Desechables Clínicos", value: "Desechables" },
-  { label: "Medicación / Toxinas", value: "Medicamentos" },
-  { label: "Insumos Quirúrgicos", value: "Insumos" },
-  { label: "Productos de Venta", value: "Venta Pública" },
-  { label: "Otro", value: "Otro" },
-];
+/** Dropdown entry that reveals the "Nueva categoría" field instead of being saved. */
+const NEW_CATEGORY_OPTION = { label: "+ Nueva categoría", value: "__new_category__" };
 
 const UNIT_OPTIONS = [
   { label: "Piezas (Pzs)", value: "piezas" },
@@ -66,9 +65,49 @@ export const InventoryModal = ({
   // Optional: what the doctor paid for the starting stock of a NEW item, so
   // that first investment also reaches Finanzas.
   const [initialCost, setInitialCost] = useState("");
+  // Categories already used in inventory, besides the defaults.
+  const [usedCategories, setUsedCategories] = useState<string[]>([]);
+  const [isNewCategory, setIsNewCategory] = useState(false);
+  const [newCategory, setNewCategory] = useState("");
+  const [categoryError, setCategoryError] = useState("");
+
+  useEffect(() => {
+    if (!isOpen) return;
+    let isCurrent = true;
+    fetchInventoryCategories()
+      .then((categories) => {
+        if (isCurrent) setUsedCategories(categories);
+      })
+      .catch((error: unknown) => {
+        // The defaults (and "+ Nueva categoría") still work.
+        console.error("[InventoryModal] Error al cargar las categorías:", error);
+      });
+    return () => {
+      isCurrent = false;
+    };
+  }, [isOpen]);
+
+  // The item's own category is always offered, even before the list loads.
+  const categoryOptions = useMemo(
+    () => buildCategoryOptions([...usedCategories, formData.category]),
+    [usedCategories, formData.category],
+  );
+
+  const handleCategoryChange = (value: string) => {
+    setCategoryError("");
+    if (value === NEW_CATEGORY_OPTION.value) {
+      setIsNewCategory(true);
+      return;
+    }
+    setIsNewCategory(false);
+    setFormData({ ...formData, category: value });
+  };
 
   useEffect(() => {
     setInitialCost("");
+    setIsNewCategory(false);
+    setNewCategory("");
+    setCategoryError("");
     if (itemToEdit) {
       setFormData({
         name: itemToEdit.name,
@@ -90,6 +129,18 @@ export const InventoryModal = ({
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    let category = formData.category;
+    if (isNewCategory) {
+      try {
+        category = resolveNewCategory(newCategory, categoryOptions);
+      } catch (error: unknown) {
+        setCategoryError(
+          error instanceof Error ? error.message : "Revisa la categoría.",
+        );
+        return;
+      }
+    }
+    const itemData = { ...formData, category };
     setIsLoading(true);
     let createdId: string | null = null;
 
@@ -97,7 +148,7 @@ export const InventoryModal = ({
       if (itemToEdit) {
         // Stock is never written directly: a changed count goes through the
         // ledger as the difference from what was shown when the modal opened.
-        const { stock_quantity, ...details } = formData;
+        const { stock_quantity, ...details } = itemData;
         await updateInventoryItem(itemToEdit.id, details);
         const delta = stock_quantity - itemToEdit.stock_quantity;
         if (delta !== 0) {
@@ -116,7 +167,7 @@ export const InventoryModal = ({
           // Create empty, then record the starting stock as a purchase so its
           // cost lands in the ledger (the insert trigger would log it free).
           createdId = await createInventoryItem({
-            ...formData,
+            ...itemData,
             stock_quantity: 0,
           });
           if (createdId) {
@@ -128,7 +179,7 @@ export const InventoryModal = ({
             );
           }
         } else {
-          createdId = await createInventoryItem(formData);
+          createdId = await createInventoryItem(itemData);
         }
         toast.success("Artículo agregado al inventario");
       }
@@ -183,15 +234,37 @@ export const InventoryModal = ({
             className={compactInputClasses}
           />
           <div className="w-full">
-            <label className="text-brand-dark font-bold text-sm mb-2 block">
+            <label
+              id="inventory-category-label"
+              className="text-brand-dark font-bold text-sm mb-2 block"
+            >
               Categoría
             </label>
             <Dropdown
-              options={CATEGORY_OPTIONS}
-              value={formData.category}
-              onChange={(val) => setFormData({ ...formData, category: val })}
+              options={[...categoryOptions, NEW_CATEGORY_OPTION]}
+              value={isNewCategory ? NEW_CATEGORY_OPTION.value : formData.category}
+              onChange={handleCategoryChange}
+              labelledBy="inventory-category-label"
               className="py-0! text-sm!"
             />
+            {isNewCategory && (
+              <Input
+                id="inventory-new-category"
+                label="Nueva categoría"
+                type="text"
+                placeholder="Ej. Material de curación"
+                maxLength={CATEGORY_MAX_LENGTH}
+                value={newCategory}
+                onChange={(e) => {
+                  setNewCategory(e.target.value);
+                  setCategoryError("");
+                }}
+                error={categoryError || undefined}
+                autoFocus
+                containerClassName={`w-full mt-3 ${compactLabelClasses}`}
+                className={compactInputClasses}
+              />
+            )}
           </div>
         </div>
 

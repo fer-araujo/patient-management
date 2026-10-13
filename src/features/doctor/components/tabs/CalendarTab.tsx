@@ -43,6 +43,7 @@ import { formatMXN } from "../../../../lib/services/inventoryService";
 import { ChargeModal } from "../modals/ChargeModal";
 import { RecordSuppliesModal } from "../modals/RecordSuppliesModal";
 import { PastVisitModal } from "../modals/PastVisitModal";
+import { NewPatientModal } from "../modals/NewPatientModal";
 import { AppointmentPrescriptionActions } from "../../prescription/AppointmentPrescriptionActions";
 import { useCalendar } from "../../hooks/useCalendar";
 import {
@@ -66,6 +67,9 @@ const getISODate = () => {
 
 /** Default length used to list free times before a service is chosen. */
 const DEFAULT_SLOT_MINS = 30;
+
+/** Patient Dropdown entry that opens "Nuevo Paciente" instead of being selected. */
+const NEW_PATIENT_OPTION = "new";
 
 interface CalendarTabProps {
   appointments: DashboardAppointment[];
@@ -215,6 +219,7 @@ export const CalendarTab = ({
   const [actionTab, setActionTab] = useState<"schedule" | "block">("schedule");
   const [settingsModalOpen, setSettingsModalOpen] = useState(false);
   const [pastVisitOpen, setPastVisitOpen] = useState(false);
+  const [isNewPatientOpen, setIsNewPatientOpen] = useState(false);
 
   const [selectedPatient, setSelectedPatient] = useState("");
   const [selectedService, setSelectedService] = useState("");
@@ -256,7 +261,7 @@ export const CalendarTab = ({
   const patientOptions = useMemo(
     () => [
       ...bookingCatalog.patientOptions,
-      { label: "+ Crear nuevo paciente", value: "new", disabled: true },
+      { label: "+ Crear nuevo paciente", value: NEW_PATIENT_OPTION },
     ],
     [bookingCatalog.patientOptions],
   );
@@ -310,6 +315,18 @@ export const CalendarTab = ({
       setRescheduleTime(rescheduleOptions[0]?.value ?? "");
     }
   }, [rescheduleOptions, rescheduleTime]);
+
+  /**
+   * "+ Crear nuevo paciente" opens "Nuevo Paciente" on top of "Agendar Cita";
+   * the Dropdown keeps its current patient until one is created.
+   */
+  const handlePatientChange = (value: string) => {
+    if (value === NEW_PATIENT_OPTION) {
+      setIsNewPatientOpen(true);
+      return;
+    }
+    setSelectedPatient(value);
+  };
 
   /** "Agendar Cita" always starts empty: no patient or service from a previous booking. */
   const resetScheduleForm = () => {
@@ -972,6 +989,17 @@ export const CalendarTab = ({
         />
       )}
 
+      <NewPatientModal
+        isOpen={!!actionModal && isNewPatientOpen}
+        onClose={() => setIsNewPatientOpen(false)}
+        onCreated={(patient) => {
+          // Reload the directory so the new patient is listed, then select it.
+          bookingCatalog.load();
+          if (patient.id) setSelectedPatient(patient.id);
+          toast.success("Paciente creado");
+        }}
+      />
+
       {chargeTarget && (
         <ChargeModal
           key={`charge-${chargeTarget.appointment.id}`}
@@ -1039,7 +1067,7 @@ export const CalendarTab = ({
                         labelledBy="schedule-patient-label"
                         options={patientOptions}
                         value={selectedPatient}
-                        onChange={setSelectedPatient}
+                        onChange={handlePatientChange}
                         placeholder="Buscar por nombre..."
                         searchable={true}
                       />

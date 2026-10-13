@@ -6,6 +6,7 @@ import { Modal } from "../../../../components/ui/Modal";
 import { Dropdown } from "../../../../components/ui/Dropdown";
 import { DatePicker } from "../../../../components/ui/DatePicker";
 import {
+  BLOOD_TYPES,
   createPatient,
   PATIENT_GENDERS,
 } from "../../../../lib/services/patientService";
@@ -17,6 +18,12 @@ const GENDER_OPTIONS = [
   ...PATIENT_GENDERS.map((g) => ({ label: g, value: g })),
 ];
 
+/** Same list as "Editar datos": stored with an ASCII minus, shown with a typographic one. */
+const BLOOD_TYPE_OPTIONS = [
+  ...BLOOD_TYPES.map((t) => ({ label: t.replace("-", "−"), value: t })),
+  { label: "No sé", value: "" },
+];
+
 const EMPTY_NEW_PATIENT = {
   firstName: "",
   lastName: "",
@@ -24,7 +31,31 @@ const EMPTY_NEW_PATIENT = {
   email: "",
   dob: "",
   gender: "",
+  bloodType: "",
+  allergies: "",
+  chronicConditions: "",
+  familyHistory: "",
+  personalPathologicalHistory: "",
+  nonPathologicalHistory: "",
+  currentIllness: "",
 };
+
+type HistoryField =
+  | "familyHistory"
+  | "personalPathologicalHistory"
+  | "nonPathologicalHistory"
+  | "currentIllness";
+
+/** Clinical history (NOM-004 6.1), same labels and order as "Editar datos". */
+const HISTORY_FIELDS: { key: HistoryField; label: string }[] = [
+  { key: "familyHistory", label: "Heredofamiliares" },
+  { key: "personalPathologicalHistory", label: "Personales patológicos" },
+  { key: "nonPathologicalHistory", label: "Personales no patológicos" },
+  { key: "currentIllness", label: "Padecimiento actual" },
+];
+
+const INPUT_CLASSES =
+  "w-full p-3 border border-slate-200 rounded-xl focus:outline-none focus:border-brand-primary text-sm";
 
 const todayIso = (): string => {
   const now = new Date();
@@ -70,6 +101,7 @@ export const NewPatientModal = ({ isOpen, onClose, onCreated }: Props) => {
   const [form, setForm] = useState(EMPTY_NEW_PATIENT);
   const [paperConsent, setPaperConsent] = useState(false);
   const [isDobPickerOpen, setIsDobPickerOpen] = useState(false);
+  const [isBackgroundOpen, setIsBackgroundOpen] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
 
   const close = () => {
@@ -79,6 +111,7 @@ export const NewPatientModal = ({ isOpen, onClose, onCreated }: Props) => {
   };
   const discard = () => {
     setForm(EMPTY_NEW_PATIENT);
+    setIsBackgroundOpen(false);
     close();
   };
 
@@ -94,6 +127,15 @@ export const NewPatientModal = ({ isOpen, onClose, onCreated }: Props) => {
         form.email,
         form.dob,
         form.gender,
+        {
+          blood_type: form.bloodType,
+          allergies: form.allergies,
+          chronic_conditions: form.chronicConditions,
+          family_history: form.familyHistory,
+          personal_pathological_history: form.personalPathologicalHistory,
+          non_pathological_history: form.nonPathologicalHistory,
+          current_illness: form.currentIllness,
+        },
       );
       if (paperConsent) {
         try {
@@ -145,7 +187,7 @@ export const NewPatientModal = ({ isOpen, onClose, onCreated }: Props) => {
               type="text"
               value={form.firstName}
               onChange={(e) => setForm({ ...form, firstName: e.target.value })}
-              className="w-full p-3 border border-slate-200 rounded-xl focus:outline-none focus:border-brand-primary text-sm"
+              className={INPUT_CLASSES}
               placeholder="Ej. María"
             />
           </div>
@@ -158,7 +200,7 @@ export const NewPatientModal = ({ isOpen, onClose, onCreated }: Props) => {
               type="text"
               value={form.lastName}
               onChange={(e) => setForm({ ...form, lastName: e.target.value })}
-              className="w-full p-3 border border-slate-200 rounded-xl focus:outline-none focus:border-brand-primary text-sm"
+              className={INPUT_CLASSES}
               placeholder="Ej. González"
             />
           </div>
@@ -172,7 +214,7 @@ export const NewPatientModal = ({ isOpen, onClose, onCreated }: Props) => {
               type="tel"
               value={form.phone}
               onChange={(e) => setForm({ ...form, phone: e.target.value })}
-              className="w-full p-3 border border-slate-200 rounded-xl focus:outline-none focus:border-brand-primary text-sm"
+              className={INPUT_CLASSES}
               placeholder="10 dígitos"
             />
           </div>
@@ -187,7 +229,7 @@ export const NewPatientModal = ({ isOpen, onClose, onCreated }: Props) => {
               type="email"
               value={form.email}
               onChange={(e) => setForm({ ...form, email: e.target.value })}
-              className="w-full p-3 border border-slate-200 rounded-xl focus:outline-none focus:border-brand-primary text-sm"
+              className={INPUT_CLASSES}
               placeholder="correo@ejemplo.com"
             />
           </div>
@@ -243,6 +285,98 @@ export const NewPatientModal = ({ isOpen, onClose, onCreated }: Props) => {
               className="py-0! text-sm!"
             />
           </div>
+        </div>
+        <div className="border-t border-slate-100 pt-2">
+          <button
+            type="button"
+            aria-expanded={isBackgroundOpen}
+            aria-controls="new-patient-background"
+            onClick={() => setIsBackgroundOpen((open) => !open)}
+            className="text-sm font-bold text-brand-primary hover:underline cursor-pointer min-h-11 px-2"
+          >
+            {isBackgroundOpen
+              ? "Ocultar antecedentes"
+              : "Agregar antecedentes (opcional)"}
+          </button>
+          {isBackgroundOpen && (
+            <div id="new-patient-background" className="space-y-4 pt-2">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <div className="w-full">
+                  <label
+                    id="new-patient-blood-type-label"
+                    className="text-brand-dark font-bold text-sm mb-2 block"
+                  >
+                    Tipo de sangre
+                  </label>
+                  <Dropdown
+                    options={BLOOD_TYPE_OPTIONS}
+                    value={form.bloodType}
+                    onChange={(val) => setForm({ ...form, bloodType: val })}
+                    labelledBy="new-patient-blood-type-label"
+                    className="py-0! text-sm!"
+                  />
+                </div>
+                <div className="space-y-1.5">
+                  <label
+                    htmlFor="new-patient-allergies"
+                    className="text-sm font-bold text-brand-dark"
+                  >
+                    Alergias
+                  </label>
+                  <input
+                    id="new-patient-allergies"
+                    type="text"
+                    value={form.allergies}
+                    onChange={(e) =>
+                      setForm({ ...form, allergies: e.target.value })
+                    }
+                    className={INPUT_CLASSES}
+                    placeholder="Ej. Penicilina"
+                  />
+                </div>
+              </div>
+              <div className="space-y-1.5">
+                <label
+                  htmlFor="new-patient-chronic-conditions"
+                  className="text-sm font-bold text-brand-dark"
+                >
+                  Enfermedades crónicas
+                </label>
+                <input
+                  id="new-patient-chronic-conditions"
+                  type="text"
+                  value={form.chronicConditions}
+                  onChange={(e) =>
+                    setForm({ ...form, chronicConditions: e.target.value })
+                  }
+                  className={INPUT_CLASSES}
+                  placeholder="Ej. Diabetes"
+                />
+              </div>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                {HISTORY_FIELDS.map((field) => (
+                  <div key={field.key} className="w-full">
+                    <label
+                      htmlFor={`new-patient-${field.key}`}
+                      className="text-brand-dark font-bold text-sm mb-2 block"
+                    >
+                      {field.label}
+                    </label>
+                    <textarea
+                      id={`new-patient-${field.key}`}
+                      rows={2}
+                      placeholder="Ej. Negados"
+                      value={form[field.key]}
+                      onChange={(e) =>
+                        setForm({ ...form, [field.key]: e.target.value })
+                      }
+                      className="w-full px-3 py-2.5 border-2 border-brand-light rounded-lg text-sm text-brand-dark bg-white focus:border-brand-primary focus:ring-2 focus:ring-brand-primary/20 outline-none transition-all resize-none"
+                    />
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
         </div>
         <PaperConsentCheckbox checked={paperConsent} onChange={setPaperConsent} />
         <div className="pt-4 flex gap-3 border-t border-slate-100 mt-2 max-md:flex-col-reverse max-md:*:w-full max-md:*:flex-none">

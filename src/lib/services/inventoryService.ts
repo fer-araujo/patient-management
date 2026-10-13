@@ -94,6 +94,98 @@ export const fetchInventory = async (): Promise<InventoryItem[]> => {
   return data || [];
 };
 
+/** Built-in categories; `value` is what inventory.category stores. */
+export const DEFAULT_INVENTORY_CATEGORIES: readonly { label: string; value: string }[] = [
+  { label: "Desechables Clínicos", value: "Desechables" },
+  { label: "Medicación / Toxinas", value: "Medicamentos" },
+  { label: "Insumos Quirúrgicos", value: "Insumos" },
+  { label: "Productos de Venta", value: "Venta Pública" },
+  { label: "Otro", value: "Otro" },
+];
+
+export const CATEGORY_MIN_LENGTH = 2;
+export const CATEGORY_MAX_LENGTH = 40;
+
+/** Trimmed, with inner runs of spaces collapsed. */
+export const normalizeCategory = (name: string): string =>
+  name.trim().replace(/\s+/g, " ");
+
+const categoryKey = (name: string) =>
+  normalizeCategory(name).toLocaleLowerCase("es");
+
+/**
+ * The Dropdown options: the defaults, then every other category in `used`
+ * (case-insensitive, first spelling kept), sorted by name.
+ */
+export const buildCategoryOptions = (
+  used: readonly string[],
+): { label: string; value: string }[] => {
+  const seen = new Set<string>();
+  for (const c of DEFAULT_INVENTORY_CATEGORIES) {
+    seen.add(categoryKey(c.value));
+    seen.add(categoryKey(c.label));
+  }
+  const custom: string[] = [];
+  for (const raw of used) {
+    const name = normalizeCategory(raw ?? "");
+    const key = categoryKey(name);
+    if (!name || seen.has(key)) continue;
+    seen.add(key);
+    custom.push(name);
+  }
+  custom.sort((a, b) => a.localeCompare(b, "es", { sensitivity: "base" }));
+  return [
+    ...DEFAULT_INVENTORY_CATEGORIES,
+    ...custom.map((name) => ({ label: name, value: name })),
+  ];
+};
+
+/**
+ * Checks a category typed in "+ Nueva categoría". Returns the value to save:
+ * an existing category with the same name (any case) is reused instead of
+ * creating a duplicate. Throws a Spanish message when the length is wrong.
+ */
+export const resolveNewCategory = (
+  typed: string,
+  options: readonly { label: string; value: string }[],
+): string => {
+  const name = normalizeCategory(typed);
+  if (name.length < CATEGORY_MIN_LENGTH || name.length > CATEGORY_MAX_LENGTH) {
+    throw new Error(
+      `La categoría debe tener de ${CATEGORY_MIN_LENGTH} a ${CATEGORY_MAX_LENGTH} caracteres.`,
+    );
+  }
+  const key = categoryKey(name);
+  const existing = options.find(
+    (o) => categoryKey(o.value) === key || categoryKey(o.label) === key,
+  );
+  return existing ? existing.value : name;
+};
+
+/** Every distinct category already used in inventory (active or not), paged. */
+export const fetchInventoryCategories = async (): Promise<string[]> => {
+  const { data, error } = await fetchAllRows<{ id: string; category: string | null }>(
+    (from, to) =>
+      supabase
+        .from("inventory")
+        .select("id, category")
+        .order("id", { ascending: true })
+        .range(from, to)
+        .returns<{ id: string; category: string | null }[]>(),
+  );
+
+  if (error) {
+    console.error("[InventoryService] categories failed:", error.code);
+    throw new Error("No se pudieron cargar las categorías.");
+  }
+  const byKey = new Map<string, string>();
+  for (const row of data) {
+    const name = normalizeCategory(row.category ?? "");
+    if (name && !byKey.has(categoryKey(name))) byKey.set(categoryKey(name), name);
+  }
+  return [...byKey.values()];
+};
+
 /**
  * Creates an item. Its initial stock is recorded by the database as an
  * "Inventario inicial" movement (migration 16).

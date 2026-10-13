@@ -7,7 +7,11 @@ import {
   fetchInventory,
   type InventoryItem,
 } from "../../../../lib/services/inventoryService";
-import { ServiceModal } from "./ServiceModal";
+import {
+  createService,
+  setServiceSupplies,
+} from "../../../../lib/services/catalogService";
+import { DURATION_ERROR, ServiceModal } from "./ServiceModal";
 
 vi.mock("react-hot-toast", () => {
   const toastFn = Object.assign(vi.fn(), {
@@ -25,6 +29,14 @@ vi.mock("../../../../lib/services/inventoryService", async (importOriginal) => (
   >()),
   fetchInventory: vi.fn(),
   createInventoryItem: vi.fn(),
+}));
+
+vi.mock("../../../../lib/services/catalogService", async (importOriginal) => ({
+  ...(await importOriginal<
+    typeof import("../../../../lib/services/catalogService")
+  >()),
+  createService: vi.fn(),
+  setServiceSupplies: vi.fn(),
 }));
 
 const item = (id: string, name: string, unit = "piezas"): InventoryItem => ({
@@ -160,4 +172,48 @@ describe("ServiceModal: a supply created from the form", () => {
     expect(screen.queryByLabelText("Cantidad de Hilos PDO")).toBeNull();
     expect(toast).not.toHaveBeenCalled();
   });
+});
+
+describe("ServiceModal duration", () => {
+  const fillAndSave = async (duration: string) => {
+    vi.mocked(fetchInventory).mockResolvedValue([]);
+    vi.mocked(createService).mockResolvedValue("srv-new");
+    vi.mocked(setServiceSupplies).mockResolvedValue(undefined);
+    const user = userEvent.setup();
+    render(modal(true));
+    await user.type(await screen.findByLabelText("Nombre del Servicio"), "Peeling");
+    const field = screen.getByLabelText("Duración (minutos)");
+    await user.clear(field);
+    if (duration) await user.type(field, duration);
+    await user.click(screen.getByRole("button", { name: /Crear Servicio/ }));
+    return field as HTMLInputElement;
+  };
+
+  it("starts at 45 minutes", async () => {
+    vi.mocked(fetchInventory).mockResolvedValue([]);
+    render(modal(true));
+    expect(await screen.findByLabelText("Duración (minutos)")).toHaveValue(45);
+  });
+
+  it.each([20, 50])("accepts %i minutes (not a multiple of 15)", async (mins) => {
+    const field = await fillAndSave(String(mins));
+
+    expect(field.validity.valid).toBe(true);
+    await waitFor(() =>
+      expect(createService).toHaveBeenCalledWith(
+        expect.objectContaining({ name: "Peeling", durationMins: mins }),
+      ),
+    );
+  });
+
+  it.each(["4", "481", "20.5", ""])(
+    "refuses %j with a Spanish message and saves nothing",
+    async (typed) => {
+      const field = await fillAndSave(typed);
+
+      expect(field.validity.valid).toBe(false);
+      expect(field.validationMessage).toBe(DURATION_ERROR);
+      expect(createService).not.toHaveBeenCalled();
+    },
+  );
 });

@@ -325,6 +325,31 @@ describe("CalendarTab scheduling", () => {
     expect(times.queryByRole("option", { name: "04:30 PM" })).toBeNull();
   });
 
+  it("blocks the exact minutes of durations that are not multiples of 15", async () => {
+    setNow(new Date(2026, 9, 14, 7, 0));
+    supabaseMock.reset();
+    stubBookingCatalog(defaultPatients, [serviceRow("srv-peeling", "Peeling", 20)]);
+    // Friday 16: a 50-minute visit at 10:00 AM (ends 10:50).
+    const { user } = renderTab([
+      appt({ date: "16 oct 2026", time: "10:00 AM", durationMins: 50 }),
+    ]);
+
+    await openMonthDay(user, "16");
+    await waitForBookingLists();
+    await pickDropdownOption(user, "Servicio a realizar", "Peeling");
+    await user.click(combobox("Hora"));
+    const times = within(listbox("Hora"));
+    // 09:30-09:50 fits; 09:45-10:05 would overlap the visit.
+    expect(times.getByRole("option", { name: "09:30 AM" })).toBeInTheDocument();
+    expect(times.queryByRole("option", { name: "09:45 AM" })).toBeNull();
+    // 10:45 still overlaps 10:00-10:50; 11:00 is free.
+    expect(times.queryByRole("option", { name: "10:45 AM" })).toBeNull();
+    expect(times.getByRole("option", { name: "11:00 AM" })).toBeInTheDocument();
+    // 05:45-06:05 PM would end after closing.
+    expect(times.getByRole("option", { name: "05:30 PM" })).toBeInTheDocument();
+    expect(times.queryByRole("option", { name: "05:45 PM" })).toBeNull();
+  });
+
   it("offers active, non-archived patients by name and only active services", async () => {
     setNow(new Date(2026, 9, 14, 7, 0));
     supabaseMock.reset();
@@ -422,6 +447,59 @@ describe("CalendarTab scheduling", () => {
     expect(
       within(listbox("Buscar Paciente")).getByRole("option", { name: "Nadia Nueva" }),
     ).toBeInTheDocument();
+  });
+
+  it('"+ Crear nuevo paciente" creates the patient without leaving and selects it', async () => {
+    setNow(new Date(2026, 9, 14, 7, 0));
+    supabaseMock.reset();
+    supabaseMock.onFrom("services", { data: defaultServices });
+    let directory = [patientRow("p-ana", "Ana", "Pérez")];
+    supabaseMock.onFrom("patients", (q) => {
+      if (q.has("insert")) {
+        directory = [...directory, patientRow("p-rosa", "Rosa", "Treviño")];
+        return { data: { id: "p-rosa" } };
+      }
+      return { data: directory };
+    });
+    const { user } = renderTab([]);
+
+    await openMonthDay(user, "16");
+    await waitForBookingLists();
+    await pickDropdownOption(user, "Buscar Paciente", "+ Crear nuevo paciente");
+
+    // The Dropdown never takes "new" as a patient.
+    expect(combobox("Buscar Paciente")).toHaveTextContent("Buscar por nombre...");
+    await user.type(await screen.findByPlaceholderText("Ej. María"), "Rosa");
+    await user.type(screen.getByPlaceholderText("Ej. González"), "Treviño");
+    await user.click(screen.getByRole("button", { name: "Crear Expediente" }));
+
+    await waitFor(() =>
+      expect(screen.queryByRole("button", { name: "Crear Expediente" })).toBeNull(),
+    );
+    await waitFor(() =>
+      expect(combobox("Buscar Paciente")).toHaveTextContent("Rosa Treviño"),
+    );
+    // The directory was read again after the insert.
+    expect(
+      supabaseMock.queries("patients").filter((q) => !q.has("insert")).length,
+    ).toBeGreaterThanOrEqual(2);
+    expect(screen.getByRole("button", { name: "Confirmar Cita" })).toBeInTheDocument();
+  });
+
+  it('closing "Nuevo Paciente" keeps the patient that was already chosen', async () => {
+    setNow(new Date(2026, 9, 14, 7, 0));
+    const { user } = renderTab([]);
+
+    await openMonthDay(user, "16");
+    await waitForBookingLists();
+    await pickDropdownOption(user, "Buscar Paciente", "Marta López");
+    await pickDropdownOption(user, "Buscar Paciente", "+ Crear nuevo paciente");
+    await screen.findByPlaceholderText("Ej. María");
+    await user.click(screen.getByRole("button", { name: "Cancelar" }));
+
+    await waitFor(() => expect(screen.queryByPlaceholderText("Ej. María")).toBeNull());
+    expect(combobox("Buscar Paciente")).toHaveTextContent("Marta López");
+    expect(supabaseMock.queries("patients").some((q) => q.has("insert"))).toBe(false);
   });
 
   it("starts the next booking empty instead of reusing the last patient and service", async () => {
