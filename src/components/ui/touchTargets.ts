@@ -9,8 +9,14 @@
  * for words, so every action button shows its name there, whatever the pointer.
  */
 
-/** Icon-only button: at least 44 x 44 px on touch. */
-export const TOUCH_ICON_BUTTON = "pointer-coarse:w-11 pointer-coarse:h-11";
+/**
+ * Icon-only button: at least 44 x 44 px on touch. The icon never shrinks: a
+ * flex item SVG collapses to 0 px wide when the button's padding is wider
+ * than the 44 px box (e.g. `Button`'s `px-6`), which hid the calendar arrows
+ * on iPad.
+ */
+export const TOUCH_ICON_BUTTON =
+  "pointer-coarse:w-11 pointer-coarse:h-11 [&>svg]:shrink-0";
 
 /** Icon button that shows a short text label on touch and on phones. */
 export const TOUCH_LABELED_BUTTON =

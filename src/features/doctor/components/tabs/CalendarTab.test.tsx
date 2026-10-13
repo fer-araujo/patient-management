@@ -213,6 +213,23 @@ describe("CalendarTab pending appointments", () => {
   });
 });
 
+// Regression (iPad): the toolbar arrows are `Button`s, whose base `px-6`
+// padding is wider than the 44 px touch box; the chevrons collapsed to 0 px
+// and the buttons looked empty. On touch they drop the padding and the icons
+// never shrink.
+describe("CalendarTab toolbar arrows", () => {
+  it("keep their chevrons visible inside the 44 px touch box", () => {
+    setNow(new Date(2026, 9, 14, 7, 0));
+    renderTab([]);
+
+    for (const name of ["Anterior", "Siguiente"]) {
+      const arrow = screen.getByRole("button", { name });
+      expect(arrow).toHaveClass("pointer-coarse:w-11", "pointer-coarse:h-11", "pointer-coarse:p-0");
+      expect(arrow.querySelector("svg")).toHaveClass("shrink-0");
+    }
+  });
+});
+
 describe("CalendarTab scheduling", () => {
   beforeEach(() => stubBookingCatalog());
 

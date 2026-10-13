@@ -197,9 +197,9 @@ export const DatePicker = ({
       icon={<CalendarSearch className="w-5 h-5 text-brand-primary" />}
       hideFooter={true} // <-- MAGIA APLICADA: Adiós botón duplicado
     >
-      <div className="flex flex-col select-none px-2 pb-2">
+      <div className="flex flex-col w-full min-w-0 select-none px-2 pb-2">
         <div className="mb-6 pb-4 border-b border-slate-100">
-          <h2 className="text-3xl sm:text-4xl font-extrabold text-brand-primary tracking-tight">
+          <h2 className="text-3xl sm:text-4xl font-extrabold text-brand-primary tracking-tight wrap-break-word">
             {renderHeaderDate()}
           </h2>
         </div>
@@ -207,33 +207,35 @@ export const DatePicker = ({
         <div className="min-h-70">
           {viewMode === "calendar" ? (
             <>
-              <div className="flex items-center justify-between mb-4">
+              {/* The month label gives way (truncates) before the arrows do:
+                both must stay on screen and at least 44 px on touch. */}
+              <div className="flex items-center justify-between gap-2 mb-4">
                 <button type="button"
                   onClick={() => {
                     setYearPageStart(year - (year % 9));
                     setViewMode("year");
                   }}
-                  className="flex items-center gap-1.5 px-3 py-1.5 pointer-coarse:py-2.5 -ml-3 rounded-full hover:bg-slate-100 transition-colors cursor-pointer"
+                  className="flex items-center gap-1.5 min-w-0 px-3 py-1.5 pointer-coarse:py-2.5 -ml-3 rounded-full hover:bg-slate-100 transition-colors cursor-pointer"
                 >
-                  <span className="font-bold text-brand-dark text-lg capitalize">
+                  <span className="font-bold text-brand-dark text-lg capitalize truncate">
                     {MONTH_NAMES[month]} {year}
                   </span>
-                  <ChevronDown className="w-5 h-5 text-brand-gray" />
+                  <ChevronDown className="w-5 h-5 shrink-0 text-brand-gray" />
                 </button>
-                <div className="flex gap-1">
+                <div className="flex gap-1 shrink-0">
                   <button type="button"
                     onClick={handlePrevMonth}
                     aria-label="Mes anterior"
-                    className="w-10 h-10 pointer-coarse:w-11 pointer-coarse:h-11 flex items-center justify-center rounded-full hover:bg-slate-100 transition-colors cursor-pointer"
+                    className="w-10 h-10 pointer-coarse:w-11 pointer-coarse:h-11 shrink-0 flex items-center justify-center rounded-full hover:bg-slate-100 transition-colors cursor-pointer"
                   >
-                    <ChevronLeft className="w-6 h-6 text-brand-dark" />
+                    <ChevronLeft className="w-6 h-6 shrink-0 text-brand-dark" />
                   </button>
                   <button type="button"
                     onClick={handleNextMonth}
                     aria-label="Mes siguiente"
-                    className="w-10 h-10 pointer-coarse:w-11 pointer-coarse:h-11 flex items-center justify-center rounded-full hover:bg-slate-100 transition-colors cursor-pointer"
+                    className="w-10 h-10 pointer-coarse:w-11 pointer-coarse:h-11 shrink-0 flex items-center justify-center rounded-full hover:bg-slate-100 transition-colors cursor-pointer"
                   >
-                    <ChevronRight className="w-6 h-6 text-brand-dark" />
+                    <ChevronRight className="w-6 h-6 shrink-0 text-brand-dark" />
                   </button>
                 </div>
               </div>
@@ -334,13 +336,13 @@ export const DatePicker = ({
                   onClick={handlePrevYears}
                   disabled={isPrevYearsDisabled}
                   aria-label="Años anteriores"
-                  className={`w-10 h-10 pointer-coarse:w-11 pointer-coarse:h-11 flex items-center justify-center rounded-full transition-colors ${
+                  className={`w-10 h-10 pointer-coarse:w-11 pointer-coarse:h-11 shrink-0 flex items-center justify-center rounded-full transition-colors ${
                     isPrevYearsDisabled
                       ? "text-slate-200 cursor-not-allowed"
                       : "hover:bg-slate-100 text-brand-dark cursor-pointer"
                   }`}
                 >
-                  <ChevronLeft className="w-6 h-6" />
+                  <ChevronLeft className="w-6 h-6 shrink-0" />
                 </button>
                 <span className="font-bold text-brand-gray text-sm tracking-widest uppercase">
                   {currentYearsGrid[0]} - {currentYearsGrid[8]}
@@ -349,13 +351,13 @@ export const DatePicker = ({
                   onClick={handleNextYears}
                   disabled={isNextYearsDisabled}
                   aria-label="Años siguientes"
-                  className={`w-10 h-10 pointer-coarse:w-11 pointer-coarse:h-11 flex items-center justify-center rounded-full transition-colors ${
+                  className={`w-10 h-10 pointer-coarse:w-11 pointer-coarse:h-11 shrink-0 flex items-center justify-center rounded-full transition-colors ${
                     isNextYearsDisabled
                       ? "text-slate-200 cursor-not-allowed"
                       : "hover:bg-slate-100 text-brand-dark cursor-pointer"
                   }`}
                 >
-                  <ChevronRight className="w-6 h-6" />
+                  <ChevronRight className="w-6 h-6 shrink-0" />
                 </button>
               </div>
 

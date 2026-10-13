@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { DatePicker } from "./DatePicker";
+import { Modal } from "./Modal";
 
 const pickerProps = {
   onClose: () => {},
@@ -67,5 +68,42 @@ describe("DatePicker inside a form", () => {
     // maxDate is 2026-09-25: September is still pickable, October is not.
     expect(screen.getByRole("button", { name: "Sep" })).toBeEnabled();
     expect(screen.getByRole("button", { name: "Oct" })).toBeDisabled();
+  });
+});
+
+// Regression (iPad): opened from a form modal, the picker rendered inside the
+// form's narrower, overflow-hidden panel; Safari cut its header, the month
+// label and the "next month" arrow.
+describe("DatePicker inside a Modal", () => {
+  const renderInFormModal = () =>
+    renderOpened((node) => (
+      <Modal isOpen onClose={() => {}} title="Registrar cita pasada" maxWidth="max-w-lg">
+        <div data-testid="form-body">{node}</div>
+      </Modal>
+    ));
+
+  it("renders outside the form modal's panel, so the form cannot clip it", () => {
+    renderInFormModal();
+    const formBody = screen.getByTestId("form-body");
+    expect(formBody).not.toContainElement(screen.getByText("Fecha de nacimiento"));
+  });
+
+  it("shows both month arrows as 44 px touch targets that never shrink", () => {
+    renderInFormModal();
+    for (const name of ["Mes anterior", "Mes siguiente"]) {
+      const arrow = screen.getByRole("button", { name });
+      expect(arrow).toHaveClass("pointer-coarse:w-11", "pointer-coarse:h-11", "shrink-0");
+      expect(arrow.querySelector("svg")).toHaveClass("shrink-0");
+    }
+  });
+
+  it("follows its container's width instead of a fixed one", () => {
+    renderInFormModal();
+    const arrow = screen.getByRole("button", { name: "Mes siguiente" });
+    const panel = arrow.closest(".select-none")!;
+    expect(panel).toHaveClass("w-full", "min-w-0");
+    expect(panel.className).not.toMatch(/(^|\s)(min-)?w-\[/);
+    // The month label truncates before the arrows are pushed out.
+    expect(screen.getByText("Abril 1960")).toHaveClass("truncate");
   });
 });
