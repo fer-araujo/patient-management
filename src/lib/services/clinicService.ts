@@ -1,4 +1,7 @@
-import { combineVisualDateAndTime } from "../../features/doctor/utils/calendarUtils";
+import {
+  combineIsoDateAndTime,
+  combineVisualDateAndTime,
+} from "../../features/doctor/utils/calendarUtils";
 import { clinicIsoDate, formatClinicShortDate, formatClinicTime12h } from "../clinicTime";
 import { supabase } from "../supabase";
 import { fetchAllRows } from "./fetchAllRows";
@@ -56,7 +59,12 @@ interface RawAppointmentData {
     | null;
 }
 
-/** See DashboardAppointment.suppliesPending. */
+/**
+ * See DashboardAppointment.suppliesPending. Only a consultation with a
+ * FINALIZED note can be flagged: a past visit transcribed from the paper
+ * agenda (staff_record_past_visit) is completed with no note and no supplies
+ * on purpose, so it never shows in red.
+ */
 const isSuppliesPending = (apt: RawAppointmentData): boolean => {
   if (apt.status === "cancelled" || apt.status === "rejected") return false;
   const notes = apt.clinical_notes ?? [];
@@ -195,6 +203,70 @@ export const createAppointment = async (
     console.error("Error al crear cita:", error.message);
     throw rpcError(error, "No se pudo agendar la cita.");
   }
+};
+
+// 3b. REGISTRAR CITA PASADA (staff)
+export interface PastVisitInput {
+  patientId: string;
+  serviceId: string;
+  /** Clinic calendar day, "YYYY-MM-DD". */
+  isoDate: string;
+  /** Clinic wall-clock start, "hh:mm AM/PM". */
+  time: string;
+  paymentStatus: "paid" | "courtesy";
+  /** Required (> 0) when paid; ignored for a courtesy. */
+  amount?: number;
+  /** Required when paid; ignored for a courtesy. */
+  method?: "cash" | "card" | "transfer" | null;
+  note?: string;
+}
+
+/**
+ * Records a visit that already happened (transcribed from the paper agenda)
+ * and its charge in one transaction. The server refuses a future start, an
+ * occupied time and an archived patient, and dates the charge to the visit so
+ * Finanzas counts it on that day. Returns the new appointment's id.
+ */
+export const recordPastVisit = async (
+  input: PastVisitInput,
+  now: number = Date.now(),
+): Promise<string> => {
+  if (!input.patientId) throw new Error("Elige el paciente.");
+  if (!input.serviceId) throw new Error("Elige el servicio.");
+  if (!input.isoDate || !input.time) throw new Error("Elige la fecha y la hora.");
+
+  const startIso = combineIsoDateAndTime(input.isoDate, input.time);
+  if (new Date(startIso).getTime() > now) {
+    throw new Error("Esa hora todavía no pasa. Usa Agendar Cita para citas futuras.");
+  }
+
+  const isPaid = input.paymentStatus === "paid";
+  if (isPaid) {
+    if (
+      input.amount === undefined ||
+      !Number.isFinite(input.amount) ||
+      input.amount <= 0
+    ) {
+      throw new Error("Indica cuánto cobraste (más de 0).");
+    }
+    if (!input.method) throw new Error("Indica cómo te pagaron.");
+  }
+
+  const { data, error } = await supabase.rpc("staff_record_past_visit", {
+    p_patient_id: input.patientId,
+    p_service_id: input.serviceId,
+    p_start_time: startIso,
+    p_payment_status: input.paymentStatus,
+    p_amount: isPaid ? input.amount : 0,
+    p_method: isPaid ? input.method : null,
+    p_note: input.note?.trim() || null,
+  });
+
+  if (error) {
+    console.error("Error al registrar la cita pasada:", error.code);
+    throw rpcError(error, "No se pudo guardar la cita pasada.");
+  }
+  return data as string;
 };
 
 // 4. REPROGRAMAR CITA (staff)

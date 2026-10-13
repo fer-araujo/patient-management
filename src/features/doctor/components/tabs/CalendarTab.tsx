@@ -10,6 +10,7 @@ import {
   Settings,
   Ban,
   Edit3,
+  History,
 } from "lucide-react";
 import { Button } from "../../../../components/ui/Button";
 import { TOUCH_ICON_BUTTON } from "../../../../components/ui/touchTargets";
@@ -41,6 +42,7 @@ import {
 import { formatMXN } from "../../../../lib/services/inventoryService";
 import { ChargeModal } from "../modals/ChargeModal";
 import { RecordSuppliesModal } from "../modals/RecordSuppliesModal";
+import { PastVisitModal } from "../modals/PastVisitModal";
 import { AppointmentPrescriptionActions } from "../../prescription/AppointmentPrescriptionActions";
 import { useCalendar } from "../../hooks/useCalendar";
 import {
@@ -212,6 +214,7 @@ export const CalendarTab = ({
   } | null>(null);
   const [actionTab, setActionTab] = useState<"schedule" | "block">("schedule");
   const [settingsModalOpen, setSettingsModalOpen] = useState(false);
+  const [pastVisitOpen, setPastVisitOpen] = useState(false);
 
   const [selectedPatient, setSelectedPatient] = useState("");
   const [selectedService, setSelectedService] = useState("");
@@ -550,6 +553,16 @@ export const CalendarTab = ({
         </div>
 
         <div className="flex flex-col sm:flex-row sm:flex-wrap items-center justify-center gap-4 w-full lg:w-auto">
+          {/* Transcribing the paper agenda: visits that already happened. */}
+          <Button
+            type="button"
+            variant="outline"
+            onClick={() => setPastVisitOpen(true)}
+            className="flex w-auto! px-4 py-2 pointer-coarse:min-h-11 rounded-xl border-brand-primary text-brand-primary hover:bg-brand-light/30 cursor-pointer items-center gap-2 whitespace-nowrap font-bold"
+          >
+            <History className="w-4 h-4" aria-hidden="true" />
+            Registrar cita pasada
+          </Button>
           {/* Short label below xl so the toolbar fits in one row on an iPad. */}
           <Button
             type="button"
@@ -945,6 +958,17 @@ export const CalendarTab = ({
           appointmentId={suppliesTarget.id}
           serviceId={suppliesTarget.serviceId}
           subtitle={`${suppliesTarget.patientName} · ${suppliesTarget.service}`}
+        />
+      )}
+
+      {pastVisitOpen && (
+        <PastVisitModal
+          isOpen={true}
+          onClose={() => setPastVisitOpen(false)}
+          appointments={appointments}
+          blockedSlots={blockedSlots}
+          workingSchedule={workingSchedule}
+          onSaved={onDataChange}
         />
       )}
 

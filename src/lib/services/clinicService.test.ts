@@ -3,6 +3,7 @@ import { supabaseMock } from "../../test/supabaseMock";
 import {
   createAppointment,
   fetchDoctorAppointments,
+  recordPastVisit,
   rescheduleAppointment,
 } from "./clinicService";
 
@@ -64,6 +65,8 @@ describe("fetchDoctorAppointments suppliesPending", () => {
           services: { name: "Valoración", duration_mins: 30, price: 500, service_supplies: [] },
         }),
         row("cancelled", { status: "cancelled" }),
+        // A past visit transcribed from paper: completed, no note at all.
+        row("past-visit", { clinical_notes: [] }),
       ],
     });
 
@@ -164,5 +167,96 @@ describe("rescheduleAppointment", () => {
     await expect(
       rescheduleAppointment("a-ana", "2026-10-16T15:30:00.000Z"),
     ).rejects.toThrow(/^No se pudo reprogramar la cita\.$/);
+  });
+});
+
+describe("recordPastVisit", () => {
+  // Thursday 15 Oct 2026, 11:10 AM in Monterrey (UTC-6).
+  const NOW = new Date("2026-10-15T17:10:00.000Z").getTime();
+  const base = {
+    patientId: "p-ana",
+    serviceId: "srv-toxina",
+    isoDate: "2026-10-15",
+    time: "10:00 AM",
+  } as const;
+
+  it("records a paid visit and its charge in one call, with the clinic-time start", async () => {
+    supabaseMock.onRpc("staff_record_past_visit", { data: "appt-new" });
+
+    const id = await recordPastVisit(
+      { ...base, paymentStatus: "paid", amount: 1200, method: "card", note: "  Pagó completo " },
+      NOW,
+    );
+
+    expect(id).toBe("appt-new");
+    expect(supabaseMock.lastRpc("staff_record_past_visit")?.args).toEqual({
+      p_patient_id: "p-ana",
+      p_service_id: "srv-toxina",
+      p_start_time: "2026-10-15T16:00:00.000Z",
+      p_payment_status: "paid",
+      p_amount: 1200,
+      p_method: "card",
+      p_note: "Pagó completo",
+    });
+    expect(supabaseMock.queries("appointments")).toHaveLength(0);
+    expect(supabaseMock.rpcCalls("record_payment")).toHaveLength(0);
+  });
+
+  it("sends a courtesy as 0 with no method, whatever the form held", async () => {
+    supabaseMock.onRpc("staff_record_past_visit", { data: "appt-new" });
+
+    await recordPastVisit(
+      { ...base, paymentStatus: "courtesy", amount: 900, method: "cash" },
+      NOW,
+    );
+
+    expect(supabaseMock.lastRpc("staff_record_past_visit")?.args).toMatchObject({
+      p_payment_status: "courtesy",
+      p_amount: 0,
+      p_method: null,
+      p_note: null,
+    });
+  });
+
+  it("accepts a time already passed today and refuses one that has not come yet", async () => {
+    supabaseMock.onRpc("staff_record_past_visit", { data: "appt-new" });
+
+    await expect(
+      recordPastVisit({ ...base, time: "11:00 AM", paymentStatus: "courtesy" }, NOW),
+    ).resolves.toBe("appt-new");
+
+    await expect(
+      recordPastVisit({ ...base, time: "11:15 AM", paymentStatus: "courtesy" }, NOW),
+    ).rejects.toThrow("Esa hora todavía no pasa. Usa Agendar Cita para citas futuras.");
+    expect(supabaseMock.rpcCalls("staff_record_past_visit")).toHaveLength(1);
+  });
+
+  it("asks for the amount and the method of a paid visit before calling the server", async () => {
+    await expect(
+      recordPastVisit({ ...base, paymentStatus: "paid", amount: 0, method: "cash" }, NOW),
+    ).rejects.toThrow("Indica cuánto cobraste (más de 0).");
+    await expect(
+      recordPastVisit({ ...base, paymentStatus: "paid", amount: 500, method: null }, NOW),
+    ).rejects.toThrow("Indica cómo te pagaron.");
+    await expect(
+      recordPastVisit({ ...base, patientId: "", paymentStatus: "courtesy" }, NOW),
+    ).rejects.toThrow("Elige el paciente.");
+    expect(supabaseMock.rpcCalls("staff_record_past_visit")).toHaveLength(0);
+  });
+
+  it("passes the server's Spanish refusal through and hides anything else", async () => {
+    supabaseMock.onRpc("staff_record_past_visit", {
+      error: { message: "Ya hay una cita o un bloqueo en ese horario. Revisa la hora.", code: "P0001" },
+    });
+    await expect(
+      recordPastVisit({ ...base, paymentStatus: "courtesy" }, NOW),
+    ).rejects.toThrow("Ya hay una cita o un bloqueo en ese horario. Revisa la hora.");
+
+    supabaseMock.onRpc("staff_record_past_visit", {
+      error: { message: "permission denied", code: "42501" },
+    });
+    await expect(
+      recordPastVisit({ ...base, paymentStatus: "courtesy" }, NOW),
+    ).rejects.toThrow("No se pudo guardar la cita pasada.");
   });
 });

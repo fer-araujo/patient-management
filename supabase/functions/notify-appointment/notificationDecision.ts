@@ -11,6 +11,8 @@
  *   ------  -----------------------------------------------------  ----------------
  *   INSERT  status = confirmed (booked by the clinic)              booked_confirmed
  *   INSERT  status = pending (online request)                      request_received
+ *   INSERT  status = completed (a past visit transcribed from      none
+ *           paper, staff_record_past_visit, migration 30)
  *   INSERT  any other status                                       none
  *   UPDATE  status changed to cancelled                            cancelled
  *   UPDATE  start_time changed and status is pending or confirmed  rescheduled
@@ -61,6 +63,9 @@ export const decideNotification = (
   if (!record) return null;
 
   if (event.type === "INSERT") {
+    // A visit that already happened (recorded from the paper agenda) is
+    // never announced, whatever else the row says.
+    if (record.status === "completed") return null;
     if (record.status === "confirmed") return "booked_confirmed";
     if (record.status === "pending") return "request_received";
     return null;

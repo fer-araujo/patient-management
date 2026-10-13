@@ -1052,6 +1052,8 @@ begin
         ('public.resolve_arco_request(uuid,text,text)', 'staff'),
         ('public.set_clinic_mode(boolean)', 'staff'),
         ('public.staff_create_appointment(uuid,uuid,timestamptz)', 'staff'),
+        -- Migration 30 (staff_record_past_visit): listed here too so a re-run of this file still passes.
+        ('public.staff_record_past_visit(uuid,uuid,timestamptz,text,numeric,text,text)', 'staff'),
         ('public.staff_register_arco_request(uuid,text,text,text)', 'staff'),
         ('public.staff_reschedule_appointment(uuid,timestamptz)', 'staff'),
         -- Doctor or admin.

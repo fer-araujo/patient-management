@@ -364,6 +364,32 @@ export const getBookableTimeOptions = (
 };
 
 /**
+ * Times for "Registrar cita pasada": the staff availability of `isoDate`
+ * (opening hours, 15-minute grid, no visit or block) keeping only the slots
+ * that ALREADY started, to the minute. Every time of a past day qualifies;
+ * today only the ones already passed (the server accepts start <= now()).
+ */
+export const getPastVisitTimeOptions = (
+  isoDate: string,
+  appointments: DashboardAppointment[],
+  blockedSlots: DashboardBlockedSlot[],
+  workingSchedule: WeeklySchedule,
+  requiredDurationMins: number = 30,
+  now: number = Date.now(),
+): { label: string; value: string }[] => {
+  if (!isoDate) return [];
+  const [y, m, d] = isoDate.split("-").map(Number);
+  const dateObj = new Date(y, m - 1, d);
+  return getAvailableTimeOptions(
+    isoDate,
+    appointments,
+    blockedSlots,
+    workingSchedule,
+    requiredDurationMins,
+  ).filter((opt) => isTimeStrInPast(dateObj, opt.value, now));
+};
+
+/**
  * First day the patient booking screen opens on: the clinic's today, or
  * tomorrow from 5:00 PM clinic time on, moved forward to the next open day.
  * The day is walked as a UTC date purely as a calendar cursor.
