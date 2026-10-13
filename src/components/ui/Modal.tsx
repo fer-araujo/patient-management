@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
+import { createPortal } from "react-dom";
 import { motion, AnimatePresence } from "framer-motion";
 import { X } from "lucide-react";
 
@@ -80,6 +81,22 @@ const useKeyboardSafeArea = (active: boolean): VisibleArea | null => {
   return area;
 };
 
+/**
+ * Wider panels for tablets (768-1279 px with a touch screen, e.g. an iPad in
+ * either orientation), where the desktop widths leave a narrow column in the
+ * middle of the screen. Compact modals stay a bit narrower than regular ones;
+ * widths already above 720 px, phones and desktop mice are left as they are.
+ */
+const TABLET_COMPACT_WIDTH = "md:max-xl:pointer-coarse:max-w-[min(600px,92vw)]";
+const TABLET_REGULAR_WIDTH = "md:max-xl:pointer-coarse:max-w-[min(720px,92vw)]";
+const TABLET_WIDTHS: Record<string, string> = {
+  "max-w-sm": TABLET_COMPACT_WIDTH,
+  "max-w-md": TABLET_COMPACT_WIDTH,
+  "max-w-lg": TABLET_REGULAR_WIDTH,
+  "max-w-xl": TABLET_REGULAR_WIDTH,
+  "max-w-2xl": TABLET_REGULAR_WIDTH,
+};
+
 interface ModalProps {
   isOpen: boolean;
   onClose: () => void;
@@ -113,8 +130,16 @@ export const Modal = ({
   }, [isOpen]);
 
   const keyboardSafeArea = useKeyboardSafeArea(isOpen);
+  const tabletWidth = TABLET_WIDTHS[maxWidth] ?? "";
 
-  return (
+  if (typeof document === "undefined") return null;
+
+  // Portaled to <body>: a modal opened from inside another one (the
+  // DatePicker in a form) must not live inside the parent's panel. iPad
+  // Safari clips a fixed overlay to its overflow ancestors (the parent's
+  // scrolling body and rounded, overflow-hidden panel), which cut the wider
+  // calendar on both sides.
+  return createPortal(
     <AnimatePresence>
       {isOpen && (
         <div
@@ -141,12 +166,12 @@ export const Modal = ({
             initial={{ opacity: 0, scale: 0.95, y: 20 }}
             animate={{ opacity: 1, scale: 1, y: 0 }}
             exit={{ opacity: 0, scale: 0.95, y: 20 }}
-            // APLICAMOS EL ANCHO DINÁMICO AQUÍ:
-            // Portrait phones (max-md) get nearly the whole screen, so forms
+            // Width comes from `maxWidth`, widened on tablets (see
+            // TABLET_WIDTHS). Portrait phones (max-md) get nearly the whole screen, so forms
             // need less scrolling. Landscape phones are wider than md and use
             // the tablet layout; only the max-height:500px rule gives them
             // nearly the whole (short) screen height.
-            className={`relative w-full ${maxWidth} bg-white rounded-4xl max-md:rounded-3xl shadow-2xl overflow-hidden flex flex-col max-h-[85vh] supports-[height:1dvh]:max-h-[85dvh] max-md:max-h-[94vh] max-md:supports-[height:1dvh]:max-h-[94dvh] [@media(max-height:500px)]:max-h-[94vh] [@media(max-height:500px)]:supports-[height:1dvh]:max-h-[94dvh]`}
+            className={`relative w-full min-w-0 ${maxWidth} ${tabletWidth} bg-white rounded-4xl max-md:rounded-3xl shadow-2xl overflow-hidden flex flex-col max-h-[85vh] supports-[height:1dvh]:max-h-[85dvh] max-md:max-h-[94vh] max-md:supports-[height:1dvh]:max-h-[94dvh] [@media(max-height:500px)]:max-h-[94vh] [@media(max-height:500px)]:supports-[height:1dvh]:max-h-[94dvh]`}
             style={
               keyboardSafeArea
                 ? { maxHeight: keyboardSafeArea.height - 16 }
@@ -188,6 +213,7 @@ export const Modal = ({
           </motion.div>
         </div>
       )}
-    </AnimatePresence>
+    </AnimatePresence>,
+    document.body,
   );
 };

@@ -594,9 +594,9 @@ export const CalendarTab = ({
               onClick={handlePrevious}
               variant="outline"
               aria-label="Anterior"
-              className={`p-2 ${TOUCH_ICON_BUTTON} rounded-xl border-none bg-white shadow-sm text-brand-dark cursor-pointer`}
+              className={`p-2 ${TOUCH_ICON_BUTTON} pointer-coarse:p-0 rounded-xl border-none bg-white shadow-sm text-brand-dark cursor-pointer`}
             >
-              <ChevronLeft className="w-5 h-5" />
+              <ChevronLeft className="w-5 h-5 shrink-0" />
             </Button>
             <span className="font-semibold text-[13px] px-3 text-center min-w-30 capitalize">
               {getNavLabel()}
@@ -606,9 +606,9 @@ export const CalendarTab = ({
               onClick={handleNext}
               variant="outline"
               aria-label="Siguiente"
-              className={`p-2 ${TOUCH_ICON_BUTTON} rounded-xl border-none bg-white shadow-sm text-brand-dark cursor-pointer`}
+              className={`p-2 ${TOUCH_ICON_BUTTON} pointer-coarse:p-0 rounded-xl border-none bg-white shadow-sm text-brand-dark cursor-pointer`}
             >
-              <ChevronRight className="w-5 h-5" />
+              <ChevronRight className="w-5 h-5 shrink-0" />
             </Button>
           </div>
         </div>

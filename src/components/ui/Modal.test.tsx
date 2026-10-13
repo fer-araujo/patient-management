@@ -122,4 +122,65 @@ describe("Modal", () => {
     fireEvent.keyDown(field, { key: "Escape" });
     expect(onClose).toHaveBeenCalledTimes(1);
   });
+
+  // Regression (iPad): a modal opened from inside another one (the
+  // DatePicker in a form) rendered inside the parent's overflow-hidden panel,
+  // and iPad Safari clipped the wider calendar on both sides.
+  it("renders into <body>, outside the panel of the modal it was opened from", () => {
+    render(
+      <Modal isOpen onClose={() => {}} title="Formulario">
+        <div data-testid="form-body">
+          <Modal isOpen onClose={() => {}} title="Fecha">
+            Calendario
+          </Modal>
+        </div>
+      </Modal>,
+    );
+
+    const formBody = screen.getByTestId("form-body");
+    const inner = screen.getByText("Calendario");
+    expect(formBody).not.toContainElement(inner);
+    expect(inner.closest(".fixed")?.parentElement).toBe(document.body);
+  });
+
+  describe("tablet width (touch, 768-1279 px)", () => {
+    const panelOf = (maxWidth?: string) => {
+      render(
+        <Modal isOpen onClose={() => {}} title="Detalle" maxWidth={maxWidth}>
+          Contenido
+        </Modal>,
+      );
+      return screen.getByText("Contenido").closest(".rounded-4xl")!;
+    };
+
+    it("widens regular modals to min(720px, 92vw) and keeps the desktop width", () => {
+      const panel = panelOf("max-w-lg");
+      expect(panel).toHaveClass("max-w-lg", "w-full");
+      expect(panel).toHaveClass("md:max-xl:pointer-coarse:max-w-[min(720px,92vw)]");
+    });
+
+    it("widens the default size too", () => {
+      expect(panelOf()).toHaveClass(
+        "max-w-2xl",
+        "md:max-xl:pointer-coarse:max-w-[min(720px,92vw)]",
+      );
+    });
+
+    it("keeps compact modals a bit narrower", () => {
+      expect(panelOf("max-w-md")).toHaveClass(
+        "max-w-md",
+        "md:max-xl:pointer-coarse:max-w-[min(600px,92vw)]",
+      );
+    });
+
+    it("leaves modals already wider than a tablet column alone", () => {
+      const panel = panelOf("max-w-5xl");
+      expect(panel).toHaveClass("max-w-5xl");
+      expect(panel.className).not.toContain("pointer-coarse:max-w-");
+    });
+
+    it("keeps phones nearly full screen", () => {
+      expect(panelOf("max-w-lg")).toHaveClass("max-md:max-h-[94vh]");
+    });
+  });
 });
