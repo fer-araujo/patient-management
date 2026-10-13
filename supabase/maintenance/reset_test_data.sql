@@ -571,22 +571,27 @@ begin
   end;
 
   if v_mode = 'dry_run' then
-    raise notice E'RESET DRY RUN (scope %): nothing was changed. All preconditions hold. Rows that WOULD be deleted (% in total):%\n\nTo execute, run a copy with:\n  set local app.confirm_reset = ''%'';\n  set local app.reset_deadline = ''%'';   -- or a later date, at most 7 days ahead\n  set local app.reset_scope = ''%'';\n  set local app.reset_mode = ''execute'';\n\nWould reset: %.\n\nStorage clinical_records: % file(s) (first 200):\n    %\n\nTest auth users (not doctor/admin): %\n    %\n%',
+    perform set_config('app.reset_result', format(E'RESET DRY RUN (scope %s): nothing was changed. All preconditions hold. Rows that WOULD be deleted (%s in total):%s\n\nTo execute, run a copy with:\n  set local app.confirm_reset = ''%s'';\n  set local app.reset_deadline = ''%s'';   -- or a later date, at most 7 days ahead\n  set local app.reset_scope = ''%s'';\n  set local app.reset_mode = ''execute'';\n\nWould reset: %s.\n\nStorage clinical_records: %s file(s) (first 200):\n    %s\n\nTest auth users (not doctor/admin): %s\n    %s\n%s',
       v_scope, v_total, v_report,
       v_phrase, to_char(v_today, 'YYYY-MM-DD'), v_scope,
       v_scope_notes,
       v_n_files, coalesce(v_files, '(none)'),
       v_n_users, coalesce(v_users, '(none)'),
-      v_checklist;
+      v_checklist), true);
+    raise notice '%', current_setting('app.reset_result');
   else
-    raise notice E'RESET DONE (scope %): deleted % row(s):%\n\nReset: %. Triggers disabled and re-enabled: %. Kept data verified unchanged.\n\nStorage clinical_records still holds % file(s) (first 200):\n    %\n\nTest auth users still to delete: %\n    %\n%',
+    perform set_config('app.reset_result', format(E'RESET DONE (scope %s): deleted %s row(s):%s\n\nReset: %s. Triggers disabled and re-enabled: %s. Kept data verified unchanged.\n\nStorage clinical_records still holds %s file(s) (first 200):\n    %s\n\nTest auth users still to delete: %s\n    %s\n%s',
       v_scope, v_total, v_report,
       v_scope_notes,
       array_to_string(v_disabled, ', '),
       v_n_files, coalesce(v_files, '(none)'),
       v_n_users, coalesce(v_users, '(none)'),
-      v_checklist;
+      v_checklist), true);
+    raise notice '%', current_setting('app.reset_result');
   end if;
 end $$;
+
+-- The SQL editor hides NOTICEs: show the same report as a result row.
+select current_setting('app.reset_result', true) as resultado;
 
 commit;
