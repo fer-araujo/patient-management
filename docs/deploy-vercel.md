@@ -125,6 +125,23 @@ Debe verse:
 
 También se puede pasar el dominio por <https://securityheaders.com>.
 
+### Iconos y vista previa del enlace
+
+- `/manifest.webmanifest`, `/favicon.svg`, `/apple-touch-icon.png` y
+  `/og-image.png` deben devolver el archivo (no el HTML de la app). La
+  reescritura SPA de `vercel.json` excluye las rutas con extensión.
+- Al pegar el enlace en un chat de WhatsApp debe aparecer la tarjeta con el
+  logo, "Clínica Torres" y la descripción. WhatsApp guarda la vista previa en
+  caché; para probar un cambio, pegar la URL con un parámetro (`/?v=2`).
+- `index.html` lleva `<meta name="robots" content="noindex, nofollow">`: es una
+  aplicación médica privada y no debe aparecer en buscadores. Esto no afecta a
+  la vista previa de WhatsApp, que solo lee las etiquetas Open Graph.
+
+### Agregar a la pantalla de inicio (iPad / iPhone)
+
+Safari → botón **Compartir** → **Agregar a inicio**. La app se abre a pantalla
+completa con el icono y el nombre "Clínica Torres".
+
 ### Política de contenido (CSP)
 
 Con la consola del navegador abierta (F12 → Console), recorrer los flujos
@@ -170,6 +187,13 @@ Tener en cuenta:
 2. Crear en el proveedor de DNS los registros que indique Vercel. El
    certificado HTTPS se emite solo.
 3. Actualizar la **Site URL** y las **Redirect URLs** de Supabase (paso 5).
+4. Actualizar en `index.html` las etiquetas `og:url` y `og:image`. Hoy apuntan
+   a `https://patient-management-amber.vercel.app`; WhatsApp exige que
+   `og:image` sea una URL **absoluta**, así que con un dominio nuevo hay que
+   cambiar ambas (por ejemplo `https://<dominio>/og-image.png`). Si no, la
+   vista previa del enlace seguirá cargando la imagen del dominio anterior.
+5. Actualizar en `vercel.json` la cabecera `Access-Control-Allow-Origin`, que
+   también fija el dominio actual.
 
 Sobre HSTS: la cabecera incluye `includeSubDomains; preload`. Mientras no se
 inscriba el dominio en <https://hstspreload.org>, `preload` no tiene efecto.
