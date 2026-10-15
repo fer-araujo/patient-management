@@ -10,6 +10,7 @@ import {
 } from "../../../lib/services/clinicService";
 import { fetchBlockedSlots } from "../../../lib/services/blockedSlotsService";
 import { fetchArcoRequests } from "../../../lib/services/privacyService";
+import type { DashboardPatient } from "../../../lib/services/patientService";
 import { DoctorDashboard } from "./DoctorDashboard";
 
 vi.mock("../../../lib/services/clinicService", async (importOriginal) => ({
@@ -55,13 +56,25 @@ vi.mock("./tabs/CalendarTab", () => ({
 vi.mock("./ConsultationWorkspace", () => ({
   ConsultationWorkspace: ({
     appointment,
+    patient,
+    focusAppointmentId,
     onClose,
     onFinishConsultation,
   }: {
-    appointment: DashboardAppointment;
+    appointment?: DashboardAppointment;
+    patient?: DashboardPatient;
+    focusAppointmentId?: string;
     onClose: () => void;
     onFinishConsultation: (id: string, options?: { keepOpen: boolean }) => Promise<void>;
-  }) => (
+  }) =>
+    !appointment ? (
+      <div>
+        <p>{`Expediente de ${patient?.name} en ${focusAppointmentId}`}</p>
+        <button type="button" onClick={onClose}>
+          Cerrar Expediente
+        </button>
+      </div>
+    ) : (
     <div>
       <p>{`Consulta de ${appointment.patientName}`}</p>
       <button type="button" onClick={() => onFinishConsultation(appointment.id)}>
@@ -79,6 +92,7 @@ vi.mock("./ConsultationWorkspace", () => ({
     </div>
   ),
 }));
+
 
 const appointment: DashboardAppointment = {
   id: "appt-1",
@@ -143,5 +157,54 @@ describe("DoctorDashboard finishing a consultation", () => {
     expect(screen.queryByText("Consulta de Ana Pérez")).toBeNull();
     expect(updateAppointmentStatus).toHaveBeenCalledTimes(1);
     expect(updateAppointmentStatus).toHaveBeenCalledWith("appt-1", "completed");
+  });
+});
+
+describe("DoctorDashboard notes pending to close", () => {
+  const pending = (over: Partial<DashboardAppointment>): DashboardAppointment => ({
+    ...appointment,
+    status: "completed",
+    notePending: true,
+    ...over,
+  });
+
+  it("shows no count when every note is closed", async () => {
+    render(<DoctorDashboard />);
+
+    await screen.findByText("Agenda: 1");
+    expect(screen.queryByRole("button", { name: /notas? pendientes? de cerrar/ })).toBeNull();
+  });
+
+  it("counts the open notes and lists them, each opening its record on that visit", async () => {
+    vi.mocked(fetchDoctorAppointments).mockResolvedValue([
+      appointment,
+      pending({ id: "appt-2", patientName: "Rosa Treviño", patientId: "patient-2", date: "10 oct 2026" }),
+      pending({ id: "appt-3", patientName: "Luis Gómez", patientId: "patient-3", date: "12 oct 2026" }),
+    ]);
+    const user = userEvent.setup();
+    render(<DoctorDashboard />);
+
+    await user.click(await screen.findByRole("button", { name: "2 notas pendientes de cerrar" }));
+
+    expect(await screen.findByText("Rosa Treviño")).toBeInTheDocument();
+    expect(screen.getByText("Luis Gómez")).toBeInTheDocument();
+    expect(screen.queryByText("Ana Pérez")).toBeNull();
+
+    await user.click(
+      screen.getByRole("button", { name: "Abrir expediente de Luis Gómez del 12 oct 2026" }),
+    );
+
+    expect(await screen.findByText("Expediente de Luis Gómez en appt-3")).toBeInTheDocument();
+
+    // Closing the record reloads the agenda, so a closed note leaves the count.
+    vi.mocked(fetchDoctorAppointments).mockResolvedValue([
+      appointment,
+      pending({ id: "appt-2", patientName: "Rosa Treviño", patientId: "patient-2" }),
+    ]);
+    await user.click(screen.getByRole("button", { name: "Cerrar Expediente" }));
+
+    expect(
+      await screen.findByRole("button", { name: "1 nota pendiente de cerrar" }),
+    ).toBeInTheDocument();
   });
 });

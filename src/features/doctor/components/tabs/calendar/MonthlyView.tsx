@@ -10,6 +10,7 @@ import {
 } from "../../../utils/calendarUtils";
 import { PendingBadge } from "./PendingBadge";
 import { SuppliesPendingBadge } from "./SuppliesPendingBadge";
+import { NotePendingBadge } from "../../NotePendingBadge";
 
 const DAYS_OF_WEEK = ["Dom", "Lun", "Mar", "Mié", "Jue", "Vie", "Sáb"];
 
@@ -234,6 +235,11 @@ export const MonthlyView = ({
                         {app.suppliesPending && (
                           <span className="mr-1 inline-block align-middle">
                             <SuppliesPendingBadge />
+                          </span>
+                        )}
+                        {app.notePending && (
+                          <span className="mr-1 inline-block align-middle">
+                            <NotePendingBadge compact />
                           </span>
                         )}
                         {app.time} - {app.patientName.split(" ")[0]}

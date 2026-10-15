@@ -121,6 +121,9 @@ const COLUMN_LABELS: Record<string, string> = {
   reason: "motivo",
   requested_online: "solicitud en línea",
   patient_cancelled_at: "cancelación en línea",
+  // Migration 31: open clinical notes.
+  consultation_finalized_at: "consulta finalizada",
+  recorded_late: "registro posterior",
 };
 
 const actorLabel = (entry: AuditEntry): string =>
@@ -129,7 +132,16 @@ const actorLabel = (entry: AuditEntry): string =>
 const capitalize = (text: string) => text.charAt(0).toUpperCase() + text.slice(1);
 
 const actionLabel = (entry: AuditEntry): string => {
-  if (entry.action === "FINALIZE") return "Cerró la consulta (nota e indicaciones)";
+  // Since migration 31 "Finalizar Consulta" freezes the indications only;
+  // the note is closed later ("Cerrar nota", an UPDATE of finalized_at).
+  if (entry.action === "FINALIZE") return "Finalizó la consulta";
+  if (
+    entry.action === "UPDATE" &&
+    entry.tableName === "clinical_notes" &&
+    entry.changedColumns.includes("finalized_at")
+  ) {
+    return "Cerró la nota clínica";
+  }
   if (entry.action === "EXPORT" && entry.tableName === "prescriptions") {
     return (
       (PRESCRIPTION_CHANNEL_LABELS[entry.changedColumns[0] ?? ""] ??

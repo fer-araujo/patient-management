@@ -49,6 +49,7 @@ import {
   saveSoapNote,
   savePrescription,
   finalizeConsultationWithPayment,
+  isNoteAwaitingClose,
   type PatientClinicalHistory,
   type MedicationItem,
   type Prescription,
@@ -75,6 +76,10 @@ import {
 } from "../../../lib/files/clinicalUploadRules";
 import { PrescriptionDisclaimer } from "../../../components/legal/PrescriptionDisclaimer";
 import { NoteAddenda } from "./NoteAddenda";
+import { AutoGrowTextarea } from "./AutoGrowTextarea";
+import { OpenNoteEditor } from "./OpenNoteEditor";
+import { NotePendingBadge } from "./NotePendingBadge";
+import { describeLateEntry } from "../utils/noteStatus";
 import { ChargeModal, type ChargeInput } from "./modals/ChargeModal";
 import {
   getWeightTracking,
@@ -108,6 +113,11 @@ interface ConsultationWorkspaceProps {
   patient?: DashboardPatient;
   onClose: () => void;
   /**
+   * Review mode: the appointment whose note is shown first (e.g. from
+   * "Notas pendientes de cerrar"). Defaults to the latest note.
+   */
+  focusAppointmentId?: string;
+  /**
    * Called once after the consultation is finalized. With `keepOpen` the
    * workspace stays mounted ("Consulta finalizada") until it calls onClose.
    */
@@ -140,9 +150,6 @@ const WEIGHT_TAB: WorkspaceTabDef = {
   shortLabel: "Peso",
   icon: Scale,
 };
-
-const FINALIZE_REQUIRES_MESSAGE =
-  "Para finalizar la consulta, escribe el diagnóstico y el plan.";
 
 /** Start of the message that blocks finalizing with incomplete medications. */
 const INCOMPLETE_MEDICATIONS_PREFIX = "Completa la vía y la frecuencia de";
@@ -230,50 +237,6 @@ const formatNoteDateTime = (iso: string): string =>
     minute: "2-digit",
   });
 
-const supportsFieldSizing =
-  typeof CSS !== "undefined" &&
-  typeof CSS.supports === "function" &&
-  CSS.supports("field-sizing", "content");
-
-/**
- * A textarea that grows with its text, so the page is the only scroll area
- * (no inner scrollbar). Uses `field-sizing: content` where the browser has it
- * and measures the text otherwise. Its minimum height comes from the caller's
- * `min-h-*` class; a `grow` class may stretch it further to fill its box.
- */
-const AutoGrowTextarea = ({
-  className = "",
-  ...props
-}: React.TextareaHTMLAttributes<HTMLTextAreaElement>) => {
-  const ref = useRef<HTMLTextAreaElement>(null);
-  const { value } = props;
-
-  useLayoutEffect(() => {
-    const el = ref.current;
-    if (!el || supportsFieldSizing) return;
-    const fit = () => {
-      // Measure the text without any flex stretch, then let it stretch again.
-      el.style.flexGrow = "0";
-      el.style.height = "auto";
-      const borders = el.offsetHeight - el.clientHeight;
-      el.style.height = `${el.scrollHeight + borders}px`;
-      el.style.flexGrow = "";
-    };
-    fit();
-    // Width changes (window resize, browser zoom) rewrap the text.
-    window.addEventListener("resize", fit);
-    return () => window.removeEventListener("resize", fit);
-  }, [value]);
-
-  return (
-    <textarea
-      ref={ref}
-      {...props}
-      className={`field-sizing-content overflow-hidden ${className}`}
-    />
-  );
-};
-
 /** Photo viewer zoom range, in percent. */
 const MIN_ZOOM = 50;
 const MAX_ZOOM = 300;
@@ -301,6 +264,7 @@ export const ConsultationWorkspace = ({
   appointment,
   patient,
   onClose,
+  focusAppointmentId,
   onFinishConsultation,
 }: ConsultationWorkspaceProps) => {
   const isReviewMode = !appointment && !!patient;
@@ -410,8 +374,11 @@ export const ConsultationWorkspace = ({
             return [] as ClinicalFile[];
           }),
           // A live consultation has no reminders in its props: read them, so
-          // the draft save never writes an empty pad over them.
-          appointmentId ? fetchPatientNotes(targetId) : Promise.resolve(null),
+          // the draft save never writes an empty pad over them. A record
+          // opened without them (e.g. from "Notas pendientes") reads them too.
+          appointmentId || patient?.notes === undefined
+            ? fetchPatientNotes(targetId)
+            : Promise.resolve(null),
         ]);
         if (!active) return;
         setHistory(historyData);
@@ -423,7 +390,11 @@ export const ConsultationWorkspace = ({
 
         // AUTO-SELECCIONAR LA ÚLTIMA CITA EN MODO REVISIÓN
         if (isReviewMode && historyData.notes.length > 0) {
-          setViewingHistoricalNote(historyData.notes[0]);
+          setViewingHistoricalNote(
+            historyData.notes.find(
+              (n) => focusAppointmentId && n.appointmentId === focusAppointmentId,
+            ) ?? historyData.notes[0],
+          );
         }
 
         // Reopening an unfinished consultation continues its saved draft
@@ -458,7 +429,7 @@ export const ConsultationWorkspace = ({
     return () => {
       active = false;
     };
-  }, [targetId, isReviewMode, appointmentId]);
+  }, [targetId, isReviewMode, appointmentId, focusAppointmentId, patient?.notes]);
 
   // Age, sex and clinical background. Not critical: the consultation works
   // without them, so a failure only leaves those fields out.
@@ -513,6 +484,26 @@ export const ConsultationWorkspace = ({
   const viewedVitalSigns = describeVitalSigns(
     viewingHistoricalNote?.vitalSigns ?? null,
   );
+  // An open note of a finalized consultation (or past visit) is completed and
+  // closed right here; a closed one stays read-only with its corrections.
+  const isViewedNoteOpen =
+    !!viewingHistoricalNote && isNoteAwaitingClose(viewingHistoricalNote);
+  const viewedLateEntry = viewingHistoricalNote
+    ? describeLateEntry(viewingHistoricalNote)
+    : null;
+
+  /** After "Guardar" or "Cerrar nota" in the record: keep both views in sync. */
+  const replaceViewedNote = (updated: SoapNote) => {
+    setViewingHistoricalNote(updated);
+    setHistory((prev) =>
+      prev
+        ? {
+            ...prev,
+            notes: prev.notes.map((n) => (n.id === updated.id ? updated : n)),
+          }
+        : prev,
+    );
+  };
 
   // Follows what the doctor types, so the sidebar and the card agree.
   const backgroundItems = backgroundForm
@@ -636,9 +627,8 @@ export const ConsultationWorkspace = ({
   ): { vitalSigns: VitalSigns | null } | { error: string } => {
     const vitals = parseVitalSigns(vitalSigns);
     if (!vitals.ok) return { error: vitals.message };
-    if (finalize && (!soapNotes.analisis.trim() || !soapNotes.plan.trim())) {
-      return { error: FINALIZE_REQUIRES_MESSAGE };
-    }
+    // Diagnosis and plan are not needed to finalize: the note stays open and
+    // is completed and closed later from the record (migration 31).
     // Items copied from old prescriptions lack route and frequency; the
     // prescription that becomes official must have them (NOM-004 6.2.6).
     const incomplete = localPrescriptions.filter((m) => !isMedicationComplete(m));
@@ -653,7 +643,6 @@ export const ConsultationWorkspace = ({
   };
 
   const reportCheck = (error: string) => {
-    if (error === FINALIZE_REQUIRES_MESSAGE) setActiveTab("notas");
     if (error.startsWith(INCOMPLETE_MEDICATIONS_PREFIX)) setActiveTab("receta");
     toast.error(error);
   };
@@ -1287,6 +1276,11 @@ export const ConsultationWorkspace = ({
                       <p className="text-xs font-medium text-brand-gray mt-0.5">
                         {new Date(note.createdAt).toLocaleDateString("es-MX")}
                       </p>
+                      {isNoteAwaitingClose(note) && (
+                        <div className="mt-1">
+                          <NotePendingBadge />
+                        </div>
+                      )}
                     </div>
                   </div>
                 ))}
@@ -1340,11 +1334,30 @@ export const ConsultationWorkspace = ({
                               ? `Escrita por ${viewingHistoricalNote.authorName}`
                               : "Autor no registrado"}
                           </p>
+                          {viewedLateEntry && (
+                            <p className="text-sm font-medium text-amber-700 mt-0.5">
+                              {viewedLateEntry}
+                            </p>
+                          )}
                         </div>
-                        <span className="text-xs font-bold bg-brand-light/30 text-brand-primary px-3 py-1.5 rounded uppercase tracking-wider">
-                          Solo Lectura
-                        </span>
+                        {isViewedNoteOpen ? (
+                          <NotePendingBadge />
+                        ) : (
+                          <span className="text-xs font-bold bg-brand-light/30 text-brand-primary px-3 py-1.5 rounded uppercase tracking-wider">
+                            Solo Lectura
+                          </span>
+                        )}
                       </div>
+                      {isViewedNoteOpen ? (
+                        <OpenNoteEditor
+                          key={viewingHistoricalNote.id}
+                          note={viewingHistoricalNote}
+                          idPrefix={`open-note-${viewingHistoricalNote.id}`}
+                          onSaved={replaceViewedNote}
+                          onClosed={replaceViewedNote}
+                        />
+                      ) : (
+                      <>
                       {viewedVitalSigns.length > 0 && (
                         <div>
                           <p className="text-brand-dark font-bold text-sm uppercase tracking-wider block">
@@ -1451,6 +1464,8 @@ export const ConsultationWorkspace = ({
                           );
                         }}
                       />
+                      </>
+                      )}
                     </>
                   ) : (
                     <div className="text-center py-20 bg-slate-50 rounded-2xl border border-dashed border-slate-200 my-auto">

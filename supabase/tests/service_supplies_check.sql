@@ -283,7 +283,8 @@ begin
   if v_row.status <> 'paid' or v_row.amount_charged <> 1000.00 then
     raise exception 'SUPPLIES CHECK FAILED: the charge of appointment 1 was stored as % / %.', v_row.status, v_row.amount_charged;
   end if;
-  if exists (select 1 from public.clinical_notes where appointment_id = v_appt_1 and finalized_at is null) then
+  -- Migration 31: the consultation is finalized; its note stays open.
+  if exists (select 1 from public.clinical_notes where appointment_id = v_appt_1 and consultation_finalized_at is null) then
     raise exception 'SUPPLIES CHECK FAILED: appointment 1 was not finalized.';
   end if;
   if exists (select 1 from public.clinical_notes where appointment_id = v_appt_1 and supplies_recorded_at is null) then
@@ -337,7 +338,8 @@ begin
   if v_state is distinct from 'P0001' or v_msg not like 'Solo hay 4 de %' then
     raise exception 'SUPPLIES CHECK FAILED: using 5 of 4 units was not refused cleanly (% / %).', v_state, v_msg;
   end if;
-  if exists (select 1 from public.clinical_notes where appointment_id = v_appt_4 and finalized_at is not null)
+  if exists (select 1 from public.clinical_notes where appointment_id = v_appt_4
+             and (finalized_at is not null or consultation_finalized_at is not null))
      or exists (select 1 from public.payments where appointment_id = v_appt_4)
      or exists (select 1 from public.inventory_movements where appointment_id = v_appt_4)
      or exists (select 1 from public.clinical_notes where appointment_id = v_appt_4 and supplies_recorded_at is not null)

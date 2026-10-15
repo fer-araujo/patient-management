@@ -43,6 +43,24 @@ const isValidQuantity = (value: string) => {
   return value !== "" && Number.isInteger(n) && n > 0;
 };
 
+/** Any whole number of minutes in this range; the calendar sizes visits to the minute. */
+export const MIN_DURATION_MINS = 5;
+export const MAX_DURATION_MINS = 480;
+const DEFAULT_DURATION_MINS = 45;
+
+export const DURATION_ERROR = `Escribe una duración de ${MIN_DURATION_MINS} a ${MAX_DURATION_MINS} minutos, sin decimales.`;
+
+/** The Spanish message for an invalid duration, or "" when it is valid. */
+const durationError = (value: string): string => {
+  const n = Number(value);
+  return value.trim() !== "" &&
+    Number.isInteger(n) &&
+    n >= MIN_DURATION_MINS &&
+    n <= MAX_DURATION_MINS
+    ? ""
+    : DURATION_ERROR;
+};
+
 /** How long a newly added supply stays highlighted. */
 const HIGHLIGHT_MS = 2000;
 
@@ -106,14 +124,15 @@ export const ServiceModal = ({
   serviceToEdit,
 }: Props) => {
   const [isLoading, setIsLoading] = useState(false);
-  const [formData, setFormData] = useState<ServiceFormData>({
+  const [formData, setFormData] = useState<Omit<ServiceFormData, "durationMins">>({
     name: "",
     category: "General",
-    durationMins: 45,
     price: 0,
     description: "",
     careGuide: "",
   });
+  // Kept as typed, so the field can be cleared while editing.
+  const [durationText, setDurationText] = useState(String(DEFAULT_DURATION_MINS));
   const [supplies, setSupplies] = useState<SupplyLine[]>([]);
   const [inventory, setInventory] = useState<InventoryItem[]>([]);
   // "Nuevo insumo": the inventory form, stacked over this one.
@@ -146,16 +165,16 @@ export const ServiceModal = ({
       setFormData({
         name: serviceToEdit.name,
         category: serviceToEdit.category,
-        durationMins: serviceToEdit.durationMins,
         price: serviceToEdit.price || 0,
         description: serviceToEdit.description || "",
         careGuide: serviceToEdit.careGuide || "",
       });
+      setDurationText(String(serviceToEdit.durationMins));
     } else {
+      setDurationText(String(DEFAULT_DURATION_MINS));
       setFormData({
         name: "",
         category: "General",
-        durationMins: 45,
         price: 0,
         description: "",
         careGuide: "",
@@ -286,8 +305,13 @@ export const ServiceModal = ({
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!suppliesAreValid) return;
+    if (!suppliesAreValid || durationError(durationText)) return;
     setIsLoading(true);
+
+    const serviceData: ServiceFormData = {
+      ...formData,
+      durationMins: Number(durationText),
+    };
 
     const supplyQuantities = supplies.map((s) => ({
       itemId: s.itemId,
@@ -297,11 +321,11 @@ export const ServiceModal = ({
 
     try {
       if (serviceToEdit) {
-        await updateService(serviceToEdit.id, formData);
+        await updateService(serviceToEdit.id, serviceData);
         await setServiceSupplies(serviceToEdit.id, supplyQuantities);
         toast.success("Tratamiento actualizado correctamente");
       } else {
-        createdServiceId = await createService(formData);
+        createdServiceId = await createService(serviceData);
         await setServiceSupplies(createdServiceId, supplyQuantities);
         toast.success("Nuevo tratamiento agregado al catálogo");
       }
@@ -403,15 +427,16 @@ export const ServiceModal = ({
               <Input
                 label="Duración (minutos)"
                 type="number"
-                min={15}
-                step={15}
-                value={formData.durationMins.toString()}
-                onChange={(e) =>
-                  setFormData({
-                    ...formData,
-                    durationMins: parseInt(e.target.value) || 45,
-                  })
-                }
+                inputMode="numeric"
+                min={MIN_DURATION_MINS}
+                max={MAX_DURATION_MINS}
+                step={1}
+                value={durationText}
+                onChange={(e) => {
+                  // Our message instead of the browser's (which may not be in Spanish).
+                  e.target.setCustomValidity(durationError(e.target.value));
+                  setDurationText(e.target.value);
+                }}
                 required
                 containerClassName={`w-full ${compactLabelClasses}`}
                 className={compactInputClasses}

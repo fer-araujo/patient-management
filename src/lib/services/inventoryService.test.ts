@@ -2,13 +2,16 @@ import { describe, expect, it, vi } from "vitest";
 import { supabaseMock } from "../../test/supabaseMock";
 import {
   adjustStock,
+  buildCategoryOptions,
   computeUnitCost,
   countItemsNeedingRestock,
   createInventoryItem,
   fetchInventory,
+  fetchInventoryCategories,
   fetchMovements,
   getStockLevel,
   registerPurchase,
+  resolveNewCategory,
   toggleInventoryStatus,
   updateInventoryItem,
   type InventoryFormData,
@@ -235,5 +238,77 @@ describe("stock rule", () => {
     expect(computeUnitCost(100, 3)).toBe(33.33);
     expect(computeUnitCost(0, 5)).toBe(0);
     expect(computeUnitCost(100, 0)).toBeNull();
+  });
+});
+
+describe("inventory categories", () => {
+  it("offers the defaults plus every other used category, once, by name", () => {
+    const options = buildCategoryOptions([
+      "Material de curación",
+      " material  de curación ",
+      "desechables",
+      "Insumos Quirúrgicos",
+      "",
+      "Anestesia",
+    ]);
+
+    expect(options.map((o) => o.value)).toEqual([
+      "Desechables",
+      "Medicamentos",
+      "Insumos",
+      "Venta Pública",
+      "Otro",
+      "Anestesia",
+      "Material de curación",
+    ]);
+  });
+
+  it("validates a new category's length and reuses an existing one in any case", () => {
+    const options = buildCategoryOptions(["Anestesia"]);
+
+    expect(resolveNewCategory("  Material   de curación ", options)).toBe(
+      "Material de curación",
+    );
+    expect(resolveNewCategory("ANESTESIA", options)).toBe("Anestesia");
+    expect(resolveNewCategory("desechables clínicos", options)).toBe("Desechables");
+    expect(() => resolveNewCategory(" x ", options)).toThrow(
+      "La categoría debe tener de 2 a 40 caracteres.",
+    );
+    expect(() => resolveNewCategory("a".repeat(41), options)).toThrow(
+      "La categoría debe tener de 2 a 40 caracteres.",
+    );
+    expect(resolveNewCategory("a".repeat(40), options)).toBe("a".repeat(40));
+  });
+
+  it("reads every distinct category, paged, ignoring empty ones", async () => {
+    supabaseMock.onFrom("inventory", (q) => {
+      const [from] = q.args("range") as [number, number];
+      return {
+        data:
+          from === 0
+            ? [
+                { id: "1", category: "Anestesia" },
+                { id: "2", category: "anestesia " },
+                { id: "3", category: null },
+              ]
+            : from === 3
+              ? [{ id: "4", category: "Otro" }]
+              : [],
+      };
+    });
+
+    await expect(fetchInventoryCategories()).resolves.toEqual(["Anestesia", "Otro"]);
+    const first = supabaseMock.queries("inventory")[0];
+    expect(first.args("select")).toEqual(["id, category"]);
+    expect(first.args("order")).toEqual(["id", { ascending: true }]);
+  });
+
+  it("fails with a Spanish message when the categories cannot be read", async () => {
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    supabaseMock.onFrom("inventory", { error: { message: "boom", code: "500" } });
+
+    await expect(fetchInventoryCategories()).rejects.toThrow(
+      "No se pudieron cargar las categorías.",
+    );
   });
 });

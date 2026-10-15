@@ -226,13 +226,17 @@ begin
   -- Since migration 26 finalize_consultation() is reachable only through
   -- finalize_consultation_with_payment(), as "Finalizar Consulta" does.
   v_row := public.finalize_consultation_with_payment(v_appt, 'paid', 5500, 'card', null);
-  select (select count(*) from public.clinical_notes where appointment_id = v_appt and finalized_at is not null)
+  -- Migration 31: the prescription is finalized and the consultation
+  -- stamped; the note stays open until close_clinical_note().
+  select (select count(*) from public.clinical_notes where appointment_id = v_appt and consultation_finalized_at is not null and finalized_at is null)
        + (select count(*) from public.prescriptions where appointment_id = v_appt and finalized_at is not null)
     into v_frozen;
   if v_frozen <> 2 or v_row.amount_charged <> 5500 then
-    raise exception 'ROLES CHECK FAILED: finalize_consultation_with_payment froze % rows (expected 2) and stored %.',
+    raise exception 'ROLES CHECK FAILED: finalize_consultation_with_payment stamped % rows (expected 2) and stored %.',
       v_frozen, v_row.amount_charged;
   end if;
+
+  perform public.close_clinical_note(v_note);
 
   insert into public.clinical_note_addenda (note_id, body) values (v_note, 'ROLES-CHECK addendum');
 

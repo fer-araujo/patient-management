@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import { supabaseMock } from "../../test/supabaseMock";
 import {
   ANONYMIZED_PATIENT_MESSAGE,
+  createPatient,
   fetchPatientDetails,
   fetchPatientNotes,
   updatePatientBackground,
@@ -211,6 +212,56 @@ describe("updatePatientBackground", () => {
     await expect(
       updatePatientBackground("p1", { current_illness: "Acné" }),
     ).rejects.toThrow(ANONYMIZED_PATIENT_MESSAGE);
+  });
+});
+
+describe("createPatient", () => {
+  it("inserts the optional background with the same allow-list and validation", async () => {
+    supabaseMock.onFrom("patients", { data: { id: "p-new" } });
+
+    const id = await createPatient("Rosa", "Treviño", "", "", "", "", {
+      allergies: " Penicilina ",
+      blood_type: "o-",
+      family_history: "",
+      current_illness: "Negados",
+      status: "archived",
+      notes: "x",
+    } as Partial<PatientBackgroundFields>);
+
+    expect(id).toBe("p-new");
+    expect(supabaseMock.queries("patients")[0].args("insert")?.[0]).toEqual([
+      {
+        first_name: "Rosa",
+        last_name: "Treviño",
+        phone: null,
+        email: null,
+        dob: null,
+        gender: null,
+        allergies: "Penicilina",
+        blood_type: "O-",
+        family_history: null,
+        current_illness: "Negados",
+        status: "active",
+      },
+    ]);
+  });
+
+  it("inserts no background column when none is given", async () => {
+    supabaseMock.onFrom("patients", { data: { id: "p-new" } });
+
+    await createPatient("Rosa", "Treviño", "8112345678");
+
+    const row = (supabaseMock.queries("patients")[0].args("insert")?.[0] as object[])[0];
+    expect(Object.keys(row).sort()).toEqual(
+      ["dob", "email", "first_name", "gender", "last_name", "phone", "status"].sort(),
+    );
+  });
+
+  it("rejects an unknown blood type before calling the server", async () => {
+    await expect(
+      createPatient("Rosa", "Treviño", "", "", "", "", { blood_type: "Z+" }),
+    ).rejects.toThrow("Elige un tipo de sangre de la lista.");
+    expect(supabaseMock.queries("patients")).toHaveLength(0);
   });
 });
 

@@ -32,11 +32,35 @@ export interface SoapNote {
   createdAt: string;
   /** Full name of the author (NOM-004 5.10); null when unknown. */
   authorName: string | null;
-  /** Set when the consultation was finalized; the note is frozen from then on. */
+  /**
+   * Set when the note was closed ("Cerrar nota"); it is frozen from then on.
+   * Before migration 31 every note was closed by "Finalizar Consulta".
+   */
   finalizedAt: string | null;
+  /**
+   * Set when "Finalizar Consulta" ran (charge, supplies, prescription). The
+   * note itself may still be open (finalizedAt null) until the doctor closes it.
+   */
+  consultationFinalizedAt: string | null;
+  /**
+   * NOM-004 5.10: recorded after the fact (closed more than 24 h after the
+   * visit, or written through "Registrar cita pasada"). Set by the server.
+   */
+  recordedLate: boolean;
   /** Append-only corrections, oldest first. */
   addenda: NoteAddendum[];
 }
+
+/**
+ * An open note the doctor still has to complete and close from the record:
+ * its consultation was finalized, or it was written through a past visit
+ * (the only way an OPEN note is already marked recordedLate). A draft of a
+ * consultation still in progress is not one of these.
+ */
+export const isNoteAwaitingClose = (
+  note: Pick<SoapNote, "finalizedAt" | "consultationFinalizedAt" | "recordedLate">,
+): boolean =>
+  !note.finalizedAt && (!!note.consultationFinalizedAt || note.recordedLate);
 
 /**
  * One medication of a prescription, stored in prescriptions.medications
@@ -125,6 +149,46 @@ const fetchAuthorNames = async (
   return names;
 };
 
+/** One clinical_notes row as PostgREST returns it (select *). */
+interface RawNote {
+  id: string;
+  appointment_id: string;
+  patient_id: string;
+  subjective: string | null;
+  objective: string | null;
+  analysis: string | null;
+  plan: string | null;
+  prognosis?: string | null;
+  vital_signs?: unknown;
+  created_at: string;
+  author_id?: string | null;
+  finalized_at?: string | null;
+  consultation_finalized_at?: string | null;
+  recorded_late?: boolean | null;
+}
+
+const toSoapNote = (
+  n: RawNote,
+  authorName: string | null,
+  addenda: NoteAddendum[],
+): SoapNote => ({
+  id: n.id,
+  appointmentId: n.appointment_id,
+  patientId: n.patient_id,
+  subjective: n.subjective,
+  objective: n.objective,
+  analysis: n.analysis,
+  plan: n.plan,
+  prognosis: n.prognosis ?? null,
+  vitalSigns: (n.vital_signs as VitalSigns | null) ?? null,
+  createdAt: n.created_at,
+  authorName,
+  finalizedAt: n.finalized_at ?? null,
+  consultationFinalizedAt: n.consultation_finalized_at ?? null,
+  recordedLate: n.recorded_late === true,
+  addenda,
+});
+
 interface RawPrescription {
   id: string;
   appointment_id: string;
@@ -200,21 +264,9 @@ export const fetchPatientHistory = async (
     addendaByNote.set(a.note_id, list);
   }
 
-  const notes: SoapNote[] = (notesData || []).map((n) => ({
-    id: n.id,
-    appointmentId: n.appointment_id,
-    patientId: n.patient_id,
-    subjective: n.subjective,
-    objective: n.objective,
-    analysis: n.analysis,
-    plan: n.plan,
-    prognosis: n.prognosis ?? null,
-    vitalSigns: (n.vital_signs as VitalSigns | null) ?? null,
-    createdAt: n.created_at,
-    authorName: nameOf(n.author_id),
-    finalizedAt: n.finalized_at ?? null,
-    addenda: addendaByNote.get(n.id) || [],
-  }));
+  const notes: SoapNote[] = ((notesData as RawNote[] | null) || []).map((n) =>
+    toSoapNote(n, nameOf(n.author_id), addendaByNote.get(n.id) || []),
+  );
 
   const prescriptions: Prescription[] = (presData || []).map(toPrescription);
 
@@ -370,12 +422,13 @@ const toSupplyPayload = (supplies: SupplyUse[]) =>
     .map((s) => ({ item_id: s.itemId, quantity: s.quantity }));
 
 /**
- * "Finalizar Consulta": records the charge AND freezes the note and
- * prescription in one database transaction (finalize_consultation_with_payment,
- * migration 20). Either both happen or neither does, so a failure can simply
- * be retried. When the supplies step was done (even with none), they are
- * discounted and the consultation is marked in that same transaction
- * (migration 22).
+ * "Finalizar Consulta": records the charge AND finalizes the prescription in
+ * one database transaction (finalize_consultation_with_payment, migration 20).
+ * Either both happen or neither does, so a failure can simply be retried.
+ * When the supplies step was done (even with none), they are discounted and
+ * the consultation is marked in that same transaction (migration 22). Since
+ * migration 31 the clinical note stays OPEN: the doctor completes it later
+ * and closes it with closeClinicalNote.
  */
 export const finalizeConsultationWithPayment = async (
   appointmentId: string,
@@ -423,6 +476,52 @@ export const recordConsultationSupplies = async (
     console.error("[soapService] record_consultation_supplies failed:", error.code);
     throw new Error("No se pudieron registrar los insumos. Intenta de nuevo.");
   }
+};
+
+/** Shown when "Cerrar nota" is pressed without a diagnosis or a plan. */
+export const CLOSE_NOTE_REQUIRES_MESSAGE =
+  "Para cerrar la nota, escribe el diagnóstico y el plan.";
+
+/**
+ * "Cerrar nota" (close_clinical_note, migration 31): freezes an open note.
+ * The server refuses an empty diagnosis or plan and a note already closed;
+ * from then on corrections are addenda. Returns the server's stamps.
+ */
+export const closeClinicalNote = async (
+  noteId: string,
+): Promise<{ finalizedAt: string; recordedLate: boolean }> => {
+  const { data, error } = await supabase.rpc("close_clinical_note", {
+    p_note_id: noteId,
+  });
+  if (error) {
+    if (error.code === "P0001") throw new Error(error.message);
+    console.error("[soapService] close_clinical_note failed:", error.code);
+    throw new Error("No se pudo cerrar la nota. Intenta de nuevo.");
+  }
+  const row = (data ?? {}) as { finalized_at?: string | null; recorded_late?: boolean | null };
+  return {
+    finalizedAt: row.finalized_at ?? new Date().toISOString(),
+    recordedLate: row.recorded_late === true,
+  };
+};
+
+/**
+ * The note of one appointment (the oldest, like saveSoapNote), or null when
+ * it has none. Used from the calendar, where no author name is needed.
+ */
+export const fetchAppointmentNote = async (
+  appointmentId: string,
+): Promise<SoapNote | null> => {
+  const { data, error } = await supabase
+    .from("clinical_notes")
+    .select("*")
+    .eq("appointment_id", appointmentId)
+    .order("created_at", { ascending: true })
+    .limit(1)
+    .maybeSingle();
+
+  if (error) throw new Error(`Error cargando la nota: ${error.message}`);
+  return data ? toSoapNote(data as RawNote, null, []) : null;
 };
 
 /** Appends a correction to a finalized note. Addenda can never be edited. */

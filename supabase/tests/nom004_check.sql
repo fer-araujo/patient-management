@@ -1,18 +1,20 @@
 -- =============================================================================
 -- NOM-004 consultation check - paste into the Supabase SQL editor and run as-is
 -- =============================================================================
--- Proves, against the real migration 20 objects, that:
---   * finalize_consultation() refuses a note with an empty diagnosis, a note
---     with an empty (blank) plan, and an appointment with no note at all, and
---     leaves those notes unfinalized (since migration 26 it is called as the
---     owner with the doctor's JWT, the way finalize_consultation_with_payment()
---     calls it; the doctor cannot call it directly);
---   * a complete note finalizes, and a second call is harmless (returns 0);
---   * finalize_consultation_with_payment() is all-or-nothing: an incomplete
---     note leaves NO payment row, a refused charge leaves the note
---     unfinalized, and a corrected retry stores both;
---   * after finalization prognosis and vital_signs are frozen like the SOAP
---     fields, for the doctor too;
+-- Proves, against the real migration 20 objects as changed by migration 31
+-- (open clinical notes), that:
+--   * finalize_consultation() (since migration 26 called as the owner with
+--     the doctor's JWT, the way finalize_consultation_with_payment() calls
+--     it; the doctor cannot call it directly) no longer needs a diagnosis or a
+--     plan: it stamps the consultation and leaves the note OPEN, and gives an
+--     appointment with no note an empty open one;
+--   * a second call is harmless (returns 0);
+--   * close_clinical_note() refuses an empty diagnosis or a blank plan;
+--   * finalize_consultation_with_payment() is all-or-nothing: a refused
+--     charge stamps nothing, and a corrected retry stores the charge and
+--     stamps the consultation, the note still open;
+--   * after the note is closed prognosis and vital_signs are frozen like the
+--     SOAP fields, for the doctor too;
 --   * vital_signs only accepts an object of known numeric keys;
 --   * the doctor can read the note author's name from public.profiles;
 --   * a patient session cannot change their own clinical history or address,
@@ -224,7 +226,8 @@ begin
   insert into public.clinical_notes (appointment_id, patient_id, subjective, analysis, plan)
   values (v_appt_b, v_patient, 'S', 'Diagnosis B', '   ');
 
-  -- 2a. Empty diagnosis, blank plan, and no note at all are refused.
+  -- 2a. Migration 31: finalizing the consultation no longer needs a
+  -- diagnosis or a plan, and never freezes the note.
   -- Since migration 26 the doctor cannot call finalize_consultation().
   v_refused := false;
   begin
@@ -235,47 +238,42 @@ begin
     raise exception 'NOM004 CHECK FAILED: the doctor can call finalize_consultation() directly.';
   end if;
 
-  v_refused := false;
-  begin
-    -- Since migration 26 only finalize_consultation_with_payment() (as the
-    -- owner) may call finalize_consultation(); the check does the same: it
-    -- leaves the authenticated role for this call and keeps the doctor's JWT.
-    execute 'reset role';
-    perform public.finalize_consultation(v_appt_a);
-  exception when others then v_refused := sqlstate = 'P0001';
-  end;
+  -- Since migration 26 only finalize_consultation_with_payment() (as the
+  -- owner) may call finalize_consultation(); the check does the same: it
+  -- leaves the authenticated role for these calls and keeps the doctor's JWT.
+  execute 'reset role';
+  perform public.finalize_consultation(v_appt_a);
+  perform public.finalize_consultation(v_appt_b);
+  perform public.finalize_consultation(v_appt_c);
   execute 'set local role authenticated';
-  if not v_refused then
-    raise exception 'NOM004 CHECK FAILED: finalize_consultation() accepted an empty diagnosis.';
-  end if;
-
-  v_refused := false;
-  begin
-    execute 'reset role';
-    perform public.finalize_consultation(v_appt_b);
-  exception when others then v_refused := sqlstate = 'P0001';
-  end;
-  execute 'set local role authenticated';
-  if not v_refused then
-    raise exception 'NOM004 CHECK FAILED: finalize_consultation() accepted a blank plan.';
-  end if;
-
-  v_refused := false;
-  begin
-    execute 'reset role';
-    perform public.finalize_consultation(v_appt_c);
-  exception when others then v_refused := sqlstate = 'P0001';
-  end;
-  execute 'set local role authenticated';
-  if not v_refused then
-    raise exception 'NOM004 CHECK FAILED: finalize_consultation() accepted an appointment with no note.';
-  end if;
 
   if exists (
     select 1 from public.clinical_notes
-    where appointment_id in (v_appt_a, v_appt_b) and finalized_at is not null
-  ) then
-    raise exception 'NOM004 CHECK FAILED: a refused finalization still froze a note.';
+    where appointment_id in (v_appt_a, v_appt_b, v_appt_c) and finalized_at is not null
+  ) or (
+    select count(*) from public.clinical_notes
+    where appointment_id in (v_appt_a, v_appt_b, v_appt_c) and consultation_finalized_at is not null
+  ) <> 3 then
+    raise exception 'NOM004 CHECK FAILED: finalize_consultation() froze a note, or did not stamp A, B and C (C gets an empty open note).';
+  end if;
+
+  -- Closing the note is what needs the diagnosis and the plan.
+  v_refused := false;
+  begin
+    perform public.close_clinical_note((select id from public.clinical_notes where appointment_id = v_appt_a));
+  exception when others then v_refused := sqlstate = 'P0001';
+  end;
+  if not v_refused then
+    raise exception 'NOM004 CHECK FAILED: close_clinical_note() accepted an empty diagnosis.';
+  end if;
+
+  v_refused := false;
+  begin
+    perform public.close_clinical_note((select id from public.clinical_notes where appointment_id = v_appt_b));
+  exception when others then v_refused := sqlstate = 'P0001';
+  end;
+  if not v_refused then
+    raise exception 'NOM004 CHECK FAILED: close_clinical_note() accepted a blank plan.';
   end if;
 
   -- 2b. vital_signs accepts only known numeric keys.
@@ -299,7 +297,8 @@ begin
     raise exception 'NOM004 CHECK FAILED: vital_signs accepted an unknown key.';
   end if;
 
-  -- 2c. A complete note finalizes; a second call is harmless.
+  -- 2c. A complete note: the consultation finalizes (a second call is
+  --     harmless) and the note is then closed by the doctor.
   insert into public.clinical_notes (
     appointment_id, patient_id, subjective, objective, analysis, plan, prognosis, vital_signs
   )
@@ -312,14 +311,16 @@ begin
   execute 'reset role';
   v_frozen := public.finalize_consultation(v_appt_d);
   if v_frozen <> 1 then
-    raise exception 'NOM004 CHECK FAILED: finalize_consultation froze % rows, expected 1.', v_frozen;
+    raise exception 'NOM004 CHECK FAILED: finalize_consultation stamped % rows, expected 1.', v_frozen;
   end if;
 
   v_frozen := public.finalize_consultation(v_appt_d);
   if v_frozen <> 0 then
-    raise exception 'NOM004 CHECK FAILED: a second finalize_consultation froze % rows, expected 0.', v_frozen;
+    raise exception 'NOM004 CHECK FAILED: a second finalize_consultation stamped % rows, expected 0.', v_frozen;
   end if;
   execute 'set local role authenticated';
+
+  perform public.close_clinical_note(v_note_d);
 
   -- 2d. prognosis and vital_signs are frozen after finalization.
   v_refused := false;
@@ -350,21 +351,8 @@ begin
   end if;
 
   -- 2e. Charge + finalize is all-or-nothing.
-  --     An incomplete note (A) is refused and leaves NO payment row.
-  v_refused := false;
-  begin
-    perform public.finalize_consultation_with_payment(v_appt_a, 'paid', 500, 'cash', null);
-  exception when others then v_refused := sqlstate = 'P0001';
-  end;
-  if not v_refused then
-    raise exception 'NOM004 CHECK FAILED: finalize_consultation_with_payment() accepted an empty diagnosis.';
-  end if;
-  if exists (select 1 from public.payments where appointment_id = v_appt_a) then
-    raise exception 'NOM004 CHECK FAILED: a refused finalization left a payment row.';
-  end if;
-
-  --     A refused charge (paid with amount 0) leaves the complete note of E
-  --     unfinalized and no payment row.
+  --     A refused charge (paid with amount 0) leaves the consultation of E
+  --     unstamped and no payment row.
   insert into public.clinical_notes (appointment_id, patient_id, analysis, plan)
   values (v_appt_e, v_patient, 'Paciente sano', 'Alta');
 
@@ -376,9 +364,10 @@ begin
   if not v_refused then
     raise exception 'NOM004 CHECK FAILED: finalize_consultation_with_payment() accepted a paid charge of 0.';
   end if;
-  if exists (select 1 from public.clinical_notes where appointment_id = v_appt_e and finalized_at is not null)
+  if exists (select 1 from public.clinical_notes where appointment_id = v_appt_e
+             and (finalized_at is not null or consultation_finalized_at is not null))
      or exists (select 1 from public.payments where appointment_id = v_appt_e) then
-    raise exception 'NOM004 CHECK FAILED: a refused charge still finalized the note or stored a payment.';
+    raise exception 'NOM004 CHECK FAILED: a refused charge still finalized the consultation or stored a payment.';
   end if;
 
   --     The corrected retry stores both.
@@ -386,8 +375,9 @@ begin
   if v_pay.amount_charged <> 650 or v_pay.appointment_id is distinct from v_appt_e then
     raise exception 'NOM004 CHECK FAILED: the retry stored the charge as % for %.', v_pay.amount_charged, v_pay.appointment_id;
   end if;
-  if not exists (select 1 from public.clinical_notes where appointment_id = v_appt_e and finalized_at is not null) then
-    raise exception 'NOM004 CHECK FAILED: the retry charged but did not finalize the note.';
+  if not exists (select 1 from public.clinical_notes where appointment_id = v_appt_e
+                 and consultation_finalized_at is not null and finalized_at is null) then
+    raise exception 'NOM004 CHECK FAILED: the retry charged but did not finalize the consultation with the note open.';
   end if;
 
   -- 2f. The doctor reads the author's name (NOM-004 5.10).
@@ -474,7 +464,7 @@ end $$;
 do $$
 begin
   perform set_config('request.jwt.claims', '', true);
-  raise notice 'NOM004 CHECK PASSED: finalize_consultation() refuses an empty diagnosis, a blank plan and a missing note; finalize_consultation_with_payment() leaves no payment when finalization fails and no frozen note when the charge fails; prognosis and vital_signs are frozen after finalization; vital_signs only takes known numeric keys; the doctor reads the author name; a patient cannot edit their clinical history or address and their export carries both but no internal or SOAP notes. All test data was rolled back.';
+  raise notice 'NOM004 CHECK PASSED: finalize_consultation() stamps the consultation and leaves the note open (an empty one when missing); close_clinical_note() refuses an empty diagnosis and a blank plan; finalize_consultation_with_payment() stamps nothing when the charge fails; prognosis and vital_signs are frozen once the note is closed; vital_signs only takes known numeric keys; the doctor reads the author name; a patient cannot edit their clinical history or address and their export carries both but no internal or SOAP notes. All test data was rolled back.';
 end $$;
 
 rollback;

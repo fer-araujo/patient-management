@@ -49,34 +49,90 @@ describe("fetchDoctorAppointments suppliesPending", () => {
     reason: null,
     patients: { first_name: "Rosa", last_name: "Ruiz", phone: "+528100000000", status: "active" },
     services: { name: "Relleno", duration_mins: 30, price: 500, service_supplies: [{ item_id: "item-s" }] },
-    clinical_notes: [{ finalized_at: "2026-10-16T15:00:00Z", supplies_recorded_at: null }],
+    clinical_notes: [note()],
     ...over,
   });
+  /** A closed note of a finalized consultation, supplies not recorded. */
+  function note(over: Record<string, unknown> = {}) {
+    return {
+      finalized_at: "2026-10-16T15:00:00Z",
+      supplies_recorded_at: null,
+      consultation_finalized_at: "2026-10-16T15:00:00Z",
+      recorded_late: false,
+      ...over,
+    };
+  }
 
   it("flags only finalized consultations of a service with supplies whose supplies were never recorded", async () => {
     supabaseMock.onFrom("appointments", {
       data: [
         row("pending-supplies", {}),
+        // Migration 31: the consultation was finalized, its note is still open.
+        row("pending-open-note", { clinical_notes: [note({ finalized_at: null })] }),
         row("recorded", {
-          clinical_notes: [{ finalized_at: "2026-10-16T15:00:00Z", supplies_recorded_at: "2026-10-16T15:00:00Z" }],
+          clinical_notes: [note({ supplies_recorded_at: "2026-10-16T15:00:00Z" })],
         }),
-        row("draft-only", { clinical_notes: [{ finalized_at: null, supplies_recorded_at: null }] }),
+        row("draft-only", {
+          clinical_notes: [note({ finalized_at: null, consultation_finalized_at: null })],
+        }),
+        // A note closed outside "Finalizar Consulta" says nothing about supplies.
+        row("closed-not-finalized", {
+          clinical_notes: [note({ consultation_finalized_at: null })],
+        }),
         row("no-supplies-configured", {
           services: { name: "Valoración", duration_mins: 30, price: 500, service_supplies: [] },
         }),
         row("cancelled", { status: "cancelled" }),
-        // A past visit transcribed from paper: completed, no note at all.
+        // A past visit transcribed from paper: completed, no note at all...
         row("past-visit", { clinical_notes: [] }),
+        // ...or with its open late note: still never "Sin insumos".
+        row("past-visit-with-note", {
+          clinical_notes: [
+            note({ finalized_at: null, consultation_finalized_at: null, recorded_late: true }),
+          ],
+        }),
       ],
     });
 
     const list = await fetchDoctorAppointments();
 
-    expect(list.filter((a) => a.suppliesPending).map((a) => a.id)).toEqual(["pending-supplies"]);
+    expect(list.filter((a) => a.suppliesPending).map((a) => a.id)).toEqual([
+      "pending-supplies",
+      "pending-open-note",
+    ]);
     expect(list[0].serviceId).toBe("svc-relleno");
     const select = String(supabaseMock.queries("appointments")[0].args("select")?.[0]);
-    expect(select).toContain("clinical_notes ( finalized_at, supplies_recorded_at )");
+    expect(select).toContain(
+      "clinical_notes ( finalized_at, supplies_recorded_at, consultation_finalized_at, recorded_late )",
+    );
     expect(select).toContain("service_supplies ( item_id )");
+  });
+
+  it("marks an open note of a finalized consultation or a past visit as pending to close", async () => {
+    supabaseMock.onFrom("appointments", {
+      data: [
+        row("closed", {}),
+        row("finalized-open", { clinical_notes: [note({ finalized_at: null })] }),
+        row("past-visit-open", {
+          clinical_notes: [
+            note({ finalized_at: null, consultation_finalized_at: null, recorded_late: true }),
+          ],
+        }),
+        row("in-progress-draft", {
+          status: "confirmed",
+          clinical_notes: [note({ finalized_at: null, consultation_finalized_at: null })],
+        }),
+        row("past-visit-no-note", { clinical_notes: [] }),
+        row("cancelled", { status: "cancelled", clinical_notes: [note({ finalized_at: null })] }),
+      ],
+    });
+
+    const list = await fetchDoctorAppointments();
+
+    expect(list.filter((a) => a.notePending).map((a) => a.id)).toEqual([
+      "finalized-open",
+      "past-visit-open",
+    ]);
   });
 });
 
@@ -242,6 +298,67 @@ describe("recordPastVisit", () => {
       recordPastVisit({ ...base, patientId: "", paymentStatus: "courtesy" }, NOW),
     ).rejects.toThrow("Elige el paciente.");
     expect(supabaseMock.rpcCalls("staff_record_past_visit")).toHaveLength(0);
+  });
+
+  it("saves the optional clinical note in the same call, trimmed, with its vital signs", async () => {
+    supabaseMock.onRpc("staff_record_past_visit_with_note", { data: "appt-note" });
+
+    const id = await recordPastVisit(
+      {
+        ...base,
+        paymentStatus: "courtesy",
+        clinicalNote: {
+          subjective: " Dolor lumbar ",
+          objective: "",
+          analysis: "Lumbalgia",
+          prognosis: "  ",
+          plan: "Reposo",
+          vitalSigns: { bp_sys: 120, bp_dia: 80 },
+        },
+      },
+      NOW,
+    );
+
+    expect(id).toBe("appt-note");
+    expect(supabaseMock.rpcCalls("staff_record_past_visit")).toHaveLength(0);
+    expect(supabaseMock.lastRpc("staff_record_past_visit_with_note")?.args).toEqual({
+      p_patient_id: "p-ana",
+      p_service_id: "srv-toxina",
+      p_start_time: "2026-10-15T16:00:00.000Z",
+      p_payment_status: "courtesy",
+      p_amount: 0,
+      p_method: null,
+      p_note: null,
+      p_subjective: "Dolor lumbar",
+      p_objective: null,
+      p_analysis: "Lumbalgia",
+      p_prognosis: null,
+      p_plan: "Reposo",
+      p_vital_signs: { bp_sys: 120, bp_dia: 80 },
+    });
+  });
+
+  it("an empty clinical note is no note: the plain past-visit call is used", async () => {
+    supabaseMock.onRpc("staff_record_past_visit", { data: "appt-new" });
+
+    await recordPastVisit(
+      {
+        ...base,
+        paymentStatus: "courtesy",
+        clinicalNote: {
+          subjective: " ",
+          objective: "",
+          analysis: "",
+          prognosis: "",
+          plan: "",
+          vitalSigns: null,
+        },
+      },
+      NOW,
+    );
+
+    expect(supabaseMock.rpcCalls("staff_record_past_visit")).toHaveLength(1);
+    expect(supabaseMock.rpcCalls("staff_record_past_visit_with_note")).toHaveLength(0);
   });
 
   it("passes the server's Spanish refusal through and hides anything else", async () => {
